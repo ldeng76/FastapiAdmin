@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+export HOME="/home/dzy"
+export PATH="/home/dzy/.local/bin:/home/dzy/.local/state/fnm_multishells/3394665_1781074782087/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
+source /home/dzy/.bashrc 2>/dev/null || true
+
 DEPLOY_DIR="/home/dzy/wk/lnrs_web"
 BACKEND_DIR="${DEPLOY_DIR}/backend"
 FRONTEND_DIR="${DEPLOY_DIR}/frontend/web"

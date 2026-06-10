@@ -6,6 +6,6 @@ deploy_production:
   only:
     - main
   script:
-    - bash /home/dzy/wk/lnrs_web/deploy-ci.sh
+    - su - dzy -c "bash /home/dzy/wk/lnrs_web/deploy-ci.sh"
   variables:
     GIT_STRATEGY: none

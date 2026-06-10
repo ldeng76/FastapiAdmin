@@ -2,8 +2,10 @@
 set -euo pipefail
 
 export HOME="/home/dzy"
-export PATH="/home/dzy/.local/bin:/home/dzy/.local/state/fnm_multishells/3394665_1781074782087/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
-source /home/dzy/.bashrc 2>/dev/null || true
+export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
+export UV_CACHE_DIR="/data/uvcache"
+export PATH="/home/dzy/pg18/bin:$PATH"
+eval "$(fnm env)" 2>/dev/null || true
 
 DEPLOY_DIR="/home/dzy/wk/lnrs_web"
 BACKEND_DIR="${DEPLOY_DIR}/backend"

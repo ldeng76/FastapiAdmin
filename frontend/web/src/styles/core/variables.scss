@@ -1,0 +1,53 @@
+/**
+ * Element Plus 功能性颜色覆写 CSS 变量。
+ *
+ * 默认主色请与 src/config/setting.ts 中 themeColorPresets 首项保持一致。
+ *
+ * 注意：primary 颜色由运行时 setElementThemeColor() 动态写入，此处只覆写
+ * success / warning / danger / error / info 等编译期确定的功能性颜色。
+ * 这些变量无法通过 SCSS `@forward ... with()` 传递到 Element Plus 组件编译链，
+ * 因为 Dart Sass 模块隔离机制下 Element Plus 组件内部 `@use 'common/var'` 获得的是独立模块实例。
+ */
+
+@use "sass:map";
+@use "element-plus/theme-chalk/src/common/var.scss" as ep with (
+  $colors: (
+    "white": #ffffff,
+    "black": #000000,
+    "primary": (
+      "base": #4080ff,
+    ),
+    "success": (
+      "base": #13deb9,
+    ),
+    "warning": (
+      "base": #ffae1f,
+    ),
+    "danger": (
+      "base": #ff4d4f,
+    ),
+    "error": (
+      "base": #fa896b,
+    ),
+    "info": (
+      "base": #909399,
+    ),
+  )
+);
+
+:root {
+  @each $type in (success, warning, danger, error, info) {
+    --el-color-#{$type}: #{map.get(ep.$colors, $type, "base")} !important;
+
+    @each $i in (3, 5, 7, 8, 9) {
+      --el-color-#{$type}-light-#{$i}: #{map.get(ep.$colors, $type, "light-#{$i}")} !important;
+    }
+
+    --el-color-#{$type}-dark-2: #{map.get(ep.$colors, $type, "dark-2")} !important;
+  }
+}
+
+/** 暗黑主题 */
+html.dark {
+  --el-color-primary: #{map.get(ep.$colors, "primary", "base")} !important;
+}

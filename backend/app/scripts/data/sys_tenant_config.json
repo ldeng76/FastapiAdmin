@@ -1,13 +1,13 @@
 [
   {
     "config_key": "tenant_name",
-    "config_value": "FastApiAdmin",
+    "config_value": "肺结节研究系统",
     "config_type": "string",
     "tenant_id": 1
   },
   {
     "config_key": "tenant_description",
-    "config_value": "FastApiAdmin 是完全开源的权限管理系统",
+    "config_value": "肺结节研究系统 - 专业的医学影像辅助分析平台",
     "config_type": "string",
     "tenant_id": 1
   },

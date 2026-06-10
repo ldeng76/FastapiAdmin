@@ -75,7 +75,7 @@ export const SETTING_DEFAULT_CONFIG = {
   /** 项目引导可见性 */
   guideVisible: false,
   /** 是否启动引导 */
-  showGuide: true,
+  showGuide: false,
   /** 是否开启AI助手 */
   aiEnabled: false,
   /** 是否开启灰色模式 */
@@ -113,7 +113,7 @@ export const SETTING_DEFAULT_CONFIG = {
   /** 是否显示进度条 */
   showNprogress: true,
   /** 是否显示设置引导 */
-  showSettingGuide: true,
+  showSettingGuide: false,
   /** 是否显示节日文本 */
   showFestivalText: false,
   /** 是否显示水印（新版本字段） */

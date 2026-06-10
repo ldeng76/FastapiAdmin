@@ -7,7 +7,5 @@ deploy_production:
     - main
   script:
     - bash /home/dzy/wk/lnrs_web/deploy-ci.sh
-  tags:
-    - shared
   variables:
     GIT_STRATEGY: none

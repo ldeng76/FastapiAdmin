@@ -14,7 +14,7 @@ cd "${DEPLOY_DIR}"
 log ">>> 开始部署 lnrs_web"
 
 OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
-git fetch origin
+git -c http.extraHeader="PRIVATE-TOKEN: glpat-U4_Phcn8ruP819zB-EIdrm86MQp1OjEH.01.0w1y85m2b" fetch origin
 git checkout "${BRANCH}"
 git reset --hard "origin/${BRANCH}"
 NEW_HEAD=$(git rev-parse HEAD)

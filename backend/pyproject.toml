@@ -3,7 +3,7 @@ name = "backend"
 version = "2.0.0"
 description = "fastapiadmin后端工程"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "agno==2.5.8",
     "aiofiles==24.1.0",                         # 文件操作

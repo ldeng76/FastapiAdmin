@@ -79,3 +79,5 @@ frontend/app/*
 .workbudddy/*
 backend/MATCH
 backend/.run/dev.pid
+frontend/web/.vite/deps/_metadata.json
+frontend/web/.vite/deps/package.json

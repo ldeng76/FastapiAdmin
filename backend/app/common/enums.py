@@ -7,6 +7,7 @@ class EnvironmentEnum(str, Enum):
 
     DEV = "dev"
     PROD = "prod"
+    H125 = "h125"
 
 
 @unique

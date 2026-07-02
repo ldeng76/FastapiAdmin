@@ -50,10 +50,23 @@
           <ModalityGroup :rows="detail.pathology" empty-text="暂无病理数据" />
         </ElTabPane>
         <ElTabPane label="影像" name="imaging">
+          <div class="imaging-toolbar">
+            <ElButton type="primary" :icon="Picture" @click="openDicomViewer">
+              查看 DICOM 影像
+            </ElButton>
+            <span class="imaging-hint">在 PACS 阅片器中逐层浏览 / 调窗 / 测量</span>
+          </div>
           <ModalityGroup :rows="detail.imaging" empty-text="暂无影像数据" />
         </ElTabPane>
       </ElTabs>
     </ElCard>
+
+    <!-- DICOM 影像查看器（全屏弹窗） -->
+    <DicomViewerDialog
+      v-model="dicomViewerVisible"
+      :study-id="dicomStudyId"
+      :patient-name="patient?.patient_name as string"
+    />
   </div>
 </template>
 
@@ -72,8 +85,11 @@ import {
   ElCollapseItem,
   ElEmpty,
 } from "element-plus";
-import { ArrowLeft } from "@element-plus/icons-vue";
+import { ArrowLeft, Picture } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
 import PatientAPI, { type ModalityRow, type PatientDetail } from "@/api/module_medical/patient";
+import DicomAPI from "@/api/module_medical/dicom";
+import DicomViewerDialog from "./components/DicomViewerDialog.vue";
 
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
 
@@ -93,6 +109,32 @@ const detail = ref<PatientDetail>({
 const patient = computed(() => detail.value.patient);
 const patientId = computed(() => (route.query.detail as string) || "");
 const center = computed(() => (route.query.center as string) || undefined);
+
+// DICOM 影像查看器
+const dicomViewerVisible = ref(false);
+const dicomStudyId = ref<string>("");
+// 首期按数据目录浏览：按约定 Study 目录名 = <patient_id>_1 查找；
+// 若该目录不存在（如 demo 患者无对应 DICOM），回退到数据目录中第一个可用 Study，
+// 便于开发期用示例数据验证阅片功能。后续可由 nodule_imaging.exam_id 映射真实 Study。
+async function openDicomViewer() {
+  const expected = patientId.value ? `${patientId.value}_1` : "";
+  let target = expected;
+  try {
+    const res = await DicomAPI.listStudies();
+    const studies = res.data?.data || [];
+    if (studies.length) {
+      const matched = studies.find((s) => s.study_id === expected);
+      target = matched ? expected : studies[0].study_id;
+      if (!matched && expected) {
+        ElMessage.info(`未找到 ${expected} 的 DICOM 数据，已切换至示例数据 ${target}`);
+      }
+    }
+  } catch {
+    /* 查询失败则用约定值，由 viewer 内部报错 */
+  }
+  dicomStudyId.value = target;
+  dicomViewerVisible.value = true;
+}
 
 // 基本信息 JSON 扩展列（珠江-新桥数据含 demographics / medical_history）
 const extRows = computed(() => {
@@ -312,5 +354,15 @@ function fieldLabel(k: string): string {
 }
 :deep(.el-collapse-item__header) {
   font-weight: 600;
+}
+.imaging-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.imaging-hint {
+  font-size: 13px;
+  color: #909399;
 }
 </style>

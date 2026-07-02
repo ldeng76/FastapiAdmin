@@ -87,6 +87,12 @@ export default ({ mode }: { mode: string }) => {
         "@fa_imgs/*": resolvePath("src/assets/fa_imgs/*"),
       },
     },
+    // cornerstone3D dicom-image-loader 的解码 worker 为 ES module 且含代码分割，
+    // vite 默认 worker.format='iife' 不支持 code-splitting → 构建报错。
+    // 改为 'es' 后 worker 可正常分包。
+    worker: {
+      format: "es",
+    },
     build: {
       target: "es2024",
       outDir: "dist",
@@ -111,6 +117,7 @@ export default ({ mode }: { mode: string }) => {
             if (!id.includes("node_modules")) return;
             if (id.includes("echarts") || id.includes("zrender")) return "echarts";
             if (id.includes("element-plus")) return "element-plus";
+            if (id.includes("@cornerstonejs")) return "cornerstone";
             if (id.includes("@wangeditor")) return "wangeditor";
             if (id.includes("codemirror")) return "codemirror";
             if (id.includes("exceljs")) return "exceljs";
@@ -223,6 +230,10 @@ export default ({ mode }: { mode: string }) => {
         "vue3-cron-plus",
         "vuedraggable",
         "vue-draggable-plus",
+        "@cornerstonejs/core",
+        "@cornerstonejs/tools",
+        "@cornerstonejs/dicom-image-loader",
+        "gl-matrix",
         "element-plus",
         "@element-plus/icons-vue",
         "element-plus/es",

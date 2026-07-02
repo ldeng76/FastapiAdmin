@@ -230,6 +230,13 @@ class Settings(BaseSettings):
     CHROMA_COLLECTION_NAME: str = "knowledge_base"  # ChromaDB 集合名称
 
     # ================================================= #
+    # ***************** DICOM 影像数据配置 ************** #
+    # ================================================= #
+    # DICOM 数据根目录（其下每个子目录视为一个 Study）。
+    # dev 默认指向示例数据；生产通过 .env 覆盖。
+    DICOM_DATA_DIR: Path = BASE_DIR.parent / "docs" / "dicom_demo"
+
+    # ================================================= #
     # ******************* 请求限制配置 ****************** #
     # ================================================= #
     REQUEST_LIMITER_REDIS_PREFIX: str = "fastapiadmin:request_limiter:"

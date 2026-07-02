@@ -12,6 +12,7 @@ __pycache__
 
 .env
 !.env.example
+!.env.dev
 
 *.egg
 *.egg-info
@@ -81,3 +82,11 @@ backend/MATCH
 backend/.run/dev.pid
 frontend/web/.vite/deps/_metadata.json
 frontend/web/.vite/deps/package.json
+
+# 医学多模态 mock 数据（parquet，由 backend/scripts/gen_medical_mock.py 生成，不入库）
+backend/data/medical/**/*.parquet
+
+# 珠江-新桥 多模态原始 parquet 数据
+docs/zhujiang_xinqiao_parq/
+# 后端运行时产物
+backend/.run/

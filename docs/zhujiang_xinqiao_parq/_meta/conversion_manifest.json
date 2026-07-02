@@ -1,0 +1,89 @@
+{
+  "generated_at": "2026-07-02T10:38:03",
+  "duckdb_version": "v1.5.4 (Variegata) 08e34c447b",
+  "libreoffice_version": "LibreOffice 7.3.7.2 30(Build:2)",
+  "source_dir": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据",
+  "output_dir": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet",
+  "source_files": {
+    "5万例时序影像_带病理_新_1.csv": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据/5万例时序影像_带病理_新_1.csv",
+      "exists": true,
+      "size_bytes": 21670115,
+      "sha256": "8a19b25c4e6c7e441e4b3a5954cc2af751a9c0fd53af4abce8a1fdb9bbb2e3fd"
+    },
+    "胸外历史病人编码后手术记录.csv": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据/胸外历史病人编码后手术记录.csv",
+      "exists": true,
+      "size_bytes": 9370743,
+      "sha256": "1e5536a360498ab7932c9ee2ac7ad28418ef175ebe9f88a6eb75bdfad44834f2"
+    },
+    "胸外科历史病人入院记录文书数据-22年.csv": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据/胸外科历史病人入院记录文书数据-22年.csv",
+      "exists": true,
+      "size_bytes": 9391730,
+      "sha256": "832d705d6059fe13b3225fbccb592e64da88016c47de844c869a9ebcdc412ab6"
+    },
+    "CT与病理数据.xlsx": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据/CT与病理数据.xlsx",
+      "exists": true,
+      "size_bytes": 30920944,
+      "sha256": "5d1454e8a930bfe24c7d79099d7a8b73f7e78b107bdc8b49f6ad8f6ae07e6d06"
+    },
+    "精准医学V2_副本.xls": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据/精准医学V2_副本.xls",
+      "exists": true,
+      "size_bytes": 178176,
+      "sha256": "1156f8c75b9c26b12558e5cd7feb2b7c41c0c7a667717944b131f9fe7697b3c2"
+    },
+    "历史病历查询.xls": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/_字段与原始数据/历史病历查询.xls",
+      "exists": true,
+      "size_bytes": 4688384,
+      "sha256": "db2d0d4edb042303a2a62c2a6eb69ea196a1b2a35123efa7ea6de9389b406ade"
+    }
+  },
+  "tables": {
+    "patient": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/patient.parquet",
+      "exists": true,
+      "row_count": 9835,
+      "is_schema_only": false
+    },
+    "pathology_specimen": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/pathology_specimen.parquet",
+      "exists": true,
+      "row_count": 2258,
+      "is_schema_only": false
+    },
+    "surgery_record": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/surgery_record.parquet",
+      "exists": true,
+      "row_count": 18326,
+      "is_schema_only": false
+    },
+    "nodule_imaging": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/nodule_imaging.parquet",
+      "exists": true,
+      "row_count": 212453,
+      "is_schema_only": false
+    },
+    "genetic_test": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/genetic_test.parquet",
+      "exists": true,
+      "row_count": 0,
+      "is_schema_only": true
+    },
+    "ihc_result": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/ihc_result.parquet",
+      "exists": true,
+      "row_count": 0,
+      "is_schema_only": true
+    },
+    "follow_up": {
+      "path": "/data/wlx/DATABASE/0605_small/01disk/zhujiang_xinqiao_parquet/follow_up.parquet",
+      "exists": true,
+      "row_count": 0,
+      "is_schema_only": true
+    }
+  }
+}

@@ -1,6 +1,6 @@
 """医学数据模块 controller（自动发现为 /medical）。
 
-两个只读端点：患者分页列表 + 患者多模态详情。
+只读端点：来源中心枚举 + 患者分页列表 + 患者多模态详情。
 """
 
 from typing import Annotated
@@ -23,9 +23,22 @@ MedicalRouter = APIRouter(route_class=OperationLogRoute, tags=["医学数据"])
 
 
 @MedicalRouter.get(
+    "/centers",
+    summary="来源中心枚举",
+    description="枚举数据中出现的来源中心，供前端下拉筛选",
+)
+async def list_centers_controller(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],
+) -> JSONResponse:
+    """来源中心枚举。"""
+    result = await PatientService.centers_service(auth=auth)
+    return SuccessResponse(data=result, msg="获取来源中心成功")
+
+
+@MedicalRouter.get(
     "/patients",
     summary="患者分页列表",
-    description="跨中心合并查询患者列表，支持按中心/关键词筛选",
+    description="查询患者列表，支持按中心/关键词筛选",
     response_model=ResponseSchema[PatientListOut],
 )
 async def get_patient_page_controller(

@@ -1,4 +1,4 @@
-<!-- 医学数据 · 患者浏览：跨中心患者列表，点击「查看」进入多模态详情 -->
+<!-- 医学数据 · 患者浏览：患者列表，点击「查看」进入多模态详情 -->
 <template>
   <div class="fa-full-height">
     <FaSearchBar
@@ -42,9 +42,10 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref } from "vue";
+import { computed, h, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElTag, ElButton } from "element-plus";
+import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
 import { useTable } from "@/hooks/core/useTable";
 import PatientAPI, { type PatientPageQuery, type PatientTable } from "@/api/module_medical/patient";
@@ -53,13 +54,8 @@ defineOptions({ name: "MedicalPatient", inheritAttrs: false });
 
 const router = useRouter();
 
-// 中心选项
-const CENTER_OPTIONS = [
-  { label: "全部", value: "" },
-  { label: "省医", value: "省医" },
-  { label: "珠江", value: "珠江" },
-  { label: "新桥", value: "新桥" },
-];
+// 中心选项：从后端动态枚举（数据当前为「珠江」单中心）
+const centerOptions = ref<{ label: string; value: string }[]>([{ label: "全部", value: "" }]);
 
 // 搜索表单
 interface PatientSearchForm {
@@ -69,22 +65,22 @@ interface PatientSearchForm {
 const searchForm = ref<PatientSearchForm>({ center: "", keyword: "" });
 const showSearchBar = ref(true);
 
-const patientSearchItems = [
+const patientSearchItems = computed<SearchFormItem[]>(() => [
   {
-    prop: "center",
+    key: "center",
     label: "来源中心",
     type: "select",
-    options: CENTER_OPTIONS,
+    options: centerOptions.value as unknown as Record<string, any>,
     span: 6,
   },
   {
-    prop: "keyword",
+    key: "keyword",
     label: "关键词",
     type: "input",
     placeholder: "患者编号 / 中心",
     span: 6,
   },
-];
+]);
 
 // 跳转多模态详情（独立隐藏路由，patient_id/center 走 query 参数）
 function goDetail(row: PatientTable) {
@@ -171,4 +167,20 @@ function onResetSearch() {
   resetSearchParams();
   getData();
 }
+
+// 拉取来源中心枚举，填充下拉
+async function loadCenters() {
+  try {
+    const res = await PatientAPI.listCenters();
+    const list = res.data?.data || [];
+    centerOptions.value = [
+      { label: "全部", value: "" },
+      ...list.map((c: string) => ({ label: c, value: c })),
+    ];
+  } catch {
+    centerOptions.value = [{ label: "全部", value: "" }];
+  }
+}
+
+onMounted(loadCenters);
 </script>

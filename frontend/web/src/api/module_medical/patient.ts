@@ -7,7 +7,15 @@ const API_PATH = "/medical";
  * 后端以 DuckDB 直读 parquet，不入库；接口均为只读。
  */
 const PatientAPI = {
-  /** 患者分页列表（跨中心合并） */
+  /** 来源中心枚举（动态，反映 parquet 中实际出现的中心） */
+  listCenters() {
+    return request<ApiResponse<string[]>>({
+      url: `${API_PATH}/centers`,
+      method: "get",
+    });
+  },
+
+  /** 患者分页列表 */
   listPatient(query?: PatientPageQuery) {
     return request<ApiResponse<PageResult<PatientTable>>>({
       url: `${API_PATH}/patients`,
@@ -30,7 +38,7 @@ export default PatientAPI;
 
 /** 患者列表查询参数 */
 export interface PatientPageQuery extends PageQuery {
-  /** 来源中心（省医/珠江/新桥） */
+  /** 来源中心（动态枚举，当前为「珠江」） */
   center?: string;
   /** 患者编号 / 中心 关键词 */
   keyword?: string;
@@ -59,14 +67,14 @@ export interface ModalityRow {
 
 /** 患者多模态详情 */
 export interface PatientDetail {
-  /** 患者基本信息（含 visit_counts/demographics 等 JSON 扩展列） */
+  /** 患者基本信息（含 demographics/medical_history 等 JSON 扩展列） */
   patient: Record<string, any>;
-  /** 临床模态：就诊/手术/药物/检验/随访 等 */
+  /** 临床模态：手术记录/随访结局 等 */
   clinical: ModalityRow[];
   /** 基因模态：基因检测记录 */
   genetic: ModalityRow[];
   /** 病理模态：病理标本 */
   pathology: ModalityRow[];
-  /** 影像模态：影像学报告 / 结节影像 */
+  /** 影像模态：结节影像 */
   imaging: ModalityRow[];
 }

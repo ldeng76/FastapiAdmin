@@ -19,6 +19,11 @@ class PatientService:
     """患者多模态数据服务。"""
 
     @classmethod
+    async def centers_service(cls, auth: AuthSchema) -> list[str]:
+        """来源中心枚举。"""
+        return repository.list_centers()
+
+    @classmethod
     async def page_service(
         cls,
         auth: AuthSchema,

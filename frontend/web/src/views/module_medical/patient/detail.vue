@@ -94,11 +94,10 @@ const patient = computed(() => detail.value.patient);
 const patientId = computed(() => (route.query.detail as string) || "");
 const center = computed(() => (route.query.center as string) || undefined);
 
-// 基本信息 JSON 扩展列（visit_counts / demographics / medical_history）
+// 基本信息 JSON 扩展列（珠江-新桥数据含 demographics / medical_history）
 const extRows = computed(() => {
   const p = detail.value.patient || {};
   const rows: { label: string; text: string }[] = [];
-  if (p.visit_counts) rows.push({ label: "就诊次数", text: JSON.stringify(p.visit_counts) });
   if (p.demographics) rows.push({ label: "人口学", text: JSON.stringify(p.demographics) });
   if (p.medical_history) rows.push({ label: "既往病史", text: JSON.stringify(p.medical_history) });
   return rows;
@@ -121,7 +120,7 @@ async function fetchDetail() {
   loading.value = true;
   try {
     const res = await PatientAPI.detailPatient(patientId.value, center.value);
-    detail.value = res.data;
+    detail.value = res.data?.data ?? ({} as PatientDetail);
   } finally {
     loading.value = false;
   }

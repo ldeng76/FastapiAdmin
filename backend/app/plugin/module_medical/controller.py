@@ -14,7 +14,7 @@ from app.core.base_params import PaginationQueryParam
 from app.core.dependencies import AuthPermission
 from app.core.router_class import OperationLogRoute
 
-from .schema import PatientDetailOut, PatientListOut
+from .schema import PatientDetailOut, PatientPageOut
 from .service import PatientService
 
 # 容器前缀由目录名自动生成为 /medical（module_medical 去 module_ 前缀）
@@ -39,7 +39,7 @@ async def list_centers_controller(
     "/patients",
     summary="患者分页列表",
     description="查询患者列表，支持按中心/关键词筛选",
-    response_model=ResponseSchema[PatientListOut],
+    response_model=ResponseSchema[PatientPageOut],
 )
 async def get_patient_page_controller(
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],

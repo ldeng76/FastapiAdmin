@@ -20,30 +20,6 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _audited_columns(prefix: str = "ix_", table: str | None = None) -> None:
-    """辅助函数：给一张表添加 ModelMixin/UserMixin 的全部索引。"""
-    if table is None:
-        return
-    indexes = [
-        ("id", "ix", False),
-        ("uuid", "ix", False),
-        ("status", "ix", False),
-        ("created_time", "ix", False),
-        ("updated_time", "ix", False),
-        ("is_deleted", "ix", False),
-        ("deleted_time", "ix", False),
-        ("created_id", "ix", False),
-        ("updated_id", "ix", False),
-        ("deleted_id", "ix", False),
-        ("tenant_id", "ix", False),
-    ]
-    for col, ix_prefix, unique in indexes:
-        try:
-            op.create_index(op.f(f"{prefix}{table}_{col}"), table, [col], unique=unique)
-        except Exception:
-            pass  # 列已存在或索引已存在时跳过
-
-
 def _base_columns() -> list:
     """ModelMixin + UserMixin 字段列表。"""
     return [
@@ -95,40 +71,46 @@ def _set_server_defaults(table: str, extra_defaults: dict | None = None) -> None
     if extra_defaults:
         defaults.update(extra_defaults)
     for col, (value, col_type) in defaults.items():
-        try:
-            op.alter_column(table, col, server_default=value,
-                            existing_type=col_type, existing_nullable=False)
-        except Exception:
-            pass  # 列不存在或失败时跳过
+        op.alter_column(
+            table,
+            col,
+            server_default=value,
+            existing_type=col_type,
+            existing_nullable=False,
+        )
 
 
 def _create_audit_indexes(table: str) -> None:
-    for col in ("id", "uuid", "status", "created_time", "updated_time",
-                "is_deleted", "deleted_time", "created_id", "updated_id",
-                "deleted_id", "tenant_id"):
-        try:
-            op.create_index(op.f(f"ix_{table}_{col}"), table, [col])
-        except Exception:
-            pass
+    # Skip 'id' (PK 自动建索引) and 'uuid' (uq_<table>_uuid 自动建唯一索引)。
+    for col in (
+        "status",
+        "created_time",
+        "updated_time",
+        "is_deleted",
+        "deleted_time",
+        "created_id",
+        "updated_id",
+        "deleted_id",
+        "tenant_id",
+    ):
+        op.create_index(op.f(f"ix_{table}_{col}"), table, [col])
 
 
 def _create_gin(table: str, col: str) -> None:
-    try:
-        op.create_index(op.f(f"ix_{table}_{col}_gin"), table, [col], postgresql_using="gin")
-    except Exception:
-        pass
+    op.create_index(op.f(f"ix_{table}_{col}_gin"), table, [col], postgresql_using="gin")
 
 
 def upgrade() -> None:
     # ---- 1. 给 med_hospital 加 data_dir 列 ----
-    try:
-        op.add_column(
-            "med_hospital",
-            sa.Column("data_dir", sa.String(length=500), nullable=True,
-                      comment="原始数据目录路径（parquet 文件所在目录）"),
-        )
-    except Exception:
-        pass
+    op.add_column(
+        "med_hospital",
+        sa.Column(
+            "data_dir",
+            sa.String(length=500),
+            nullable=True,
+            comment="原始数据目录路径（parquet 文件所在目录）",
+        ),
+    )
 
     # ---- 2. med_patient ----
     op.create_table(
@@ -233,10 +215,10 @@ def upgrade() -> None:
         *_base_columns(),
         sa.Column("tenant_id", sa.Integer(), nullable=False),
         sa.Column("patient_id", sa.String(length=64), nullable=False, comment="患者编号"),
-        sa.Column("exam_id", sa.String(length=64), nullable=False, comment="检查唯一号"),
+        sa.Column("exam_id", sa.Text(), nullable=False, comment="检查唯一号（可能含多个逗号分隔ID）"),
         sa.Column("exam_date", sa.DateTime(), nullable=True, comment="检查日期时间"),
         sa.Column("exam_type", sa.String(length=50), nullable=True, comment="检查类型"),
-        sa.Column("nodule_no", sa.String(length=20), nullable=False, comment="结节编号"),
+        sa.Column("nodule_no", sa.String(length=20), nullable=True, comment="结节编号（源数据可能为空）"),
         sa.Column("nodule_location", sa.String(length=100), nullable=True, comment="结节位置"),
         sa.Column("long_diameter", sa.Float(), nullable=True, comment="长径(mm)"),
         sa.Column("density_type", sa.String(length=50), nullable=True, comment="密度类型"),
@@ -300,25 +282,22 @@ def upgrade() -> None:
     _create_gin("med_genetic_test", "driver_mutations")
     _create_gin("med_pathology_specimen", "staging")
 
-    # ---- 12. patient_id 索引（高频查询） ----
-    for tbl in ("med_patient", "med_pathology_specimen", "med_surgery_record",
-                "med_genetic_test", "med_nodule_imaging", "med_ihc_result", "med_follow_up"):
-        try:
-            op.create_index(op.f(f"ix_{tbl}_patient_id"), tbl, ["patient_id"])
-        except Exception:
-            pass
+    # ---- 12. patient_id 索引 ----
+    # UniqueConstraint (tenant_id, patient_id, ...) 已经为常用租户维度查询
+    # 创建了复合唯一索引；除非要支持跨租户查询，否则不需要额外的单列索引。
+    # 现不创建单列索引，依赖 unique constraint 即可覆盖 tenant-scoped 查询路径。
 
 
 def downgrade() -> None:
-    # 逆序删除
-    for tbl in ("med_follow_up", "med_ihc_result", "med_nodule_imaging",
-                "med_genetic_test", "med_surgery_record", "med_pathology_specimen", "med_patient"):
-        try:
-            op.drop_table(tbl)
-        except Exception:
-            pass
-
-    try:
-        op.drop_column("med_hospital", "data_dir")
-    except Exception:
-        pass
+    # Drop indexes explicitly (mirror upgrade) then drop tables in reverse order
+    for tbl in (
+        "med_follow_up",
+        "med_ihc_result",
+        "med_nodule_imaging",
+        "med_genetic_test",
+        "med_surgery_record",
+        "med_pathology_specimen",
+        "med_patient",
+    ):
+        op.drop_table(tbl)
+    op.drop_column("med_hospital", "data_dir")

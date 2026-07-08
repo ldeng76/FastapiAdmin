@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -74,6 +75,16 @@ class HospitalOut(HospitalCreate, BaseSchema):
     data_dir: str | None = Field(default=None, description="原始数据目录路径")
     last_import_time: DateTimeStr | None = Field(default=None, description="最近导入时间")
     last_import_rows: int = Field(default=0, description="最近导入行数")
+
+
+class HospitalDataSummaryOut(BaseModel):
+    """医院数据摘要出参（各业务表行数）"""
+
+    hospital_id: int = Field(..., description="医院ID")
+    lifecycle_status: str = Field(..., description="就绪状态")
+    tenant_id: int = Field(..., description="租户ID")
+    total_rows: int = Field(..., description="各表行数合计")
+    tables: dict[str, int] = Field(default_factory=dict, description="每张业务表的行数（key=表名）")
 
 
 class HospitalQueryParam:
@@ -167,6 +178,12 @@ class TemplateOut(BaseModel):
     name: str = Field(..., description="模板名称")
     description: str = Field(..., description="模板说明")
     rule_count: int = Field(..., description="规则数量")
+
+
+class MappingTemplateDetailOut(TemplateOut):
+    """映射模板详情（含规则列表）"""
+
+    rules: list[dict[str, Any]] = Field(default_factory=list, description="模板规则（与 MappingRuleIn 同结构）")
 
 
 # --------------------------------------------------------------------------- #

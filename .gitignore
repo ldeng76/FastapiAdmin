@@ -13,6 +13,8 @@ __pycache__
 .env
 .env.dev
 !.env.example
+# Keep all .env variants ignored; ship sanitized templates instead.
+# !.env.dev
 
 *.egg
 *.egg-info
@@ -79,8 +81,9 @@ frontend/app/*
 
 .workbudddy/*
 backend/MATCH
-backend/.run/dev.pid
 frontend/web/.vite/deps/_metadata.json
+# NOTE: backend/.run/dev.pid is covered by the directory-level rule below;
+# kept here only as a defensive explicit entry.
 frontend/web/.vite/deps/package.json
 
 # 珠江-新桥 多模态示例数据：跟踪 parquet 与转换清单，忽略原始来源/日志

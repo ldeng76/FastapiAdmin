@@ -6,9 +6,6 @@
     width="720px"
     dialog-class="crud-embed-dialog"
     modal-class="crud-embed-dialog"
-    :confirm-loading="submitLoading"
-    @cancel="handleCancel"
-    @confirm="handleSubmit"
   >
     <ElSteps :active="currentStep" finish-status="success" simple style="margin-bottom: 20px">
       <ElStep title="基本信息" />
@@ -39,7 +36,6 @@
           placeholder="请选择预置映射模板（可在注册后修改）"
           :loading="templateLoading"
           style="width: 100%"
-          @change="onTemplateChange"
         >
           <ElOption v-for="tpl in templateOptions" :key="tpl.code" :label="tpl.name" :value="tpl.code">
             <span>{{ tpl.name }}</span>
@@ -85,7 +81,6 @@ import { computed, ref, watch } from "vue";
 
 import type { FormInstance, FormItemRule } from "element-plus";
 import { ElAlert, ElFormItem, ElMessageBox, ElOption, ElSelect, ElStep, ElSteps } from "element-plus";
-import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 
 import FaDescriptions from "@/components/others/fa-descriptions/index.vue";
 import FaDialog from "@/components/modal/fa-dialog/index.vue";
@@ -145,14 +140,13 @@ async function loadTemplates() {
   templateLoading.value = true;
   try {
     const res = await HospitalAPI.listTemplates();
-    templateOptions.value = res.data?.data || [];
+    templateOptions.value = res?.data?.data || [];
+  } catch (err) {
+    templateOptions.value = [];
+    console.error("加载映射模板失败", err);
   } finally {
     templateLoading.value = false;
   }
-}
-
-function onTemplateChange(_code: string) {
-  // 预留：可扩展预览模板详情
 }
 
 // ─── 确认数据 ───────────────────────────────────────────────
@@ -179,13 +173,18 @@ async function handleNext() {
     const valid = await basicFormRef.value?.validate().catch(() => false);
     if (!valid) return;
   }
+  if (currentStep.value === 1 && !formData.value.template_code) {
+    ElMessageBox.alert("请选择一个映射模板（或在确认页继续选择）", "提示", { type: "warning" });
+    return;
+  }
   currentStep.value++;
 }
 
 async function handleSubmit() {
   submitLoading.value = true;
   try {
-    await HospitalAPI.createHospital(formData.value);
+    const res = await HospitalAPI.createHospital(formData.value);
+    if (!res) return;
     ElMessageBox.alert("注册成功！请在后端日志中查看初始管理员用户名和临时密码。", "提示", {
       type: "success",
       confirmButtonText: "确定",
@@ -194,6 +193,9 @@ async function handleSubmit() {
     currentStep.value = 0;
     formData.value = { ...initialFormData };
     emit("success");
+  } catch (err) {
+    // request interceptor typically surfaces the error via message; keep dialog open so user can retry
+    console.error("注册医院失败", err);
   } finally {
     submitLoading.value = false;
   }

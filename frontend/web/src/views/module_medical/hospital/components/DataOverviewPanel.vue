@@ -20,7 +20,7 @@
             </ElTag>
           </ElDescriptionsItem>
           <ElDescriptionsItem label="总行数">
-            <strong>{{ totalRowsFormatted }}</strong>
+            <strong>{{ summary ? totalRowsFormatted : "-" }}</strong>
           </ElDescriptionsItem>
         </ElDescriptions>
       </div>
@@ -48,14 +48,14 @@
     <template #footer>
       <ElButton @click="handleCancel">关闭</ElButton>
       <ElButton
-        v-if="summary?.lifecycle_status === 'data_imported'"
+        v-if="canGoOnline"
         type="success"
         @click="handleGoOnline"
       >
         上线
       </ElButton>
       <ElButton
-        v-if="summary?.lifecycle_status === 'live'"
+        v-if="canGoOffline"
         type="warning"
         @click="handleGoOffline"
       >
@@ -73,9 +73,12 @@ import { ElButton, ElDescriptions, ElDescriptionsItem, ElDivider, ElMessage, ElP
 import FaDialog from "@/components/modal/fa-dialog/index.vue";
 import HospitalAPI from "@/api/module_medical/hospital";
 import { LIFECYCLE_STATUS_META, type HospitalDataSummary } from "@/types/module_medical/hospital";
+import { useAuth } from "@/hooks/core/useAuth";
 
 const props = defineProps<{ modelValue: boolean; hospitalId: number }>();
 const emit = defineEmits<{ "update:modelValue": [boolean]; online: []; offline: [] }>();
+
+const { hasAuth } = useAuth();
 
 const visible = computed({
   get: () => props.modelValue,
@@ -85,7 +88,11 @@ const visible = computed({
 const loading = ref(false);
 const summary = ref<HospitalDataSummary | null>(null);
 
-const TABLE_LABELS: Record<string, string> = {
+// 请求序号，避免短时间内多次打开覆盖最新数据
+let loadSeq = 0;
+
+// NOTE: keep in sync with backend HospitalDataSummary.tables
+const TABLE_LABELS: Record<keyof HospitalDataSummary["tables"], string> = {
   patient: "患者基本信息",
   pathology_specimen: "病理标本",
   surgery_record: "手术记录",
@@ -99,7 +106,7 @@ const tableRows = computed(() => {
   if (!summary.value) return [];
   return Object.entries(summary.value.tables).map(([key, count]) => ({
     key,
-    label: TABLE_LABELS[key] || key,
+    label: TABLE_LABELS[key as keyof HospitalDataSummary["tables"]] || key,
     count,
   }));
 });
@@ -113,13 +120,26 @@ const statusMeta = computed(() => {
   return LIFECYCLE_STATUS_META[s as keyof typeof LIFECYCLE_STATUS_META] || { label: s, type: "info" as const };
 });
 
+const canGoOnline = computed(
+  () =>
+    summary.value?.lifecycle_status === "data_imported" &&
+    hasAuth("module_medical:hospital:online"),
+);
+const canGoOffline = computed(
+  () =>
+    summary.value?.lifecycle_status === "live" &&
+    hasAuth("module_medical:hospital:offline"),
+);
+
 async function loadData() {
+  const seq = ++loadSeq;
   loading.value = true;
   try {
     const res = await HospitalAPI.getDataSummary(props.hospitalId);
+    if (seq !== loadSeq) return; // 已被新的请求覆盖，丢弃过期响应
     summary.value = res.data?.data || null;
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
 
@@ -149,11 +169,16 @@ function handleCancel() {
   visible.value = false;
 }
 
-watch(visible, (val) => {
-  if (val) {
-    loadData();
-  }
-});
+watch(
+  [visible, () => props.hospitalId],
+  ([val]) => {
+    if (val) {
+      loadData();
+    } else {
+      summary.value = null;
+    }
+  },
+);
 </script>
 
 <style scoped>

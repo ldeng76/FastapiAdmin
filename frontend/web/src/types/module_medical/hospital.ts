@@ -74,16 +74,7 @@ export interface MappingTemplate {
 
 /** 映射模板详情（含规则列表） */
 export interface MappingTemplateDetail extends MappingTemplate {
-  rules: Array<{
-    src_table: string;
-    src_field: string;
-    tgt_table: string;
-    tgt_field: string;
-    transform_type: string;
-    transform_value: string | null;
-    description: string | null;
-    sort: number;
-  }>;
+  rules: Array<Omit<MappingRuleRow, "id" | "hospital_id" | "created_time">>;
 }
 
 /** ETL 导入任务状态 */

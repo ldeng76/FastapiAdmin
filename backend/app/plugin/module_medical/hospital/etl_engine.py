@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -27,6 +29,9 @@ from app.core.logger import log
 
 from .model import TGT_TABLE_MODELS
 from .model import MappingRuleModel
+
+# 来源表名校验：仅允许字母/数字/下划线，避免 path traversal
+_SRC_TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # 预定义转换函数（安全，非 eval；transform_value 存函数 key 而非表达式字符串）
 TRANSFORM_FUNCTIONS: dict[str, Callable[[Any], Any]] = {
@@ -82,14 +87,27 @@ def _read_parquet_rows(data_dir: Path, src_table: str) -> tuple[list[str], list[
     """用独立 DuckDB 连接读取 parquet，返回 (列名列表, 行列表)。
 
     每次调用新建连接，不复用单例（避免与查询 API 的锁竞争）。
+
+    安全：
+    - 拒绝包含路径分隔符或 .. 的 src_table（MappingRuleModel 在 DB 中可写）
+    - 解析后的绝对路径必须仍在 data_dir 内
     """
-    parquet_path = data_dir / f"{src_table}.parquet"
+    if not _SRC_TABLE_RE.match(src_table):
+        raise ValueError(f"非法的源表名: {src_table!r}")
+    parquet_path = (data_dir / f"{src_table}.parquet").resolve()
+    try:
+        data_dir_resolved = data_dir.resolve()
+    except OSError as e:
+        raise ValueError(f"无法解析 data_dir: {data_dir}") from e
+    if data_dir_resolved not in parquet_path.parents and parquet_path.parent != data_dir_resolved:
+        raise ValueError(f"源表路径越界: {parquet_path}")
     if not parquet_path.exists():
         raise FileNotFoundError(f"源数据文件不存在: {parquet_path}")
 
     con = duckdb.connect(database=":memory:")
     try:
-        cur = con.execute(f"SELECT * FROM read_parquet('{parquet_path.as_posix()}')")
+        # 使用参数化读文件，避免 f-string 拼接路径
+        cur = con.execute("SELECT * FROM read_parquet(?)", [parquet_path.as_posix()])
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
         return cols, rows
@@ -110,7 +128,7 @@ def _transform_row(
     2. constant: tgt_field = transform_value
     3. expression: tgt_field = TRANSFORM_FUNCTIONS[key](row_dict[src_field])
     4. 注入 tenant_id
-    5. JSONB 列：str → json.loads → dict
+    5. JSONB 列：str → json.loads → dict；解析失败记日志后保留原值让 INSERT 报错
     """
     result: dict[str, Any] = {"tenant_id": tenant_id}
 
@@ -123,14 +141,24 @@ def _transform_row(
             src_val = row_dict.get(rule.src_field)
             val = apply_expression(rule.transform_value, src_val) if rule.transform_value else None
         else:
+            # schema 层已校验只允许 rename/constant/expression；
+            # 留此兜底防止未来扩展 transform_type 时静默丢列
+            log.error(
+                "ETL: 未知 transform_type=%r (tgt_field=%s)，已跳过该列",
+                rule.transform_type,
+                rule.tgt_field,
+            )
             continue
 
-        # JSONB 列：JSON 字符串转 dict
+        # JSONB 列：JSON 字符串转 dict；解析失败记日志后保留原值让 INSERT 报错
         if rule.tgt_field in jsonb_columns and isinstance(val, str):
             try:
                 val = json.loads(val)
-            except (ValueError, TypeError):
-                pass  # 非 JSON 字符串，保持原值
+            except (ValueError, TypeError) as e:
+                log.warning(
+                    "ETL: JSONB 列 %s 解析失败: %s (src=%s.%s)",
+                    rule.tgt_field, e, rule.src_table, rule.src_field,
+                )
 
         result[rule.tgt_field] = val
 
@@ -138,20 +166,30 @@ def _transform_row(
 
 
 def _normalize_value(val: Any) -> Any:
-    """把 DuckDB 返回的复合类型转为 PG 可接受的 Python 对象。"""
-    if isinstance(val, Decimal):
-        return float(val)
+    """把 DuckDB 返回的复合类型转为 PG 可接受的 Python 对象。
+
+    注意：Decimal 不要转 float，会丢精度 — PG NUMERIC 原生支持 Decimal。
+    """
     if isinstance(val, (datetime, date)):
         return val  # SQLAlchemy 能正确处理
-    return val
+    return val  # Decimal/str/int/float 全部透传
 
 
 def _clean_row(row: dict[str, Any], model) -> dict[str, Any]:
-    """过滤掉目标模型不存在的列，并归一化值类型。"""
+    """过滤掉目标模型不存在的列，并归一化值类型。
+
+    未知列会被丢弃并打 warning，避免模型字段重命名后旧规则静默丢数据。
+    """
     valid_cols = {c.name for c in model.__table__.columns}
-    return {
-        k: _normalize_value(v) for k, v in row.items() if k in valid_cols
-    }
+    cleaned: dict[str, Any] = {}
+    for k, v in row.items():
+        if k in valid_cols:
+            cleaned[k] = _normalize_value(v)
+        else:
+            log.warning(
+                "ETL: 目标表 %s 不存在列 %s，已丢弃", model.__tablename__, k
+            )
+    return cleaned
 
 
 async def import_one_table(
@@ -180,8 +218,8 @@ async def import_one_table(
 
     jsonb_cols = _JSONB_COLUMNS.get(tgt_table, set())
 
-    # 1. 读 parquet
-    cols, raw_rows = _read_parquet_rows(data_dir, src_table)
+    # 1. 读 parquet（同步阻塞操作，放到线程池避免阻塞事件循环）
+    cols, raw_rows = await asyncio.to_thread(_read_parquet_rows, data_dir, src_table)
     if not raw_rows:
         log.warning(f"ETL: 源表 {src_table} 无数据，跳过")
         return 0
@@ -216,11 +254,15 @@ async def run_etl_pipeline(
     mapping_rules: list[MappingRuleModel],
     on_table_done: Callable[[str, int], Any] | None = None,
 ) -> dict[str, int]:
-    """运行完整 ETL 管线：逐表导入，每表独立提交。
+    """运行完整 ETL 管线：按源表分组逐表导入。
 
-    重要：调用方**不要**把此函数包在 `async with session.begin()` 块里，
-    否则会与 import_one_table 内部的 SAVEPOINT 行为冲突。
-    本函数对每张表独立提交，单表失败不影响其他表。
+    事务模型：
+    - 本函数不提交，调用方应在外层 `async with async_db_session()`
+      内运行并在结束时 commit；
+    - 单张表抛错时整体事务回滚（包括已 DELETE 旧数据），
+      对应 hospital 仍处于 mapping_configured 状态；
+    - 每张表内部把不预期的异常记录到 result 并继续处理后续表，
+      但不会自动重试或回滚已经 INSERT 的行。
 
     参数:
         db: 独立的数据库会话（调用方负责 begin/commit）

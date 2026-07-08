@@ -27,15 +27,16 @@ from .mapping_service import MappingRuleService
 from .service import HospitalService
 from .schema import (
     HospitalCreate,
+    HospitalDataSummaryOut,
     HospitalOut,
     HospitalUpdate,
     MappingRuleBatch,
     MappingRuleOut,
+    MappingTemplateDetailOut,
     TemplateOut,
     EtlImportResponse,
     EtlImportStatus,
 )
-from .service import HospitalService
 from .etl_service import EtlService
 
 HospitalRouter = APIRouter(route_class=OperationLogRoute, tags=["医院管理"])
@@ -98,33 +99,33 @@ async def get_hospital_page_controller(
 
 
 @HospitalRouter.get(
-    "/hospital/{id}",
+    "/hospital/{hospital_id}",
     summary="医院详情",
     description="获取医院详情（含租户关联信息）",
     response_model=ResponseSchema[HospitalOut],
 )
 async def get_hospital_detail_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
 ) -> JSONResponse:
     """医院详情。"""
-    result = await HospitalService.detail_service(auth=auth, id=id)
+    result = await HospitalService.detail_service(auth=auth, id=hospital_id)
     return SuccessResponse(data=result, msg="获取医院详情成功")
 
 
 @HospitalRouter.put(
-    "/hospital/{id}",
+    "/hospital/{hospital_id}",
     summary="更新医院信息",
     description="更新医院基本信息（不允许修改编码/租户/就绪状态）",
     response_model=ResponseSchema[HospitalOut],
 )
 async def update_hospital_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     data: HospitalUpdate,
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:edit"]))],
 ) -> JSONResponse:
     """更新医院信息。"""
-    result = await HospitalService.update_service(auth=auth, id=id, data=data)
+    result = await HospitalService.update_service(auth=auth, id=hospital_id, data=data)
     return SuccessResponse(data=result, msg="更新医院信息成功")
 
 
@@ -134,52 +135,52 @@ async def update_hospital_controller(
 
 
 @HospitalRouter.get(
-    "/hospital/{id}/mappings",
+    "/hospital/{hospital_id}/mappings",
     summary="查看医院映射规则",
     description="返回指定医院的全部字段映射规则",
     response_model=ResponseSchema[list[MappingRuleOut]],
 )
 async def list_mappings_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:query"]))],
 ) -> JSONResponse:
     """查看医院映射规则。"""
-    result = await MappingRuleService.list_service(auth=auth, hospital_id=id)
+    result = await MappingRuleService.list_service(auth=auth, hospital_id=hospital_id)
     return SuccessResponse(data=result, msg="获取映射规则成功")
 
 
 @HospitalRouter.put(
-    "/hospital/{id}/mappings",
+    "/hospital/{hospital_id}/mappings",
     summary="全量替换医院映射规则",
     description="全量替换该医院的映射规则集（先删除旧规则，再批量插入新规则）",
     response_model=ResponseSchema[list[MappingRuleOut]],
 )
 async def replace_mappings_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     data: MappingRuleBatch,
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:edit"]))],
 ) -> JSONResponse:
     """全量替换医院映射规则。"""
     result = await MappingRuleService.replace_service(
-        auth=auth, hospital_id=id, data=data
+        auth=auth, hospital_id=hospital_id, data=data
     )
     return SuccessResponse(data=result, msg="替换映射规则成功")
 
 
 @HospitalRouter.post(
-    "/hospital/{id}/mappings/apply-template",
+    "/hospital/{hospital_id}/mappings/apply-template",
     summary="应用映射模板到医院",
     description="将指定模板的规则全量替换到该医院（覆盖现有规则）",
     response_model=ResponseSchema[list[MappingRuleOut]],
 )
 async def apply_template_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     template_code: Annotated[str, Query(description="模板编码（如 zhujiang_xinqiao）")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:edit"]))],
 ) -> JSONResponse:
     """应用映射模板到医院。"""
     result = await MappingRuleService.apply_template_service(
-        auth=auth, hospital_id=id, template_code=template_code
+        auth=auth, hospital_id=hospital_id, template_code=template_code
     )
     return SuccessResponse(data=result, msg="应用模板成功")
 
@@ -207,7 +208,7 @@ async def list_templates_controller(
     "/mapping-templates/{template_code}",
     summary="映射模板详情",
     description="查看指定模板的完整规则列表",
-    response_model=ResponseSchema[dict],
+    response_model=ResponseSchema[MappingTemplateDetailOut],
 )
 async def get_template_controller(
     template_code: Annotated[str, Path(description="模板编码")],
@@ -226,34 +227,38 @@ async def get_template_controller(
 
 
 @HospitalRouter.post(
-    "/hospital/{id}/import",
+    "/hospital/{hospital_id}/import",
     summary="触发 ETL 数据导入",
     description="按映射规则将医院 data_dir 下的 parquet 导入 PostgreSQL；后台异步执行",
     response_model=ResponseSchema[EtlImportResponse],
 )
 async def trigger_import_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     redis: Annotated[Redis, Depends(redis_getter)],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:import"]))],
 ) -> JSONResponse:
     """触发 ETL 导入。"""
-    result = await EtlService.trigger_import_service(auth=auth, hospital_id=id, redis=redis)
+    result = await EtlService.trigger_import_service(
+        auth=auth, hospital_id=hospital_id, redis=redis
+    )
     return SuccessResponse(data=result, msg="导入任务已触发")
 
 
 @HospitalRouter.get(
-    "/hospital/{id}/import/status",
+    "/hospital/{hospital_id}/import/status",
     summary="查询 ETL 导入状态",
     description="查询医院最近一次 ETL 导入任务的状态（pending/running/completed/failed）",
     response_model=ResponseSchema[EtlImportStatus],
 )
 async def get_import_status_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     redis: Annotated[Redis, Depends(redis_getter)],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
 ) -> JSONResponse:
     """查询 ETL 导入状态。"""
-    result = await EtlService.get_import_status_service(hospital_id=id, redis=redis)
+    result = await EtlService.get_import_status_service(
+        hospital_id=hospital_id, redis=redis
+    )
     return SuccessResponse(data=result, msg="获取导入状态成功")
 
 
@@ -263,45 +268,47 @@ async def get_import_status_controller(
 
 
 @HospitalRouter.get(
-    "/hospital/{id}/data-summary",
+    "/hospital/{hospital_id}/data-summary",
     summary="医院数据摘要",
     description="查询医院各业务表的行数，供上线前校验",
-    response_model=ResponseSchema[dict],
+    response_model=ResponseSchema[HospitalDataSummaryOut],
 )
 async def get_data_summary_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
 ) -> JSONResponse:
     """医院数据摘要。"""
-    result = await HospitalService.get_data_summary_service(auth=auth, id=id)
+    result = await HospitalService.get_data_summary_service(
+        auth=auth, id=hospital_id
+    )
     return SuccessResponse(data=result, msg="获取数据摘要成功")
 
 
 @HospitalRouter.post(
-    "/hospital/{id}/online",
+    "/hospital/{hospital_id}/online",
     summary="上线医院",
     description="data_imported → live，需先完成数据导入",
     response_model=ResponseSchema[HospitalOut],
 )
 async def go_online_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:online"]))],
 ) -> JSONResponse:
     """上线医院。"""
-    result = await HospitalService.go_online_service(auth=auth, id=id)
+    result = await HospitalService.go_online_service(auth=auth, id=hospital_id)
     return SuccessResponse(data=result, msg="医院上线成功")
 
 
 @HospitalRouter.post(
-    "/hospital/{id}/offline",
+    "/hospital/{hospital_id}/offline",
     summary="下线医院",
     description="live → data_imported，下线后可重新编辑映射和导入",
     response_model=ResponseSchema[HospitalOut],
 )
 async def go_offline_controller(
-    id: Annotated[int, Path(description="医院ID")],
+    hospital_id: Annotated[int, Path(description="医院ID")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:offline"]))],
 ) -> JSONResponse:
     """下线医院。"""
-    result = await HospitalService.go_offline_service(auth=auth, id=id)
+    result = await HospitalService.go_offline_service(auth=auth, id=hospital_id)
     return SuccessResponse(data=result, msg="医院下线成功")

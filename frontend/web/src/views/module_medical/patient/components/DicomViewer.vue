@@ -65,7 +65,6 @@
           </div>
           <div class="overlay-br">
             <div>WW {{ Math.round(windowWidth) }} / WL {{ Math.round(windowCenter) }}</div>
-            <div v-if="probeValue != null">HU: {{ probeValue }}</div>
           </div>
         </div>
       </div>
@@ -143,6 +142,7 @@ import {
   Enums as CsEnums,
   eventTarget,
   getRenderingEngine,
+  imageLoader,
 } from "@cornerstonejs/core";
 import {
   init as initTools,
@@ -164,8 +164,15 @@ import {
 const { MouseBindings } = ToolEnums;
 import dicomImageLoader from "@cornerstonejs/dicom-image-loader";
 
-/** cornerstone ToolGroup 实例类型（用 any 规避类型导出差异） */
-type IToolGroup = any;
+/** 最小 ToolGroup 接口（仅声明用到的方法），避免全 any 丢失类型保护 */
+interface IToolGroup {
+  addTool: (name: string) => void;
+  addToolInstance: (name: string, instanceId: string) => void;
+  addViewport: (viewportId: string, engineId: string) => void;
+  setToolActive: (name: string, opts?: { bindings?: Array<{ mouseButton: number }> }) => void;
+  setToolPassive: (name: string) => void;
+  destroy: () => void;
+}
 import DicomAPI, {
   type DicomStudy,
   type DicomSeries,
@@ -198,7 +205,6 @@ const loadingImage = ref(false);
 const activeTool = ref<string>("WindowLevel");
 const windowWidth = ref(0);
 const windowCenter = ref(0);
-const probeValue = ref<number | null>(null);
 
 const viewportRef = ref<HTMLDivElement | null>(null);
 const instanceCount = computed(() => instanceList.value.length);
@@ -282,10 +288,14 @@ function createToolGroup() {
  * 必须用绝对 URL：cornerstone 的 wadouri loader 用 XMLHttpRequest，
  * 相对路径在某些浏览器/worker 场景下无法正确解析，导致请求不发。
  * 前端经 vite proxy（/api/v1 → 后端），故 origin 用当前页面 origin 即可。
+ * 可通过 VITE_DICOM_API_BASE 覆盖，便于在不同部署/反代路径下调整。
  */
+const DICOM_API_BASE =
+  (import.meta.env.VITE_DICOM_API_BASE as string) ||
+  `${window.location.origin}/api/v1/medical/dicom/instances`;
+
 function buildImageId(sopUid: string): string {
-  const base = `${window.location.origin}/api/v1/medical/dicom/instances`;
-  return `wadouri:${base}/${sopUid}`;
+  return `wadouri:${DICOM_API_BASE}/${encodeURIComponent(sopUid)}`;
 }
 
 // ===================================================================== //
@@ -295,6 +305,8 @@ async function loadStudy() {
   if (!props.studyId) return;
   loadingImage.value = true;
   try {
+    // NOTE: 当前全量拉 studies 再前端过滤；后端若新增 GET /dicom/studies/{studyId}
+    // 可改为单点查询以减少传输量。
     const [studyRes, seriesRes] = await Promise.all([
       DicomAPI.listStudies(),
       DicomAPI.listSeries(props.studyId),
@@ -317,8 +329,8 @@ async function loadStudy() {
   }
 }
 
-async function selectSeries(seriesUid: string) {
-  if (seriesUid === activeSeriesUid.value && instanceList.value.length) return;
+async function selectSeries(seriesUid: string, force = false) {
+  if (!force && seriesUid === activeSeriesUid.value && instanceList.value.length) return;
   activeSeriesUid.value = seriesUid;
   loadingImage.value = true;
   try {
@@ -385,8 +397,6 @@ async function renderStack() {
   viewport.element.addEventListener(CsEnums.Events.STACK_VIEWPORT_SCROLL, onStackScroll);
   // 窗位改变事件
   eventTarget.addEventListener(CsEnums.Events.VOI_MODIFIED, onVoiModified);
-  // 探针：鼠标移动显示 HU
-  eventTarget.addEventListener(ToolEnums.Events.MOUSE_MOVE, onProbeMove);
 
   // 立即渲染首张
   renderingEngine.renderViewports([VIEWPORT_ID]);
@@ -420,9 +430,7 @@ function prefetchNeighbors(viewport: any) {
   neighbors.forEach((id: string) => {
     try {
       // 异步预取，不阻塞渲染
-      import("@cornerstonejs/core").then(({ imageLoader }) => {
-        imageLoader.loadImage(id).catch(() => {});
-      });
+      imageLoader.loadImage(id).catch(() => {});
     } catch {
       /* ignore */
     }
@@ -439,16 +447,25 @@ function onVoiModified(evt: any) {
   }
 }
 
-function onProbeMove(_evt: any) {
-  // Probe 工具激活时，点击/悬停会自动在标注里显示 HU 值，无需手动取值。
-  // 此处仅作为事件占位（保留钩子便于后续扩展实时 HU 状态栏）。
-}
-
 // ===================================================================== //
 // 工具与窗位操作
 // ===================================================================== //
+// 先把所有可绑定到鼠标左键的工具置为 passive，避免 setActiveTool 后多工具同时响应左键
+const PRIMARY_TOOLS = [
+  "WindowLevel",
+  "Zoom",
+  "Pan",
+  "Length",
+  "Angle",
+  "Probe",
+  "RectangleROI",
+];
+
 function setActiveTool(toolName: string) {
   if (!toolGroup) return;
+  PRIMARY_TOOLS.forEach((name) => {
+    if (name !== toolName) toolGroup!.setToolPassive(name);
+  });
   activeTool.value = toolName;
   // 左键绑定到激活工具
   toolGroup.setToolActive(toolName, {
@@ -493,11 +510,14 @@ function resetView() {
 }
 
 function clearMeasurements() {
-  // 清除所有测量标注。getAllAnnotations() 不需要参数。
+  // 仅清除绑定到当前 viewport element 的标注，避免影响其他实例
+  const element = viewportRef.value;
   const annots = toolsAnnotation.state.getAllAnnotations?.() || [];
-  annots.forEach((a: any) => {
-    toolsAnnotation.state.removeAnnotation?.(a.annotationUID);
-  });
+  annots
+    .filter((a: any) => !element || a.metadata?.element === element)
+    .forEach((a: any) => {
+      toolsAnnotation.state.removeAnnotation?.(a.annotationUID);
+    });
   renderingEngine?.renderViewports([VIEWPORT_ID]);
 }
 
@@ -509,7 +529,6 @@ function destroyEngine() {
   const vp = renderingEngine?.getViewport(VIEWPORT_ID);
   vp?.element?.removeEventListener(CsEnums.Events.STACK_VIEWPORT_SCROLL, onStackScroll);
   eventTarget.removeEventListener(CsEnums.Events.VOI_MODIFIED, onVoiModified);
-  eventTarget.removeEventListener(ToolEnums.Events.MOUSE_MOVE, onProbeMove);
   // 销毁 engine（含 viewport + canvas）
   const existing = getRenderingEngine(ENGINE_ID);
   if (existing) {

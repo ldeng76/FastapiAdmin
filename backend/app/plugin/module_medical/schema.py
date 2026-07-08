@@ -33,3 +33,13 @@ class PatientDetailOut(BaseModel):
     genetic: list[dict[str, Any]] = Field(default_factory=list, description="基因模态：基因检测记录")
     pathology: list[dict[str, Any]] = Field(default_factory=list, description="病理模态：病理标本")
     imaging: list[dict[str, Any]] = Field(default_factory=list, description="影像模态：影像学报告/结节影像")
+
+
+class PatientPageOut(BaseModel):
+    """患者分页响应（与 controller response_model 一致）。"""
+
+    page_no: int = Field(..., description="页码（从 1 开始）")
+    page_size: int = Field(..., description="每页大小")
+    total: int = Field(..., description="总行数")
+    has_next: bool = Field(..., description="是否还有下一页")
+    items: list[PatientListOut] = Field(default_factory=list, description="当前页患者列表")

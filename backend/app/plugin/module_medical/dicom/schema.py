@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
@@ -54,10 +52,4 @@ class DicomStudyDetailOut(BaseModel):
     """study_id → 其下所有 series（含 series 元信息）。"""
 
     study_id: str
-    series: list[SeriesOut]
-
-
-# ResponseSchema[...] 需要一个 dict 友好的容器类型，这里给出列表项泛型承载
-InstanceListOut = list[dict[str, Any]]
-SeriesListOut = list[dict[str, Any]]
-StudyListOut = list[dict[str, Any]]
+    series: list[SeriesOut] = Field(default_factory=list, description="序列列表")

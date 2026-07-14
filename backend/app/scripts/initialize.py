@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.module_system.dept.model import DeptModel
@@ -14,7 +14,8 @@ from app.api.v1.module_system.role.model import RoleModel
 from app.api.v1.module_system.tenant.model import TenantConfigModel, TenantModel
 from app.api.v1.module_system.user.model import UserModel, UserRolesModel
 from app.config.path_conf import SCRIPT_DIR
-from app.core.database import async_db_session, create_tables
+from app.config.setting import settings
+from app.core.database import async_db_session, async_engine, create_tables
 from app.core.logger import log
 
 
@@ -45,11 +46,44 @@ class InitializeData:
     async def __init_create_table(self) -> None:
         """
         初始化表结构（第一阶段）
+
+        注意：PostgreSQL 中序列 (SEQUENCE) 不在事务内，经历多次建表 / 测试后，
+        自增序列的当前值可能大于 1，导致依赖固定 id（如 sys_tenant.id=1）的种子表
+        在插入时因外键不匹配而失败。建表完成后统一把涉及种子的序列重置为 1。
         """
         try:
             # 使用引擎创建所有表
             # await drop_tables()
             await create_tables()
+            # PostgreSQL: 重置与种子数据相关的序列，确保首条 id = 1
+            if settings.DATABASE_TYPE == "postgres":
+                async with async_engine.begin() as conn:
+                    # 找出 lnrs schema 下所有关联到 SERIAL/IDENTITY 列的序列，逐个重置到 max(id)
+                    result = await conn.execute(
+                        text(
+                            "SELECT seq.relname AS seq_name, tab.relname AS table_name "
+                            "FROM pg_class seq "
+                            "JOIN pg_depend d ON d.objid = seq.oid AND d.refobjsubid > 0 "
+                            "JOIN pg_class tab ON d.refobjid = tab.oid "
+                            "JOIN pg_namespace n ON seq.relnamespace = n.oid "
+                            "WHERE seq.relkind = 'S' AND n.nspname = 'lnrs'"
+                        )
+                    )
+                    for seq_name, table_name in result.fetchall():
+                        try:
+                            r2 = await conn.execute(
+                                text(f'SELECT max(id) FROM lnrs."{table_name}"')
+                            )
+                            max_id = r2.scalar() or 0
+                            # setval 最小值为 1, 故至少设为 1; 下一 次 nextval 返回 max(1, max_id)+1
+                            safe_id = max(max_id, 1)
+                            await conn.execute(
+                                text(f"SELECT setval('{seq_name}', {safe_id}, true)")
+                            )
+                        except Exception:
+                            # 表可能不含 id 列,跳过
+                            pass
+                log.info("✅ PostgreSQL 序列已对齐到各表 max(id)")
         except asyncio.exceptions.TimeoutError:
             log.error("❌️ 数据库表结构初始化超时")
             raise

@@ -1,0 +1,38 @@
+# ============================================
+# lnrs 本地开发部署：PostgreSQL
+# Redis 使用本地 Windows 版 (C:\Program Files\Redis)
+# 使用方式：docker compose -f lnrs-dev.yaml up -d
+# ============================================
+
+services:
+  postgres:
+    container_name: lnrs_postgres
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      TZ: "Asia/Shanghai"
+      POSTGRES_USER: "lnrs"
+      POSTGRES_PASSWORD: "lnrs_pwd"
+      POSTGRES_DB: "postgres"
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lnrs -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - lnrs_net
+
+volumes:
+  pg_data:
+    driver: local
+
+networks:
+  lnrs_net:
+    driver: bridge

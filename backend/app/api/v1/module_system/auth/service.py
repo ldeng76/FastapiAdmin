@@ -548,13 +548,16 @@ class CaptchaService:
         - redis (Redis): Redis客户端对象
 
         返回:
-        - dict[str, CaptchaKey | CaptchaBase64]: 包含验证码key和base64图片的字典
-
-        异常:
-        - CustomException: 验证码服务未启用时抛出异常
+        - dict[str, CaptchaKey | CaptchaBase64]: 包含验证码key和base64图片的字典；
+          若 CAPTCHA_ENABLE=False 则返回 enable=False 的空壳响应（前端据此隐藏验证码输入）。
         """
+        # 未启用验证码：返回正常响应（enable=False），不当作错误抛出
         if not settings.CAPTCHA_ENABLE:
-            raise CustomException(msg="未开启验证码服务")
+            return CaptchaOutSchema(
+                enable=False,
+                key="",
+                img_base="",
+            ).model_dump()
 
         # 生成验证码图片和值
         captcha_base64, captcha_value = CaptchaUtil.captcha_arithmetic()

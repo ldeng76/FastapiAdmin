@@ -88,3 +88,15 @@ docs/zhujiang_xinqiao_parq/_preflight/
 docs/zhujiang_xinqiao_parq/_logs/
 # 后端运行时产物
 backend/.run/
+/docs/demodata/CT与病理数据.csv
+/docs/demodata/01_disk_zhujiang_dicom_yd20230826_ct.txt
+/docs/demodata/01_disk_zhujiang_dicom_all.txt
+workspace
+01_disk_字段与原始数据_2新桥
+
+# 本地 POC/调试脚本与产物
+*_poc.py
+backend/data/
+*.png
+ui_*.png
+login.png

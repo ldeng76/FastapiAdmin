@@ -100,3 +100,8 @@ backend/data/
 *.png
 ui_*.png
 login.png
+# 需求原始资料（docs/sour/）下的 png 截图需要入库
+!docs/sour/*.png
+
+# 本地真实病例样本数据（DICOM 解压目录，约 200MB+，不入库）
+docs/demodata/朱龙/

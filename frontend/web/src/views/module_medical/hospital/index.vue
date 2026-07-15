@@ -161,6 +161,7 @@ const {
         formatter: (row) => (row.last_import_time ? row.last_import_time.replace("T", " ").slice(0, 19) : "-"),
       },
       {
+        prop: "__operation__",
         label: "操作",
         minWidth: 260,
         align: "left",

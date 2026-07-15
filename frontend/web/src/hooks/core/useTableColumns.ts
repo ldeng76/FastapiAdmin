@@ -12,6 +12,7 @@ const SPECIAL_COLUMNS: Record<string, { prop: string; label: string }> = {
   selection: { prop: "__selection__", label: $t("table.column.selection") },
   expand: { prop: "__expand__", label: $t("table.column.expand") },
   index: { prop: "__index__", label: $t("table.column.index") },
+  globalIndex: { prop: "__global_index__", label: $t("table.column.index") },
 };
 
 export const getColumnKey = <T>(col: ColumnOption<T>) =>

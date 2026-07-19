@@ -41,6 +41,11 @@ def _validate_where(v: str | None, *, field: str) -> str | None:
     """校验 WHERE 子句: 仅配置文件可信来源使用; 禁止分号/注释/DDL/DML 多语句。
 
     返回清理后的字符串, 失败抛 ValueError。
+
+    列引用规则 (2026-07-19 新增: 支持双引号包裹的中文/点号列名):
+    - 简单标识符 (英文/数字/下划线): 直接写 EXAM_CLASS / IMPRESSION
+    - 中文/点号/带空格的列名: 必须用双引号包裹, 如 "检查报告.检查类别"
+    - 双引号内的内容不做 _FORBIDDEN_TOKEN_RE 校验 (因为只是列名)
     """
     if v is None:
         return None
@@ -51,7 +56,12 @@ def _validate_where(v: str | None, *, field: str) -> str | None:
         return None
     if ";" in s:
         raise ValueError(f"{field}: 含 ';' (禁止多语句)")
-    bad = _FORBIDDEN_TOKEN_RE.search(s)
+    # 把所有双引号包裹的字符串块 (列名/字面量) 替换成占位符,
+    # 这样 _FORBIDDEN_TOKEN_RE 不会误伤列名里的关键字 (如 'select' 出现在列名)
+    # 占位符用不会被 _FORBIDDEN_TOKEN_RE 命中的 token
+    PLACEHOLDER = "__QUOTED_LITERAL__"
+    masked = re.sub(r'"[^"]*"', PLACEHOLDER, s)
+    bad = _FORBIDDEN_TOKEN_RE.search(masked)
     if bad:
         raise ValueError(f"{field}: 含禁用 token {bad.group(0)!r}")
     return s
@@ -131,11 +141,10 @@ class SheetSpec(BaseModel):
             "可选 SQL WHERE 子句 (不含 WHERE 关键字本身), 用于行级过滤。"
             "仅 ETL-1 配置文件使用, 不接受 HTTP 输入; "
             "禁止分号/注释/DDL/DML 多语句 (见 _validate_where)。\n"
-            "⚠️ WHERE 中引用的列名必须是**简单标识符** (英文/数字/下划线, "
-            "且不以数字开头), 例如 'EXAM_CLASS' / 'IMPRESSION'; "
-            "**不支持**带中文/点号/空格的 Excel 全路径列名 "
-            "(如 '非隐私信息.患者基本信息.患者编号') — "
-            "core.py 拼接时不会做 _quote_ident 转义。"
+            "列引用规则:\n"
+            "- 简单标识符 (英文/数字/下划线): 直接写 EXAM_CLASS / IMPRESSION\n"
+            "- 中文/点号/带空格的列名: 必须用双引号包裹, 如 `\"检查报告.检查类别\"`\n"
+            "- 双引号内的字符串内容不做禁用 token 校验 (列名仅作字面量)"
         ),
     )
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import OrderedDict
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -31,6 +32,7 @@ from app.config.path_conf import BASE_DIR
 from app.core.logger import log
 
 from .config import CenterConfig, ColumnSpec, DerivedSpec, SheetSpec
+from .csv_reader import CsvReader
 from .excel_reader import ExcelReader, SheetView, build_column_map, normalize_header
 from .transforms import TRANSFORMS, cast_expr_for_type
 
@@ -198,7 +200,7 @@ def _register_python_udfs(con) -> None:
 # ---------------- 单 sheet 主流程 ----------------
 
 def _process_single_sheet(
-    reader: ExcelReader,
+    reader: "ExcelReader | CsvReader",
     con,
     spec: SheetSpec,
     out_path: Path,
@@ -250,6 +252,115 @@ def _process_single_sheet(
     ).fetchone()[0]
     log.info("ETL1: {} → {} 行 (parquet {} KB)",
              out_path.name, cnt, out_path.stat().st_size // 1024)
+    return cnt
+
+
+def _process_union_sheets(
+    reader: "ExcelReader | CsvReader",
+    con,
+    spec_list: list[SheetSpec],
+    out_path: Path,
+) -> int:
+    """多 SheetSpec 合并到同一 target_table (UNION ALL + 跨源 dedup)。
+
+    2026-07-19 新增 (xinqiao 多子目录同表合并需求):
+    - 每个 spec 各自 read_sheet + SQL cast 成统一列集
+    - UNION ALL 外层 SELECT DISTINCT (用全部列去重, 等价于 dedup_key 全列 dedup)
+    - 要求: 各 spec 的列集 (tgt) 必须完全一致; 不一致抛 ValueError
+
+    2026-07-19 review fix (HIGH 1 + HIGH 2):
+    - 校验改为列顺序也需一致 (UNION ALL 按位置对齐)
+    - 跨源 dedup 改为按 dedup_key (而非全列), 避免长文本微小差异导致同 exam_id 漏去重
+
+    返回: 写入行数
+    """
+    target_table = spec_list[0].target_table
+    log.info("ETL1: UNION 处理 {} 个 sheet → {}",
+             len(spec_list), out_path.name)
+
+    # 校验所有 spec 的列集 + 列顺序一致 (UNION ALL 按位置对齐)
+    first_order = [c.tgt for c in spec_list[0].columns]
+    first_cols_set = set(first_order)
+    for spec in spec_list[1:]:
+        cur_order = [c.tgt for c in spec.columns]
+        cur_cols_set = set(cur_order)
+        if cur_order != first_order or cur_cols_set != first_cols_set:
+            only_first = first_cols_set - cur_cols_set
+            only_cur = cur_cols_set - first_cols_set
+            raise ValueError(
+                f"target_table={target_table!r} 的 SheetSpec 列集或列顺序不一致:\n"
+                f"  {spec_list[0].sheet_name}: {first_order}\n"
+                f"  {spec.sheet_name}: {cur_order}\n"
+                f"  差集 (只在第一份): {sorted(only_first)}\n"
+                f"  差集 (只在当前):  {sorted(only_cur)}"
+            )
+
+    # 跨源 dedup_key: 取各 spec dedup_key 的并集; 若任一 spec 没设, 退化为全列去重
+    cross_dedup_keys: list[str] = []
+    for spec in spec_list:
+        for k in spec.dedup_key:
+            if k not in cross_dedup_keys:
+                cross_dedup_keys.append(k)
+    # dedup_key 必须出现在列集里
+    cross_dedup_keys = [k for k in cross_dedup_keys if k in first_cols_set]
+
+    # 拼接每个 spec 的 SELECT 子查询
+    sub_queries = []
+    for spec in spec_list:
+        sv = reader.read_sheet(spec.sheet_name)
+        tgt_to_expr, missing, _ = _build_select_for_sheet(sv, spec)
+        if missing:
+            raise ValueError(
+                f"sheet {spec.sheet_name!r} 缺少 required 列: {missing}"
+            )
+        # 各 spec 内 SELECT DISTINCT (行内去重)
+        select_kw = "SELECT DISTINCT" if spec.dedup_key else "SELECT"
+        select_cols = ", ".join(
+            f"{expr} AS {_quote_ident(tgt)}" for tgt, expr in tgt_to_expr.items()
+        )
+        where_clause = f"WHERE {spec.where}" if spec.where else ""
+        sub = f"""
+            {select_kw}
+                {select_cols}
+            FROM {sv.view_name}
+            {where_clause}
+        """
+        sub_queries.append(sub)
+
+    union_sql = "\n            UNION ALL\n            ".join(sub_queries)
+
+    # 跨源 dedup: 按 dedup_key (若有) 或全列 (退化)
+    if cross_dedup_keys:
+        keys_quoted = ", ".join(_quote_ident(k) for k in cross_dedup_keys)
+        # 用 ROW_NUMBER() 保留每组 dedup_key 的第一行
+        # (DuckDB 支持 QUALIFY 子句, 比 DISTINCT ON 更标准)
+        outer_select = f"""
+            SELECT * FROM (
+                {union_sql}
+            ) QUALIFY ROW_NUMBER() OVER (PARTITION BY {keys_quoted}) = 1
+        """
+    else:
+        outer_select = f"""
+            SELECT DISTINCT * FROM (
+                {union_sql}
+            ) AS _u
+        """
+
+    sql = f"""
+        COPY (
+            {outer_select}
+        ) TO '{out_path.as_posix().replace(chr(39), chr(39)+chr(39))}'
+        (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
+    """
+    log.debug("ETL1: UNION SQL (first 300 chars): {}", sql[:300])
+    con.execute(sql)
+
+    cnt = con.execute(
+        "SELECT count(*) FROM read_parquet(?)", [out_path.as_posix()]
+    ).fetchone()[0]
+    log.info("ETL1: {} → {} 行 (UNION of {} sheets, dedup_keys={}, parquet {} KB)",
+             out_path.name, cnt, len(spec_list),
+             cross_dedup_keys or "(全列)", out_path.stat().st_size // 1024)
     return cnt
 
 
@@ -344,9 +455,16 @@ def run_etl1(
 ) -> dict[str, int]:
     """ETL-1 主入口。
 
+    ⚠️ 参数名兼容性: 第一参数 `xlsx_path` 为历史遗留命名 (xlsx 时代)。
+    自 source_kind='csv' 引入后, 实际语义已扩展为"源数据路径":
+        - source_kind='xlsx' 时: Excel 文件路径 (shengyi / zhujiang)
+        - source_kind='csv' 时:  CSV 目录路径 (xinqiao), 内含 .csv 文件
+    caller (service.py / __main__.py) 仍以 `xlsx_path` 命名调用, 保持向后兼容;
+    后续 service.py 也支持 CSV 时, 可考虑统一改名为 data_path。
+
     参数:
         center: CenterConfig (从 get_center_config(code) 取)
-        xlsx_path: Excel 文件路径
+        xlsx_path: 源数据路径 (见上方兼容性说明)
         out_dir: 输出目录 (None 则用 center.output_dir)
         on_table_done: 每张表完成回调 (table_name, row_count)
         dry_run: True 时只解析不写文件 (校验配置用)
@@ -356,9 +474,18 @@ def run_etl1(
     """
     resolved_out = _resolve_out_dir(out_dir or center.output_dir)
     resolved_out.mkdir(parents=True, exist_ok=True)
-    log.info("ETL1: 启动 center={} out={} dry_run={}", center.code, resolved_out, dry_run)
+    log.info("ETL1: 启动 center={} source_kind={} out={} dry_run={}",
+             center.code, center.source_kind, resolved_out, dry_run)
 
-    reader = ExcelReader(xlsx_path)
+    # 工厂: 按 center.source_kind 选择 reader (2026-07-19 新增 CSV 分支)
+    if center.source_kind == "xlsx":
+        reader = ExcelReader(xlsx_path)
+    elif center.source_kind == "csv":
+        reader = CsvReader(xlsx_path)
+    else:
+        raise ValueError(
+            f"不支持的 source_kind: {center.source_kind!r} (center={center.code})"
+        )
     reader.ensure_loaded()
     con = reader.con
     _register_python_udfs(con)
@@ -370,22 +497,36 @@ def run_etl1(
 
     try:
         # 阶段 1: 单 sheet 直接转换
+        # 2026-07-19 重构 (xinqiao 多源同表合并需求):
+        #   同一 target_table 的多个 SheetSpec 用 UNION ALL 合并到一次 COPY,
+        #   而不是顺序覆盖写 (后者会丢前批数据)
+        # 收集所有 single_spec, 按 target_table 分组
         single_specs = list(center.universal_tables) + list(center.hospital_tables)
-        for spec in single_specs:
-            if not _want(spec.target_table):
-                continue
+        wanted_specs = [s for s in single_specs if _want(s.target_table)]
+
+        # 按 target_table 分组 (保留顺序, 便于 dry_run 输出)
+        grouped: "OrderedDict[str, list[SheetSpec]]" = OrderedDict()
+        for spec in wanted_specs:
+            grouped.setdefault(spec.target_table, []).append(spec)
+
+        for target_table, spec_list in grouped.items():
+            out_path = _safe_target_path(resolved_out, target_table)
             if dry_run:
-                sv = reader.read_sheet(spec.sheet_name)
-                _, missing, _ = _build_select_for_sheet(sv, spec)
-                if missing:
-                    raise ValueError(f"{spec.target_table}: 缺列 {missing}")
-                stats[spec.target_table] = -1
+                # 校验所有 spec 的列
+                for spec in spec_list:
+                    sv = reader.read_sheet(spec.sheet_name)
+                    _, missing, _ = _build_select_for_sheet(sv, spec)
+                    if missing:
+                        raise ValueError(f"{target_table}: 缺列 {missing}")
+                stats[target_table] = -1
                 continue
-            out_path = _safe_target_path(resolved_out, spec.target_table)
-            n = _process_single_sheet(reader, con, spec, out_path)
-            stats[spec.target_table] = n
+            if len(spec_list) == 1:
+                n = _process_single_sheet(reader, con, spec_list[0], out_path)
+            else:
+                n = _process_union_sheets(reader, con, spec_list, out_path)
+            stats[target_table] = n
             if on_table_done:
-                on_table_done(spec.target_table, n)
+                on_table_done(target_table, n)
 
         # 阶段 2: 跨 sheet 合并
         for spec in center.derived_tables:

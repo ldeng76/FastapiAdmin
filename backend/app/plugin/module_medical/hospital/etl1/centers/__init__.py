@@ -8,6 +8,7 @@ from __future__ import annotations
 
 # 触发 register_center 副作用
 from . import shengyi as _shengyi  # noqa: F401
+from . import xinqiao as _xinqiao  # noqa: F401
 from . import zhujiang as _zhujiang  # noqa: F401
 
-__all__ = ["shengyi", "zhujiang"]
+__all__ = ["shengyi", "xinqiao", "zhujiang"]

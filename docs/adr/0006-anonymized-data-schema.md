@@ -60,20 +60,44 @@ phi_audit ── 任何含 PHI 的字段被脱敏时写一行 (field, src_hash, 
 约束：
 - `(secret_version, key_fingerprint, schema_hash)` 上建复合索引——查找"用 V2 密钥 + V3 规则洗出来的全部批次"。
 
-#### 2. `lnrs_anon_patient` — 病人主表
+#### 2. `lnrs_anon_patient` — 病人主表（双 ID 体系：百万级对外 PK + 内部反查键）
+
+> **Rev 2026-07-19 改造**：引入百万级对外 ID `patient_id` 并直接当 PK；HMAC `anon_id` 降级为内部反查键。`patient_seq` 已合并入 `patient_id`，不再单独保留 BIGINT 序号列。详见 [ADR-0001 Revision](./0001-linkable-anonymization.md#revision-2026-07-19-引入百万级对外-id-patient_id省去物理-patient_seq)。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
-| `anon_id` | VARCHAR(32) PK | `ANON_<12位hex>`，与 ADR-0001 一致 |
-| `center_code` | VARCHAR(32) NOT NULL | 用于跨中心碰撞防御（不参与唯一性，仅冗余） |
+| `patient_id` | VARCHAR(16) **PK** | **对外业务 ID + 物理主键**：`PT_` + 8 位 zero-pad（如 `PT_00000001`）；由 SEQUENCE 格式化而来 |
+| `anon_id` | VARCHAR(32) UNIQUE NOT NULL | **内部反查键**：`ANON_` + HMAC-SHA256[:12]（保留供密钥持有者反算） |
+| `center_code` | VARCHAR(32) NOT NULL | 跨中心碰撞防御 |
 | `birth_year` | SMALLINT | 只保留年份；月日清零 |
 | `sex` | ENUM('M','F','U') | |
 | `created_batch_id` | UUID FK → `lnrs_anon_ingest_batch` | 首次出现批次；后续 update 仅刷新 last_seen |
 | `last_seen_batch_id` | UUID FK → `lnrs_anon_ingest_batch` | |
 | `created_at` / `updated_at` | TIMESTAMP | |
+| `deleted_at` | TIMESTAMP NULL | **软删除标记**：NULL = 活跃；非空 = 已软删。重新导入时复用 |
+| `deleted_reason` | VARCHAR(64) NULL | 软删原因（合规/误操作/纠错） |
+| `deleted_batch_id` | UUID NULL FK → `lnrs_anon_ingest_batch` | 触发软删的批次 |
 
 约束：
-- `(center_code, anon_id)` 复合唯一（同中心不可能两个相同 anon）
+- `PRIMARY KEY (patient_id)` — 对外业务 ID 即 PK
+- `UNIQUE (anon_id)` — 内部反查键（**包含已软删行**——保证复活时仍唯一）
+- `UNIQUE (center_code, anon_id)` — 同一中心 HMAC 不重
+- `CHECK (patient_id ~ '^PT_[0-9]{8}$')` — 格式与 8 位 zero-pad 上限兜底
+- `CHECK (anon_id ~ '^ANON_[0-9a-f]{12}$')` — HMAC 格式校验
+
+索引：
+- `lnrs_anon_ix_patient_center` ON `(center_code)`
+- `lnrs_anon_ix_patient_birth` ON `(birth_year)`
+- `lnrs_anon_ix_patient_anon_id` ON `(anon_id)` — 反查路径（**含软删行**）
+- `lnrs_anon_ix_patient_deleted` ON `(deleted_at) WHERE deleted_at IS NOT NULL` — 物理清理用部分索引
+
+应用层生成规则：
+1. **首次导入**：取 `nextval('lnrs_anon_patient_seq')` 得 seq → 应用层拼 `patient_id = "PT_" || LPAD(seq::text, 8, '0')` → INSERT，`deleted_at = NULL`
+2. **同步生成 `anon_id = "ANON_" + HMAC-SHA256(secret, center + PAT_LOCAL_ID)[:12]`**
+3. **重复导入（活）**：先按 `(anon_id, deleted_at IS NULL)` 查得原 `patient_id` → 复用，不重新发号
+4. **重新导入（软删）**：按 `(anon_id, deleted_at IS NOT NULL)` 查得原 `patient_id` → **复活**：`UPDATE deleted_at = NULL, deleted_reason = NULL, deleted_batch_id = NULL`，复用
+5. **物理清理（PURGE）**：`DELETE WHERE deleted_at < NOW() - INTERVAL '90 days'` —— 由治理团队手动触发，触发子表 CASCADE
+6. **反查**：持密钥者重算 `anon_id` → JOIN 查到 `patient_id`（不限 `deleted_at`，可查历史）
 
 #### 3. `lnrs_anon_exam` — 检查主表（跨模态桥梁）
 

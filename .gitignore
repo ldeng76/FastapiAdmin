@@ -113,3 +113,6 @@ shengyi_valid_dicom_and_record
 shengyi
 /docs/demodata/ct_data.xlsx
 zhujiang
+
+# 珠江-新桥 parquet 原始数据文件（体积大，不入库）
+docs/zhujiang_xinqiao_parq/*.parquet

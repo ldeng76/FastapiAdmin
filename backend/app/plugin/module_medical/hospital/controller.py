@@ -36,8 +36,12 @@ from .schema import (
     TemplateOut,
     EtlImportResponse,
     EtlImportStatus,
+    Etl1RunRequest,
+    Etl1RunResponse,
+    Etl1Status,
 )
 from .etl_service import EtlService
+from .etl1.service import Etl1Service
 
 HospitalRouter = APIRouter(route_class=OperationLogRoute, tags=["医院管理"])
 
@@ -260,6 +264,62 @@ async def get_import_status_controller(
         hospital_id=hospital_id, redis=redis
     )
     return SuccessResponse(data=result, msg="获取导入状态成功")
+
+
+# =========================================================================== #
+# M3b：ETL-1 (Excel → Parquet) — 多医院源数据落地
+# =========================================================================== #
+# 触发: 上传医院原始 Excel (含中文长字段名、inline string cell),
+#       按 center config 转换为标准 snake_case 英文字段的 parquet,
+#       输出到 data/<center>/*.parquet, 供 ETL-2 后续导入 PG。
+# 不依赖 mapping rule (用 center config, 配置在 centers/<code>.py)。
+
+
+@HospitalRouter.post(
+    "/hospital/{hospital_id}/etl1/run",
+    summary="触发 ETL-1: Excel → Parquet",
+    description=(
+        "按 center config 把医院原始 Excel 转换为标准 parquet。"
+        "后台异步执行, 立即返回 job_id 供轮询。"
+        "触发条件: 医院已注册 (任何 lifecycle_status 都可跑); 不依赖 mapping rule。"
+    ),
+    response_model=ResponseSchema[Etl1RunResponse],
+)
+async def trigger_etl1_controller(
+    hospital_id: Annotated[int, Path(description="医院ID")],
+    body: Etl1RunRequest,
+    redis: Annotated[Redis, Depends(redis_getter)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:import"]))],
+) -> JSONResponse:
+    """触发 ETL-1 (Excel → Parquet)。"""
+    result = await Etl1Service.trigger_run_service(
+        auth=auth,
+        hospital_id=hospital_id,
+        xlsx_path=body.xlsx_path,
+        center_code=body.center_code,
+        only_tables=body.only_tables,
+        dry_run=body.dry_run,
+        redis=redis,
+    )
+    return SuccessResponse(data=result, msg="ETL-1 任务已触发")
+
+
+@HospitalRouter.get(
+    "/hospital/{hospital_id}/etl1/status",
+    summary="查询 ETL-1 任务状态",
+    description="查询医院最近一次 ETL-1 任务的状态 (pending/running/completed/failed) + 进度",
+    response_model=ResponseSchema[Etl1Status],
+)
+async def get_etl1_status_controller(
+    hospital_id: Annotated[int, Path(description="医院ID")],
+    redis: Annotated[Redis, Depends(redis_getter)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
+) -> JSONResponse:
+    """查询 ETL-1 任务状态。"""
+    result = await Etl1Service.get_run_status_service(
+        hospital_id=hospital_id, redis=redis
+    )
+    return SuccessResponse(data=result, msg="获取 ETL-1 状态成功")
 
 
 # =========================================================================== #

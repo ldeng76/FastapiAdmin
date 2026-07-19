@@ -208,3 +208,62 @@ class EtlImportStatus(BaseModel):
     error: str | None = Field(default=None, description="错误信息")
     started_at: DateTimeStr | None = Field(default=None, description="开始时间")
     completed_at: DateTimeStr | None = Field(default=None, description="完成时间")
+
+
+# =========================================================================== #
+# ETL-1: Excel → Parquet
+# =========================================================================== #
+
+
+class Etl1RunRequest(BaseModel):
+    """ETL-1 触发请求体。"""
+
+    xlsx_path: str = Field(
+        ...,
+        description="Excel 文件绝对路径或相对仓库根的路径 (服务器侧可访问)",
+    )
+    center_code: str | None = Field(
+        default=None,
+        description="医院代号 (shengyi/zhujiang_xinqiao...); 不传则用 hospital.code",
+    )
+    only_tables: list[str] | None = Field(
+        default=None,
+        description="只处理这些 target_table (开发期增量调试); 不传=全部",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="True 时只校验配置不写文件",
+    )
+
+
+class Etl1RunResponse(BaseModel):
+    """ETL-1 触发响应。"""
+
+    job_id: str = Field(..., description="任务ID (轮询状态用)")
+    status: str = Field(..., description="初始状态(pending)")
+    center_code: str = Field(..., description="实际使用的医院代号")
+
+
+class Etl1Status(BaseModel):
+    """ETL-1 任务状态 (轮询返回)。
+
+    与 EtlImportStatus 的区别:
+    - 多 current_table / tables_done / tables_total (按表粒度, 而非按行)
+    - 多 target_tables / rows_per_table (完成后的明细)
+    - xlsx_path / center_code 便于审计
+    """
+
+    job_id: str = Field(..., description="任务ID")
+    status: str = Field(..., description="状态(pending/running/completed/failed)")
+    center_code: str = Field(default="", description="医院代号")
+    xlsx_path: str = Field(default="", description="源 Excel 路径")
+    tables_total: int = Field(default=0, description="目标表总数")
+    tables_done: int = Field(default=0, description="已完成表数")
+    current_table: str = Field(default="", description="正在处理的表名")
+    total_rows: int = Field(default=0, description="累计行数")
+    rows_per_table: dict[str, int] = Field(
+        default_factory=dict, description="各表行数 (完成后填充)"
+    )
+    error: str | None = Field(default=None, description="错误信息")
+    started_at: DateTimeStr | None = Field(default=None, description="开始时间")
+    completed_at: DateTimeStr | None = Field(default=None, description="完成时间")

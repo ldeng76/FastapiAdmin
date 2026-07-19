@@ -28,6 +28,35 @@ SourceKind = Literal["xlsx", "csv"]
 TargetType = Literal["string", "date", "timestamp", "int", "decimal", "bool", "text", "json"]
 
 
+# ---------------- WHERE 子句安全校验 ----------------
+# where 是 ETL-1 配置文件中的常量(非 HTTP 输入, trusted source);
+# 但仍做基础防注入检查: 禁止分号/多语句/注释, 只允许出现 Excel 列名 + 常见 SQL token。
+_FORBIDDEN_TOKEN_RE = re.compile(
+    r"(--|;|/\*|\*/|\bunion\b|\bselect\b|\binsert\b|\bupdate\b|\bdelete\b|\bdrop\b|\balter\b|\bcreate\b|\bgrant\b|\brevoke\b|\bexec\b|\bexecute\b)",
+    re.IGNORECASE,
+)
+
+
+def _validate_where(v: str | None, *, field: str) -> str | None:
+    """校验 WHERE 子句: 仅配置文件可信来源使用; 禁止分号/注释/DDL/DML 多语句。
+
+    返回清理后的字符串, 失败抛 ValueError。
+    """
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"{field}: 必须是字符串, 收到 {type(v).__name__}")
+    s = v.strip()
+    if not s:
+        return None
+    if ";" in s:
+        raise ValueError(f"{field}: 含 ';' (禁止多语句)")
+    bad = _FORBIDDEN_TOKEN_RE.search(s)
+    if bad:
+        raise ValueError(f"{field}: 含禁用 token {bad.group(0)!r}")
+    return s
+
+
 class ColumnSpec(BaseModel):
     """单列映射规则: Excel 表头 → parquet 列名 + 类型 + 可选清洗函数。"""
 
@@ -96,6 +125,19 @@ class SheetSpec(BaseModel):
         False,
         description="True=本表缺少 visit_id, 需要 (patient_id, m) 反查 visit_record",
     )
+    where: str | None = Field(
+        None,
+        description=(
+            "可选 SQL WHERE 子句 (不含 WHERE 关键字本身), 用于行级过滤。"
+            "仅 ETL-1 配置文件使用, 不接受 HTTP 输入; "
+            "禁止分号/注释/DDL/DML 多语句 (见 _validate_where)。\n"
+            "⚠️ WHERE 中引用的列名必须是**简单标识符** (英文/数字/下划线, "
+            "且不以数字开头), 例如 'EXAM_CLASS' / 'IMPRESSION'; "
+            "**不支持**带中文/点号/空格的 Excel 全路径列名 "
+            "(如 '非隐私信息.患者基本信息.患者编号') — "
+            "core.py 拼接时不会做 _quote_ident 转义。"
+        ),
+    )
 
     @field_validator("target_table")
     @classmethod
@@ -105,6 +147,11 @@ class SheetSpec(BaseModel):
                 f"target_table 必须满足 {_SRC_TABLE_RE.pattern} (与 ETL-2 _SRC_TABLE_RE 对齐): {v!r}"
             )
         return v
+
+    @field_validator("where")
+    @classmethod
+    def _validate_where_field(cls, v: str | None) -> str | None:
+        return _validate_where(v, field="where")
 
 
 class DerivedSpec(BaseModel):
@@ -127,6 +174,10 @@ class DerivedSpec(BaseModel):
     )
     dedup_key: list[str] | None = Field(None, description="合并后整体去重键")
     visit_recovery: bool = Field(False, description="是否需要 visit_id 反查")
+    where: str | None = Field(
+        None,
+        description="合并后整体 WHERE 子句 (UNION ALL 之后外层再过滤)",
+    )
 
     @field_validator("target_table")
     @classmethod
@@ -134,6 +185,11 @@ class DerivedSpec(BaseModel):
         if not _SRC_TABLE_RE.match(v):
             raise ValueError(f"target_table 必须满足 {_SRC_TABLE_RE.pattern}: {v!r}")
         return v
+
+    @field_validator("where")
+    @classmethod
+    def _validate_where_field(cls, v: str | None) -> str | None:
+        return _validate_where(v, field="where")
 
 
 class DerivedSource(BaseModel):
@@ -146,6 +202,15 @@ class DerivedSource(BaseModel):
         default_factory=dict,
         description="注入的常量列, 如 {'diagnosis_source': 'front_page'}",
     )
+    where: str | None = Field(
+        None,
+        description="此 source 在 UNION 内的 WHERE 子句 (本 source 单独过滤)",
+    )
+
+    @field_validator("where")
+    @classmethod
+    def _validate_where_field(cls, v: str | None) -> str | None:
+        return _validate_where(v, field="where")
 
 
 class CenterConfig(BaseModel):

@@ -229,11 +229,15 @@ def _process_single_sheet(
         f"{expr} AS {_quote_ident(tgt)}" for tgt, expr in tgt_to_expr.items()
     )
 
+    # 可选 WHERE 子句 (ETL-1 配置文件常量, 已通过 _validate_where 校验)
+    where_clause = f"WHERE {spec.where}" if spec.where else ""
+
     sql = f"""
         COPY (
             {select_kw}
                 {select_cols}
             FROM {sv.view_name}
+            {where_clause}
         ) TO '{out_path.as_posix().replace(chr(39), chr(39)+chr(39))}'
         (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
     """
@@ -283,17 +287,28 @@ def _process_derived(
                 all_tgts.append(t)
 
     # 每个 source 各做一个 SELECT (补齐缺失列为 NULL), 然后 UNION ALL
+    # source 自身的 WHERE (DerivedSource.where) 应用于各自 SELECT 内;
+    # DerivedSpec.where 在 UNION 外层再包一层
+    #
+    # ⚠️ 性能注意 (Review M5):
+    # DerivedSpec.where **不会下推**, 会先物化整个 UNION ALL 再过滤;
+    # 大数据量下建议尽量用 DerivedSource.where (单 source 内推) 而不是
+    # DerivedSpec.where (合并后外推)。
     select_sqls: list[str] = []
-    for sv, tgt_to_expr in source_plans:
+    for (sv, tgt_to_expr), src in zip(source_plans, spec.sources):
         parts: list[str] = []
         for t in all_tgts:
             expr = tgt_to_expr.get(t, "NULL")
             parts.append(f"{expr} AS {_quote_ident(t)}")
+        src_where = f"WHERE {src.where}" if src.where else ""
         select_sqls.append(
-            f"SELECT {', '.join(parts)} FROM {sv.view_name}"
+            f"SELECT {', '.join(parts)} FROM {sv.view_name} {src_where}"
         )
 
     union_body = "\n    UNION ALL\n    ".join(select_sqls)
+    if spec.where:
+        # 外层 WHERE 不会下推, 配置者应优先用 DerivedSource.where
+        union_body = f"SELECT * FROM ({union_body}) WHERE {spec.where}"
 
     # dedup (整个 UNION 后)
     if spec.dedup_key:

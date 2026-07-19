@@ -108,3 +108,5 @@ login.png
 
 # 本地真实病例样本数据（DICOM 解压目录，约 200MB+，不入库）
 docs/demodata/朱龙/
+shengyi_valid_dicom_and_record
+珠江的CT与病理数据

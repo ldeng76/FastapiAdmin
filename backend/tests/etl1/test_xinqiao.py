@@ -205,18 +205,22 @@ SUB2_HEADERS = (
 
 
 def _write_sub1_csv(path: Path, rows: list[dict]) -> None:
-    """写入子目录 1 风格的 CSV。"""
-    with path.open("w", encoding="utf-8", newline="") as f:
-        f.write(SUB1_HEADERS + "\n")
+    """写入子目录 1 风格的 CSV。
+
+    新桥真实数据 SUB1 是 GBK 编码, 这里同步用 GBK 写, 与 csv_encoding={SUB_1: gb18030} 配对。
+    """
+    import csv
+    # 用 GBK 写 (与真实数据一致), errors='replace' 兜底罕见字符
+    with path.open("w", encoding="gbk", errors="replace", newline="") as f:
+        w = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+        w.writerow(SUB1_HEADERS.split(","))
         for row in rows:
             vals = [row.get(col, "") for col in SUB1_HEADERS.split(",")]
-            # 病理多值字段内的逗号需保留为半角; 其他字段不应含逗号
-            # 这里直接 join, 由调用方负责字段内不含逗号 (除病理多值字段外)
-            f.write(",".join(vals) + "\n")
+            w.writerow(vals)
 
 
 def _write_sub2_csv(path: Path, rows: list[dict]) -> None:
-    """写入子目录 2 风格的 CSV。
+    """写入子目录 2 风格的 CSV (UTF-8, 与真实数据一致)。
 
     病理多值字段 (如 `病理.送检时间 = "2025-03-08 08:45:42,2025-03-08 08:46:30"`)
     含半角逗号, 不能简单 join, 需要把整个字段用双引号包裹 (CSV 标准)。

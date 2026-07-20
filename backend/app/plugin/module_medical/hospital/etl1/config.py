@@ -247,6 +247,18 @@ class CenterConfig(BaseModel):
         "data/{code}",
         description="输出目录模板, 相对仓库根; {code} 用 center.code 替换",
     )
+    csv_encoding: str | dict[str, str] | None = Field(
+        None,
+        description=(
+            "CSV 文件编码, 仅 source_kind='csv' 时生效。"
+            "None=DuckDB 自动检测 (UTF-8 兼容); "
+            "str=所有 sheet 统一编码 (如 'gb18030' 用于 GBK 中文 CSV); "
+            "dict=按 sheet_name 单独指定, "
+            "  用于一个 center 的多个 sheet 编码不一致场景 "
+            "  (如新桥: SUB1=gb18030, SUB2=UTF-8)。"
+            "若不设, GBK 中文表头会被当乱码导致 DuckDB 回退到 columnNN 占位列名。"
+        ),
+    )
 
     @field_validator("code")
     @classmethod

@@ -186,6 +186,11 @@ XINQIAO_CONFIG: CenterConfig = CenterConfig(
     code="xinqiao",
     display_name="陆军军医大学新桥医院",
     source_kind="csv",
+    # 新桥两个子目录编码不一致:
+    #   SUB1 (1_5万例排除术后_单一影像号_已处理): GBK 编码, 中文表头是 GBK 双字节
+    #   SUB2 (2_5万例时序影像_带病理_新_待处理): UTF-8 编码
+    # 必须按 sheet_name 分别指定, 否则 DuckDB 解析中文表头失败回退到 columnNN
+    csv_encoding={SUB_1: "gb18030"},  # SUB_2 不在 dict 里, 默认 UTF-8 自动检测
     # 4 张通用表本次不生成
     universal_tables=[],
     hospital_tables=[

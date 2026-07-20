@@ -65,7 +65,24 @@ class CsvReader:
         - 允许多次 read_sheet 调用同一目录: view 名包含 sheet_name hash, 幂等。
     """
 
-    def __init__(self, csv_dir: str | Path, memory_limit: str = "4GB"):
+    def __init__(
+        self,
+        csv_dir: str | Path,
+        memory_limit: str = "4GB",
+        encoding: str | dict[str, str] | None = None,
+    ):
+        """初始化 CsvReader。
+
+        参数:
+            csv_dir: CSV 目录路径 (子目录或父目录都行, 见 _discover_csvs)
+            memory_limit: DuckDB 内存上限
+            encoding: 文件编码
+                - None: DuckDB 自动检测 (UTF-8 兼容)
+                - str: 所有 sheet 统一编码, 如 'gb18030' 用于 GBK 中文 CSV
+                - dict: 按 sheet_name 单独指定, 用于多 sheet 编码不一致场景
+                  (如新桥: {'SUB1': 'gb18030', 'SUB2': None})
+                不指定时, GBK 中文表头会被当乱码导致 DuckDB 回退到 columnNN 占位列名
+        """
         p = Path(csv_dir)
         if not p.exists():
             raise FileNotFoundError(f"CSV 目录不存在: {p}")
@@ -74,6 +91,7 @@ class CsvReader:
         self.csv_dir = p.resolve()
         self._con: duckdb.DuckDBPyConnection | None = None
         self._memory_limit = memory_limit
+        self._encoding = encoding
         self._loaded = False
         # view 名计数器: 即使 hash 碰撞也保证唯一 (Issue #4)
         self._view_counter = 0
@@ -90,10 +108,31 @@ class CsvReader:
         return self._con
 
     def ensure_loaded(self) -> None:
-        """CSV 是 duckdb 原生能力, 无需 INSTALL/LOAD 扩展。"""
+        """按需加载 DuckDB 扩展。
+
+        - CSV 本身是 duckdb 原生能力, 不需任何扩展
+        - 但若指定了非 UTF-8 编码 (如 'gb18030'), 必须装 encodings 扩展
+          参考: https://duckdb.org/docs/lts/core_extensions/encodings
+          该扩展提供 1000+ 编码, 包括 GBK 系列 (gb18030 / glibc-GBK-2.3.3 / zh_CN.gbk 等)
+        """
         if self._loaded:
             return
-        log.info("ETL1[CsvReader]: DuckDB 原生 CSV 已就绪 (目录={})", self.csv_dir)
+        if self._encoding:
+            try:
+                self.con.execute("INSTALL encodings;")
+                self.con.execute("LOAD encodings;")
+                log.info(
+                    "ETL1[CsvReader]: duckdb encodings 扩展已加载 (encoding={})",
+                    self._encoding,
+                )
+            except Exception as e:
+                log.error(
+                    "ETL1[CsvReader]: 加载 encodings 扩展失败 (网络不可达?): {}", e
+                )
+                raise
+        else:
+            log.info("ETL1[CsvReader]: DuckDB 原生 CSV 已就绪 (无需扩展)")
+        self._loaded = True
 
     def _discover_csvs(self, sheet_name: str) -> list[Path]:
         """根据 sheet_name 解析对应的 csv 文件列表。
@@ -172,6 +211,13 @@ class CsvReader:
         # - ignore_errors=true: 单行解析失败不中断 (脏数据安全)
         # - union_by_name=true: 6 个 CSV 表头列序差异时按列名对齐
         # - sample_size=-1: 扫全部行做类型推断 (虽然 all_varchar 已强制, 但仍设)
+        # - encoding: 按 sheet_name 解析 (str=统一; dict=按 sheet; None=自动)
+        #   GBK 中文 CSV 必须显式指定, 否则 DuckDB 按 UTF-8 解析失败回退 columnNN
+        if isinstance(self._encoding, dict):
+            enc = self._encoding.get(sheet_name)
+        else:
+            enc = self._encoding
+        encoding_clause = f", encoding='{enc}'" if enc else ""
         self.con.execute(
             f"""
             CREATE OR REPLACE TEMP VIEW {view_name} AS
@@ -179,7 +225,7 @@ class CsvReader:
                 [{path_literals}],
                 all_varchar=true, header=true,
                 ignore_errors=true, union_by_name=true,
-                sample_size=-1
+                sample_size=-1{encoding_clause}
             )
             """
         )

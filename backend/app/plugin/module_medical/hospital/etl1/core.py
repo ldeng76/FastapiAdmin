@@ -481,7 +481,7 @@ def run_etl1(
     if center.source_kind == "xlsx":
         reader = ExcelReader(xlsx_path)
     elif center.source_kind == "csv":
-        reader = CsvReader(xlsx_path)
+        reader = CsvReader(xlsx_path, encoding=center.csv_encoding)
     else:
         raise ValueError(
             f"不支持的 source_kind: {center.source_kind!r} (center={center.code})"

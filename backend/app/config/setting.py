@@ -237,6 +237,17 @@ class Settings(BaseSettings):
     DICOM_DATA_DIR: Path = BASE_DIR.parent / "docs" / "dicom_demo"
 
     # ================================================= #
+    # ************** ETL-2 脱敏落库配置 (ADR-0001/0006) *** #
+    # ================================================= #
+    # HMAC 密钥：用于生成 anon_id / anon_exam_id（确定性脱敏）。
+    # 生产环境务必通过环境变量注入，禁止提交到仓库。
+    LNRS_ANON_SECRET: str = "change-me-in-production-please"
+    # 密钥版本号：轮换密钥时递增，写入 lnrs_anon_ingest_batch.secret_version 便于回溯。
+    LNRS_ANON_SECRET_VERSION: str = "v1"
+    # ETL-1 产出物根目录（下挂每家中心的 parquet 子目录）。
+    LNRS_DATA_ROOT: Path = BASE_DIR.parent / "data"
+
+    # ================================================= #
     # ******************* 请求限制配置 ****************** #
     # ================================================= #
     REQUEST_LIMITER_REDIS_PREFIX: str = "fastapiadmin:request_limiter:"

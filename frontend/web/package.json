@@ -178,6 +178,7 @@
     "unplugin-vue-components": "^29.1.0",
     "vite": "^7.1.5",
     "vite-plugin-compression": "^0.5.1",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "vite-plugin-vue-devtools": "^8.1.2",
     "vitest": "^4.1.7",
     "vue-demi": "^0.14.9",
@@ -192,6 +193,10 @@
       "uuid": "14.0.0",
       "fstream": "1.0.12",
       "lodash.isequal": "4.5.0"
+    },
+    "allowedDeprecatedVersions": {
+      "fstream": "*",
+      "lodash.isequal": "*"
     }
   },
   "packageManager": "pnpm@9.15.3",

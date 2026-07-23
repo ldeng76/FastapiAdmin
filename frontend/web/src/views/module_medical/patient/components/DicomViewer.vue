@@ -55,7 +55,9 @@
           </div>
           <div class="overlay-tr">
             <div>{{ activeSeries?.series_description || "" }}</div>
-            <div>{{ activeSeries?.slice_thickness ? activeSeries.slice_thickness + "mm" : "" }}</div>
+            <div>
+              {{ activeSeries?.slice_thickness ? activeSeries.slice_thickness + "mm" : "" }}
+            </div>
           </div>
           <div class="overlay-bl">
             <div>层 {{ currentInstance.index }} / {{ instanceCount }}</div>
@@ -86,17 +88,20 @@
             size="small"
             :type="activeTool === 'WindowLevel' ? 'primary' : 'default'"
             @click="setActiveTool('WindowLevel')"
-          >调窗</ElButton>
+            >调窗
+          </ElButton>
           <ElButton
             size="small"
             :type="activeTool === 'Zoom' ? 'primary' : 'default'"
             @click="setActiveTool('Zoom')"
-          >缩放</ElButton>
+            >缩放
+          </ElButton>
           <ElButton
             size="small"
             :type="activeTool === 'Pan' ? 'primary' : 'default'"
             @click="setActiveTool('Pan')"
-          >平移</ElButton>
+            >平移
+          </ElButton>
         </div>
         <div class="toolbar-divider" />
         <div class="toolbar-group">
@@ -105,22 +110,26 @@
             size="small"
             :type="activeTool === 'Length' ? 'primary' : 'default'"
             @click="setActiveTool('Length')"
-          >长度</ElButton>
+            >长度
+          </ElButton>
           <ElButton
             size="small"
             :type="activeTool === 'Angle' ? 'primary' : 'default'"
             @click="setActiveTool('Angle')"
-          >角度</ElButton>
+            >角度
+          </ElButton>
           <ElButton
             size="small"
             :type="activeTool === 'Probe' ? 'primary' : 'default'"
             @click="setActiveTool('Probe')"
-          >探针</ElButton>
+            >探针
+          </ElButton>
           <ElButton
             size="small"
             :type="activeTool === 'RectangleROI' ? 'primary' : 'default'"
             @click="setActiveTool('RectangleROI')"
-          >ROI</ElButton>
+            >ROI
+          </ElButton>
         </div>
         <div class="toolbar-divider" />
         <div class="toolbar-group">
@@ -148,6 +157,7 @@ import {
   init as initTools,
   addTool,
   ToolGroupManager,
+  Types as ToolTypes,
   Enums as ToolEnums,
   annotation as toolsAnnotation,
   WindowLevelTool,
@@ -165,13 +175,8 @@ const { MouseBindings } = ToolEnums;
 import dicomImageLoader from "@cornerstonejs/dicom-image-loader";
 
 /** 最小 ToolGroup 接口（仅声明用到的方法），避免全 any 丢失类型保护 */
-interface IToolGroup {
-  addTool: (name: string) => void;
-  addToolInstance: (name: string, instanceId: string) => void;
-  addViewport: (viewportId: string, engineId: string) => void;
-  setToolActive: (name: string, opts?: { bindings?: Array<{ mouseButton: number }> }) => void;
-  setToolPassive: (name: string) => void;
-  destroy: () => void;
+interface IToolGroup extends ToolTypes.IToolGroup {
+  destroy?: () => void;
 }
 import DicomAPI, {
   type DicomStudy,
@@ -193,7 +198,7 @@ const ENGINE_ID = "dicom-engine";
 const TOOLGROUP_ID = "dicom-toolgroup";
 const VIEWPORT_ID = "dicom-viewport";
 let renderingEngine: RenderingEngine | null = null;
-let toolGroup: IToolGroup = null;
+let toolGroup: IToolGroup | undefined | null;
 
 // 数据状态
 const seriesList = ref<DicomSeries[]>([]);
@@ -209,7 +214,7 @@ const windowCenter = ref(0);
 const viewportRef = ref<HTMLDivElement | null>(null);
 const instanceCount = computed(() => instanceList.value.length);
 const activeSeries = computed(
-  () => seriesList.value.find((s) => s.series_uid === activeSeriesUid.value) || null,
+  () => seriesList.value.find((s) => s.series_uid === activeSeriesUid.value) || null
 );
 
 // 窗位预设（WW / WL）
@@ -251,13 +256,11 @@ function ensureCornerstoneInited() {
 }
 
 function registerTools() {
-  Object.values(TOOL_CLASSES).forEach((ToolClass) => {
-    try {
+  try {
+    Object.values(TOOL_CLASSES).forEach((ToolClass) => {
       addTool(ToolClass);
-    } catch (e) {
-      // 重复注册会抛错，忽略
-    }
-  });
+    });
+  } catch (e) {}
 }
 
 function createToolGroup() {
@@ -315,7 +318,7 @@ async function loadStudy() {
     studyInfo.value = studies.find((s) => s.study_id === props.studyId) || studies[0] || null;
     seriesList.value = (seriesRes.data?.data || []).filter(
       // 仅显示 CT 轴位序列（有窗宽窗位的可阅片序列），跳过截图/无窗序列可选
-      (s) => s.instance_count > 0,
+      (s) => s.instance_count > 0
     );
     if (seriesList.value.length) {
       // 默认选张数最多的序列（通常是薄层主序列）
@@ -410,7 +413,7 @@ async function renderStack() {
   if (import.meta.env.DEV) (window as any).__cv = viewport;
 }
 
-function onStackScroll(evt: any) {
+function onStackScroll() {
   const viewport = renderingEngine?.getViewport(VIEWPORT_ID) as any;
   if (!viewport) return;
   updateCurrentInstance(viewport);
@@ -438,7 +441,7 @@ function prefetchNeighbors(viewport: any) {
 }
 
 function onVoiModified(evt: any) {
-  const { volumeId, range } = evt.detail || {};
+  const { range } = evt.detail || {};
   if (!range) return;
   // voiRange.lower/upper → 反推 WW/WL：WL=(upper+lower)/2, WW=(upper-lower)
   if (range.lower != null && range.upper != null) {
@@ -451,15 +454,7 @@ function onVoiModified(evt: any) {
 // 工具与窗位操作
 // ===================================================================== //
 // 先把所有可绑定到鼠标左键的工具置为 passive，避免 setActiveTool 后多工具同时响应左键
-const PRIMARY_TOOLS = [
-  "WindowLevel",
-  "Zoom",
-  "Pan",
-  "Length",
-  "Angle",
-  "Probe",
-  "RectangleROI",
-];
+const PRIMARY_TOOLS = ["WindowLevel", "Zoom", "Pan", "Length", "Angle", "Probe", "RectangleROI"];
 
 function setActiveTool(toolName: string) {
   if (!toolGroup) return;
@@ -560,7 +555,7 @@ watch(
   () => props.studyId,
   (val) => {
     if (val) loadStudy();
-  },
+  }
 );
 </script>
 

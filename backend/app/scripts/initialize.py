@@ -13,6 +13,19 @@ from app.api.v1.module_system.position.model import PositionModel
 from app.api.v1.module_system.role.model import RoleModel
 from app.api.v1.module_system.tenant.model import TenantConfigModel, TenantModel
 from app.api.v1.module_system.user.model import UserModel, UserRolesModel
+from app.plugin.module_medical.dict_mapping.model import DictMappingModel, DictUnmatchedModel
+# 医疗数据模型（med_* 表，dict_mapping 依赖 med_hospital）
+from app.plugin.module_medical.hospital.model import (
+    HospitalModel,
+    PatientModel,
+    PathologySpecimenModel,
+    SurgeryRecordModel,
+    GeneticTestModel,
+    NoduleImagingModel,
+    IHCResultModel,
+    FollowUpModel,
+    MappingRuleModel,
+)
 from app.config.path_conf import SCRIPT_DIR
 from app.config.setting import settings
 from app.core.database import async_db_session, async_engine, create_tables

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio.client import Redis
 
 from app.api.v1.module_system.auth.schema import AuthSchema
+from app.common.constant import PLATFORM_TENANT_ID
 from app.common.response import ResponseSchema, StreamResponse, SuccessResponse
 from app.core.base_params import PaginationQueryParam
 from app.core.base_schema import BatchSetAvailable
@@ -521,7 +522,7 @@ async def get_init_dict_data_controller(
     - CustomException: 根据字典类型获取数据失败时抛出异常。
     """
     dict_data_query_result = await DictDataService.get_init_dict_service(
-        redis=redis, dict_type=dict_type, tenant_id=1
+        redis=redis, dict_type=dict_type, tenant_id=PLATFORM_TENANT_ID
     )
     log.info(f"获取初始化字典数据成功：{dict_data_query_result}")
 

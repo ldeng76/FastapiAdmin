@@ -14,6 +14,7 @@ from sqlalchemy.orm import (
 if TYPE_CHECKING:
     from app.api.v1.module_system.user.model import UserModel
 
+from app.common.constant import PLATFORM_TENANT_ID
 from app.common.enums import PermissionFilterStrategy
 from app.utils.common_util import uuid4_str
 
@@ -139,7 +140,7 @@ class TenantMixin(MappedBase):
         Integer,
         ForeignKey("sys_tenant.id", ondelete="RESTRICT", onupdate="CASCADE"),
         nullable=False,
-        default=1,
+        default=PLATFORM_TENANT_ID,
         index=True,
         comment="租户ID",
     )

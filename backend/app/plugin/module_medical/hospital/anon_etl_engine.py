@@ -556,6 +556,10 @@ async def import_center(
     if not data_dir.exists():
         raise FileNotFoundError(f"中心数据目录不存在: {data_dir}")
 
+    # 预热性别映射缓存（ADR-0008：normalize_sex 退役，字典为权威）
+    from .anonymize import load_sex_mapping
+    await load_sex_mapping(db)
+
     result: dict[str, int] = {}
     specs = _CENTER_PARQUET_SPECS.get(center_code)
     if not specs:

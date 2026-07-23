@@ -68,5 +68,33 @@
     "status": "0",
     "description": "表格回显样式列表",
     "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗-性别",
+    "dict_type": "med_sex",
+    "status": "0",
+    "description": "医疗领域性别字典（M/F/U），ADR-0008 枚举权威",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗-检查类型",
+    "dict_type": "med_exam_type",
+    "status": "0",
+    "description": "医疗领域检查类型字典（CT/PETCT/Pathology）",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗-偏侧性",
+    "dict_type": "med_laterality",
+    "status": "0",
+    "description": "医疗领域偏侧性字典（L/R/Bilateral/N/A）",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗-吸烟状态",
+    "dict_type": "med_smoking_status",
+    "status": "0",
+    "description": "医疗领域吸烟状态字典（待补充取值）",
+    "tenant_id": 1
   }
 ]

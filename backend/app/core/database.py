@@ -114,6 +114,9 @@ async def create_tables() -> None:
     """
     创建数据库表（根据 ORM metadata）。
 
+    依赖调用方（initialize.py）显式导入所有模型类，注册到 MappedBase.metadata。
+    注意：不使用 ImportUtil.find_models()，因为它会与显式导入冲突导致 DuplicateTableError。
+
     返回:
     - None
     """

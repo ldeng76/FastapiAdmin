@@ -43,6 +43,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[Any, Any]:
     try:
         await InitializeData().init_db()
         log.info(f"✅ {settings.DATABASE_TYPE}数据库初始化完成")
+
+        # 校验平台租户存在（PLATFORM_TENANT_ID 指向的记录必须存在，详见 ADR-0009）
+        from app.common.constant import PLATFORM_TENANT_ID
+        from app.api.v1.module_system.tenant.model import TenantModel
+        from app.core.database import async_db_session
+        from sqlalchemy import select as sa_select
+
+        async with async_db_session() as session:
+            platform_tenant = (
+                await session.execute(
+                    sa_select(TenantModel).where(TenantModel.id == PLATFORM_TENANT_ID)
+                )
+            ).scalars().first()
+            if not platform_tenant:
+                raise RuntimeError(
+                    f"平台租户(id={PLATFORM_TENANT_ID})不存在，"
+                    "请先初始化 sys_tenant 表（检查 sys_tenant.json 种子数据）。"
+                )
+        log.info(
+            f"✅ 平台租户校验通过 (id={PLATFORM_TENANT_ID}, name={platform_tenant.name})"
+        )
+
         await import_modules_async(
             modules=settings.EVENT_LIST, desc="全局事件", app=app, status=True
         )

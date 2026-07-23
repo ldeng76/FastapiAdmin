@@ -50,6 +50,7 @@ class RedisInitKeyConfig(Enum):
     SYSTEM_CONFIG = {"key": "system_config", "remark": "系统配置"}
     TENANT_CONFIG = {"key": "tenant_config", "remark": "租户配置"}
     SYSTEM_DICT = {"key": "system_dict", "remark": "数据字典"}
+    SYSTEM_DICT_MAPPING = {"key": "system_dict_mapping", "remark": "医疗字典值映射缓存"}
     APSCHEDULER_LOCK_KEY = {
         "key": "scheduler_job_lock",
         "remark": "定时任务初始化锁",
@@ -95,20 +96,24 @@ class McpLLMProvider(Enum):
 
 @unique
 class QueueEnum(str, Enum):
-    """队列枚举"""
+    """队列枚举（查询操作符）
+
+    每个枚举值只有一个字符串，消费端（base_crud.__build_conditions）按此值匹配。
+    以前用 "word" or "symbol" 形式是误解 Python or 语义（or 是逻辑或，不是别名注册）。
+    """
     none = "None"
     not_none = "not None"
     date = "date"
     month = "month"
     like = "like"
-    eq = "eq" or "=="
+    eq = "eq"
     in_ = "in"
     between = "between"
-    ne = "!=" or "ne"
-    gt = ">" or "gt"
-    ge = ">=" or "ge"
-    lt = "<" or "lt"
-    le = "<=" or "le"
+    ne = "ne"
+    gt = "gt"
+    ge = "ge"
+    lt = "lt"
+    le = "le"
 
 
 class PermissionFilterStrategy(str, Enum):

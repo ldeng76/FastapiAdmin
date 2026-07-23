@@ -25,6 +25,7 @@ from app.api.v1.module_system.user.crud import UserCRUD
 from app.api.v1.module_system.user.model import UserModel
 from app.api.v1.module_system.user.schema import UserRegisterSchema
 from app.api.v1.module_system.user.service import UserService
+from app.common.constant import PLATFORM_TENANT_ID
 from app.config.setting import settings
 from app.core.exceptions import CustomException
 from app.core.logger import log
@@ -313,7 +314,7 @@ async def ensure_oauth_user(
     unique_id: str,
     display_name: str,
 ) -> UserModel:
-    auth = AuthSchema(db=db, user=None, tenant_id=1, check_data_scope=False)
+    auth = AuthSchema(db=db, user=None, tenant_id=PLATFORM_TENANT_ID, check_data_scope=False)
     username = _username_for_oauth(provider, unique_id)
     existing = await UserCRUD(auth).get_by_username_crud(username=username)
     if existing:

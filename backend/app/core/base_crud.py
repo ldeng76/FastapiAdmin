@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.api.v1.module_system.auth.schema import AuthSchema
+from app.common.constant import PLATFORM_TENANT_ID
 from app.core.base_model import MappedBase
 from app.core.exceptions import CustomException
 from app.core.permission import Permission
@@ -305,7 +306,7 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         获取租户隔离条件。
 
         read_mode=True 时对标记了 __platform_data_shared__ 的模型会同时放开
-        tenant_id=1（平台数据），使租户用户也能读取平台共享数据；写入操作不受此影响。
+        PLATFORM_TENANT_ID（平台数据），使租户用户也能读取平台共享数据；写入操作不受此影响。
 
         返回:
         - List[ColumnElement]: 租户过滤条件列表，超管或无 tenant_id 字段时返回空列表。
@@ -317,8 +318,8 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         tid = self.auth.user.tenant_id if self.auth.user else self.auth.tenant_id
         if tid is not None:
             own_filter = getattr(self.model, "tenant_id") == tid
-            if read_mode and getattr(self.model, "__platform_data_shared__", False) and tid != 1:
-                platform_filter = getattr(self.model, "tenant_id") == 1
+            if read_mode and getattr(self.model, "__platform_data_shared__", False) and tid != PLATFORM_TENANT_ID:
+                platform_filter = getattr(self.model, "tenant_id") == PLATFORM_TENANT_ID
                 return [own_filter | platform_filter]
             return [own_filter]
         return []
@@ -534,17 +535,17 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
                         conditions.append(attr.in_(val))
                 elif seq == "between" and isinstance(val, (list, tuple)) and len(val) == 2:
                     conditions.append(attr.between(val[0], val[1]))
-                elif seq == "!=" or (seq == "ne" and val):
+                elif seq == "ne" and val:
                     conditions.append(attr != val)
-                elif seq == ">" or (seq == "gt" and val):
+                elif seq == "gt" and val:
                     conditions.append(attr > val)
-                elif seq == ">=" or (seq == "ge" and val):
+                elif seq == "ge" and val:
                     conditions.append(attr >= val)
-                elif seq == "<" or (seq == "lt" and val):
+                elif seq == "lt" and val:
                     conditions.append(attr < val)
-                elif seq == "<=" or (seq == "le" and val):
+                elif seq == "le" and val:
                     conditions.append(attr <= val)
-                elif seq == "==" or (seq == "eq" and val):
+                elif seq == "eq" and val:
                     conditions.append(attr == val)
             else:
                 conditions.append(attr == value)

@@ -3,6 +3,7 @@ import json
 from redis.asyncio.client import Redis
 
 from app.api.v1.module_system.auth.schema import AuthSchema
+from app.common.constant import PLATFORM_TENANT_ID
 from app.common.enums import RedisInitKeyConfig
 from app.core.database import async_db_session
 from app.core.exceptions import CustomException
@@ -333,7 +334,7 @@ class ParamsService:
                     raise CustomException(msg="初始化系统配置失败")
 
     @classmethod
-    async def get_init_config_service(cls, redis: Redis, tenant_id: int = 1) -> list[dict]:
+    async def get_init_config_service(cls, redis: Redis, tenant_id: int = PLATFORM_TENANT_ID) -> list[dict]:
         """
         获取系统配置
 

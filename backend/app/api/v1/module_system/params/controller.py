@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio.client import Redis
 
 from app.api.v1.module_system.auth.schema import AuthSchema
+from app.common.constant import PLATFORM_TENANT_ID
 from app.common.response import ResponseSchema, StreamResponse, SuccessResponse
 from app.core.base_params import PaginationQueryParam
 from app.core.dependencies import AuthPermission, redis_getter
@@ -260,6 +261,6 @@ async def get_init_obj_controller(
     返回:
     - JSONResponse: 获取初始化缓存参数的 JSON 响应
     """
-    result_dict = await ParamsService.get_init_config_service(redis=redis, tenant_id=1)
+    result_dict = await ParamsService.get_init_config_service(redis=redis, tenant_id=PLATFORM_TENANT_ID)
     log.info(f"获取初始化缓存参数成功 {result_dict}")
     return SuccessResponse(data=result_dict, msg="获取初始化缓存参数成功")

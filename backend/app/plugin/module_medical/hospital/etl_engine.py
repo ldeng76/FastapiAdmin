@@ -120,6 +120,7 @@ def _transform_row(
     rules: list[MappingRuleModel],
     tenant_id: int,
     jsonb_columns: set[str],
+    dict_cache: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """按映射规则转换单行，返回目标表列名→值的字典。
 
@@ -127,8 +128,11 @@ def _transform_row(
     1. rename: tgt_field = row_dict[src_field]
     2. constant: tgt_field = transform_value
     3. expression: tgt_field = TRANSFORM_FUNCTIONS[key](row_dict[src_field])
-    4. 注入 tenant_id
-    5. JSONB 列：str → json.loads → dict；解析失败记日志后保留原值让 INSERT 报错
+    4. dict: tgt_field = 通过 dict_cache 查标准值（预加载的映射缓存）
+    5. 注入 tenant_id
+    6. JSONB 列：str → json.loads → dict；解析失败记日志后保留原值让 INSERT 报错
+
+    dict_cache: {dict_type: {raw_label_lower: dict_value}}，由 import_one_table 预加载。
     """
     result: dict[str, Any] = {"tenant_id": tenant_id}
 
@@ -140,8 +144,12 @@ def _transform_row(
         elif rule.transform_type == "expression":
             src_val = row_dict.get(rule.src_field)
             val = apply_expression(rule.transform_value, src_val) if rule.transform_value else None
+        elif rule.transform_type == "dict":
+            # 字典映射：通过预加载的 dict_cache 查标准值
+            src_val = row_dict.get(rule.src_field)
+            val = _lookup_dict_cache(dict_cache, rule.transform_value, src_val)
         else:
-            # schema 层已校验只允许 rename/constant/expression；
+            # schema 层已校验只允许 rename/constant/expression/dict；
             # 留此兜底防止未来扩展 transform_type 时静默丢列
             log.error(
                 "ETL: 未知 transform_type=%r (tgt_field=%s)，已跳过该列",
@@ -165,6 +173,118 @@ def _transform_row(
     return result
 
 
+def _lookup_dict_cache(
+    dict_cache: dict[str, dict[str, str]] | None,
+    dict_type: str | None,
+    raw_label: Any,
+) -> str | None:
+    """从预加载的 dict_cache 中查找标准值。
+
+    dict_cache 结构: {dict_type: {raw_label_lower: dict_value}}
+    未命中返回 None（由调用方决定是否写 unmatched）。
+    """
+    if not dict_cache or not dict_type or raw_label is None:
+        return None
+    type_cache = dict_cache.get(dict_type)
+    if not type_cache:
+        return None
+    return type_cache.get(str(raw_label).strip().lower())
+
+
+async def _preload_dict_cache(
+    rules: list[MappingRuleModel],
+    tenant_id: int,
+    hospital_id: int | None,
+    redis: Any,
+) -> dict[str, dict[str, str]]:
+    """预加载 dict 类型规则的映射缓存。
+
+    返回 {dict_type: {raw_label_lower: dict_value}}，供 _transform_row 快速查表。
+    无 dict 规则或缺少 redis/hospital_id 时返回空 dict。
+    """
+    if not redis or not hospital_id:
+        # 有 dict 规则但缺 redis/hospital_id 时，所有 dict 列将静默产出 None
+        has_dict_rules = any(
+            r.transform_type == "dict" for r in rules
+        )
+        if has_dict_rules:
+            log.warning(
+                "ETL: dict 缓存未预热（redis=%s, hospital_id=%s），"
+                "配置了 dict 规则的列将产出 None",
+                bool(redis), hospital_id,
+            )
+        return {}
+
+    # 收集所有 dict 类型规则涉及的 dict_type
+    dict_types: set[str] = set()
+    for rule in rules:
+        if rule.transform_type == "dict" and rule.transform_value:
+            dict_types.add(rule.transform_value)
+
+    if not dict_types:
+        return {}
+
+    cache: dict[str, dict[str, str]] = {}
+    try:
+        from app.plugin.module_medical.dict_mapping.service import DictMappingService
+
+        # 构造一个轻量 auth 对象（仅用于传递 tenant_id 和 db）
+        # 注意：ETL 场景无真实用户，使用独立 session 查映射
+        for dict_type in dict_types:
+            # 查该类型的所有映射（跨医院 + 平台默认）
+            mappings = await _fetch_dict_mappings(dict_type, tenant_id, hospital_id)
+            if mappings:
+                cache[dict_type] = mappings
+    except Exception as e:
+        log.warning(f"ETL: dict 缓存预加载失败: {e!s}")
+
+    return cache
+
+
+async def _fetch_dict_mappings(
+    dict_type: str, tenant_id: int, hospital_id: int,
+) -> dict[str, str]:
+    """从 DB 加载某 dict_type 的全部映射，返回 {raw_label_lower: dict_value}。
+
+    优先查 hospital_id 专属映射，再查平台默认（tenant_id=1）映射。
+    """
+    from sqlalchemy import select
+
+    from app.api.v1.module_system.dict.model import DictDataModel, DictTypeModel
+    from app.core.database import async_db_session
+    from app.plugin.module_medical.dict_mapping.model import DictMappingModel
+
+    result: dict[str, str] = {}
+
+    async with async_db_session() as db:
+        # 查 dict_type_id
+        dt_result = await db.execute(
+            select(DictTypeModel).where(DictTypeModel.dict_type == dict_type)
+        )
+        dt_obj = dt_result.scalars().first()
+        if not dt_obj:
+            return result
+
+        # 查映射（该医院 + 平台默认）
+        sql = select(DictMappingModel).where(
+            DictMappingModel.dict_type_id == dt_obj.id,
+            DictMappingModel.hospital_id.in_([hospital_id, 1]),  # 1 = 平台默认
+        )
+        mappings_result = await db.execute(sql)
+        mappings = mappings_result.scalars().all()
+
+        for m in mappings:
+            if m.dict_data_id:
+                dd_result = await db.execute(
+                    select(DictDataModel).where(DictDataModel.id == m.dict_data_id)
+                )
+                dd_obj = dd_result.scalars().first()
+                if dd_obj:
+                    result[m.raw_label.lower()] = dd_obj.dict_value
+
+    return result
+
+
 def _normalize_value(val: Any) -> Any:
     """把 DuckDB 返回的复合类型转为 PG 可接受的 Python 对象。
 
@@ -179,11 +299,22 @@ def _clean_row(row: dict[str, Any], model) -> dict[str, Any]:
     """过滤掉目标模型不存在的列，并归一化值类型。
 
     未知列会被丢弃并打 warning，避免模型字段重命名后旧规则静默丢数据。
+    nullable=False 且有 default 的列：源值为 None 时用 default 填充（哨兵值模式）。
     """
     valid_cols = {c.name for c in model.__table__.columns}
     cleaned: dict[str, Any] = {}
     for k, v in row.items():
         if k in valid_cols:
+            # nullable=False 且源值为 None：用列 default 填充（如 nodule_no → "UNKNOWN"）
+            if v is None:
+                col = getattr(model, k, None)
+                if col is not None and hasattr(col, "property"):
+                    column = col.property.columns[0]
+                    if not column.nullable and column.default is not None:
+                        # callable default（如 datetime.now）或 scalar default
+                        default_val = column.default.arg() if callable(column.default.arg) else column.default.arg
+                        cleaned[k] = default_val
+                        continue
             cleaned[k] = _normalize_value(v)
         else:
             log.warning(
@@ -198,14 +329,17 @@ async def import_one_table(
     src_table: str,
     rules: list[MappingRuleModel],
     tenant_id: int,
+    hospital_id: int | None = None,
+    redis: Any = None,
 ) -> int:
     """导入单张源表到对应目标表，返回实际入库行数。
 
     流程：
     1. DuckDB 读 parquet
-    2. 应用映射规则转换每一行
-    3. DELETE 旧数据（幂等）
-    4. 批量 INSERT（用 ON CONFLICT DO NOTHING 跳过重复键）
+    2. 预加载 dict 类型映射缓存（如有 dict 规则）
+    3. 应用映射规则转换每一行
+    4. DELETE 旧数据（幂等）
+    5. 批量 INSERT（用 ON CONFLICT DO NOTHING 跳过重复键）
 
     注意：本函数不会自动 commit，由调用方控制事务。
     若需单表原子性，调用方应在执行前后 begin/commit；
@@ -224,11 +358,14 @@ async def import_one_table(
         log.warning(f"ETL: 源表 {src_table} 无数据，跳过")
         return 0
 
-    # 2. 转换每一行
+    # 2. 预加载 dict 映射缓存（避免逐行查 Redis/DB）
+    dict_cache = await _preload_dict_cache(rules, tenant_id, hospital_id, redis)
+
+    # 3. 转换每一行
     transformed_rows = []
     for raw in raw_rows:
         row_dict = {col: val for col, val in zip(cols, raw)}
-        row_dict = _transform_row(row_dict, rules, tenant_id, jsonb_cols)
+        row_dict = _transform_row(row_dict, rules, tenant_id, jsonb_cols, dict_cache)
         row_dict = _clean_row(row_dict, model)
         transformed_rows.append(row_dict)
 
@@ -253,6 +390,8 @@ async def run_etl_pipeline(
     tenant_id: int,
     mapping_rules: list[MappingRuleModel],
     on_table_done: Callable[[str, int], Any] | None = None,
+    hospital_id: int | None = None,
+    redis: Any = None,
 ) -> dict[str, int]:
     """运行完整 ETL 管线：按源表分组逐表导入。
 
@@ -270,6 +409,8 @@ async def run_etl_pipeline(
         tenant_id: 租户/医院 ID（写入每行的 tenant_id）
         mapping_rules: 该医院的全部映射规则
         on_table_done: 每张表导入完成后的回调
+        hospital_id: 医院 ID（dict 映射需要， tenant_id 可能不等于 hospital_id）
+        redis: Redis 连接（dict 映射缓存需要）
 
     返回:
         {src_table: rows_imported} 各表导入行数
@@ -285,6 +426,8 @@ async def run_etl_pipeline(
                 src_table=src_table,
                 rules=rules,
                 tenant_id=tenant_id,
+                hospital_id=hospital_id,
+                redis=redis,
             )
             result[src_table] = rows
             log.info(f"ETL: {src_table} → 导入 {rows} 行")

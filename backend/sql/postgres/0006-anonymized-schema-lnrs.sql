@@ -1,5 +1,5 @@
 -- =====================================================================
--- 脱敏后病例数据 schema (执行版) - Rev 2026-07-19 改造后
+-- 脱敏后病例数据 schema (执行版) - Rev 2026-07-23 枚举改造后
 -- 依据: docs/adr/0006-anonymized-data-schema.md
 -- 目标: PostgreSQL 14+, schema = lnrs
 -- 变更要点:
@@ -9,6 +9,10 @@
 --     - anon_id VARCHAR(32) UNIQUE NOT NULL (ANON_<HMAC>[:12], 内部反查键)
 --   * 跨表 FK 指向 patient_id (不再指向 anon_id)
 --   * 软删除字段 (deleted_at/deleted_reason/deleted_batch_id) + 复活语义
+--   * 2026-07-23 枚举权威移交（ADR-0008）:
+--     - sex / laterality 由 ENUM 改为 VARCHAR(10) + CHECK
+--     - 枚举标准来源 = 新建 med_* 字典类型（字典为唯一事实源）
+--     - ENUM 类型 lnrs_anon_sex_enum / lnrs_anon_laterality_enum 已删除
 -- =====================================================================
 
 BEGIN;
@@ -35,21 +39,19 @@ DROP SEQUENCE IF EXISTS lnrs.lnrs_anon_patient_seq CASCADE;
 DROP TYPE IF EXISTS lnrs.lnrs_anon_phi_strategy_enum CASCADE;
 DROP TYPE IF EXISTS lnrs.lnrs_anon_clean_method_enum CASCADE;
 DROP TYPE IF EXISTS lnrs.lnrs_anon_uid_kind_enum     CASCADE;
-DROP TYPE IF EXISTS lnrs.lnrs_anon_laterality_enum   CASCADE;
 DROP TYPE IF EXISTS lnrs.lnrs_anon_review_status_enum CASCADE;
 DROP TYPE IF EXISTS lnrs.lnrs_anon_source_kind_enum  CASCADE;
 DROP TYPE IF EXISTS lnrs.lnrs_anon_ingest_status_enum CASCADE;
-DROP TYPE IF EXISTS lnrs.lnrs_anon_sex_enum           CASCADE;
 
 DROP FUNCTION IF EXISTS lnrs.lnrs_anon_trg_set_updated_at() CASCADE;
 
 -- ---------- 1. ENUM ----------
 
-CREATE TYPE lnrs.lnrs_anon_sex_enum            AS ENUM ('M','F','U');
+-- lnrs_anon_sex_enum 已移除：枚举权威移交至 med_sex 字典（ADR-0008）
 CREATE TYPE lnrs.lnrs_anon_ingest_status_enum  AS ENUM ('running','success','failed','partial');
 CREATE TYPE lnrs.lnrs_anon_source_kind_enum    AS ENUM ('csv_report','dicom_dir','dicom_zip');
 CREATE TYPE lnrs.lnrs_anon_review_status_enum  AS ENUM ('pending','reviewed','flagged');
-CREATE TYPE lnrs.lnrs_anon_laterality_enum     AS ENUM ('L','R','Bilateral','N/A');
+-- lnrs_anon_laterality_enum 已移除：枚举权威移交至 med_laterality 字典（ADR-0008）
 CREATE TYPE lnrs.lnrs_anon_uid_kind_enum       AS ENUM ('study','series','sop');
 CREATE TYPE lnrs.lnrs_anon_clean_method_enum   AS ENUM ('regex_only','regex+llm','manual_review');
 CREATE TYPE lnrs.lnrs_anon_phi_strategy_enum   AS ENUM ('hmac','clear','partial_keep','llm_replace','manual_review');
@@ -92,7 +94,7 @@ CREATE TABLE lnrs.lnrs_anon_patient (
     anon_id            VARCHAR(32)  NOT NULL UNIQUE,   -- ANON_<HMAC>, 内部反查键
     center_code        VARCHAR(32)  NOT NULL,
     birth_date         DATE         CHECK (birth_date >= '1900-01-01' AND birth_date <= '2100-12-31'),
-    sex                lnrs.lnrs_anon_sex_enum NOT NULL DEFAULT 'U',
+    sex                VARCHAR(10)  NOT NULL DEFAULT 'U',
     created_batch_id   UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     last_seen_batch_id UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -107,7 +109,9 @@ CREATE TABLE lnrs.lnrs_anon_patient (
     CONSTRAINT lnrs_anon_ck_deleted_consistency CHECK (
         (deleted_at IS NULL  AND deleted_reason IS NULL  AND deleted_batch_id IS NULL) OR
         (deleted_at IS NOT NULL AND deleted_reason IS NOT NULL)
-    )
+    ),
+    -- 枚举权威移交 med_sex 字典（ADR-0008）：CHECK 替代 ENUM
+    CONSTRAINT lnrs_anon_ck_patient_sex CHECK (sex IN ('M','F','U'))
 );
 
 CREATE INDEX lnrs_anon_ix_patient_center    ON lnrs.lnrs_anon_patient (center_code);
@@ -160,12 +164,14 @@ CREATE TABLE lnrs.lnrs_anon_exam_finding (
     finding_type        VARCHAR(32)  NOT NULL,
     value_numeric       NUMERIC(10,3),
     value_text          VARCHAR(255),
-    laterality          lnrs.lnrs_anon_laterality_enum NOT NULL DEFAULT 'N/A',
+    laterality          VARCHAR(10)  NOT NULL DEFAULT 'N/A',
     raw_value_hash      CHAR(64)     NOT NULL,
     created_batch_id    UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT lnrs_anon_uq_finding UNIQUE (anon_exam_id, finding_type, raw_value_hash),
-    CONSTRAINT lnrs_anon_ck_finding_value CHECK (value_numeric IS NOT NULL OR value_text IS NOT NULL)
+    CONSTRAINT lnrs_anon_ck_finding_value CHECK (value_numeric IS NOT NULL OR value_text IS NOT NULL),
+    -- 枚举权威移交 med_laterality 字典（ADR-0008）：CHECK 替代 ENUM
+    CONSTRAINT lnrs_anon_ck_finding_laterality CHECK (laterality IN ('L','R','Bilateral','N/A'))
 );
 
 CREATE INDEX lnrs_anon_ix_finding_exam    ON lnrs.lnrs_anon_exam_finding (anon_exam_id);

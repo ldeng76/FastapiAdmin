@@ -4,6 +4,7 @@ import string
 
 import sqlalchemy as sa
 from redis.asyncio.client import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.api.v1.module_system.dept.crud import DeptCRUD
@@ -554,6 +555,108 @@ class TenantService:
                         log.warning(
                             f"⚠️ 租户[{tenant.name}](id={tenant.id}) 无配置数据，跳过缓存"
                         )
+
+    @classmethod
+    async def clone_platform_dict_to_tenant(
+        cls, db: AsyncSession, target_tenant_id: int
+    ) -> dict:
+        """复制平台字典(tenant_id=PLATFORM_TENANT_ID)到目标租户。
+
+        激活 UniqueConstraint(tenant_id, dict_type) 预留的多租户能力。
+        用于"某医院需要私有字典副本"的场景。
+
+        幂等：已存在的 (target_tenant_id, dict_type) 跳过。
+        调用方负责 commit。
+
+        返回:
+        - dict: {"dict_types_copied": N, "dict_data_copied": M}
+        """
+        from app.common.constant import PLATFORM_TENANT_ID
+        from app.api.v1.module_system.dict.model import DictDataModel, DictTypeModel
+        from sqlalchemy import select
+
+        # 1. 复制 dict_type
+        platform_types = (
+            await db.execute(
+                select(DictTypeModel).where(
+                    DictTypeModel.tenant_id == PLATFORM_TENANT_ID
+                )
+            )
+        ).scalars().all()
+
+        type_id_map: dict[int, int] = {}  # platform_type_id → new_type_id
+        types_copied = 0
+        for pt in platform_types:
+            existing = (
+                await db.execute(
+                    select(DictTypeModel).where(
+                        DictTypeModel.tenant_id == target_tenant_id,
+                        DictTypeModel.dict_type == pt.dict_type,
+                    )
+                )
+            ).scalars().first()
+            if existing:
+                type_id_map[pt.id] = existing.id
+                continue
+            new_type = DictTypeModel(
+                tenant_id=target_tenant_id,
+                dict_name=pt.dict_name,
+                dict_type=pt.dict_type,
+                status=pt.status,
+                description=pt.description,
+            )
+            db.add(new_type)
+            await db.flush()
+            type_id_map[pt.id] = new_type.id
+            types_copied += 1
+
+        # 2. 复制 dict_data
+        platform_data = (
+            await db.execute(
+                select(DictDataModel).where(
+                    DictDataModel.tenant_id == PLATFORM_TENANT_ID
+                )
+            )
+        ).scalars().all()
+
+        data_copied = 0
+        for pd in platform_data:
+            new_type_id = type_id_map.get(pd.dict_type_id)
+            if not new_type_id:
+                continue
+            existing = (
+                await db.execute(
+                    select(DictDataModel).where(
+                        DictDataModel.tenant_id == target_tenant_id,
+                        DictDataModel.dict_type_id == new_type_id,
+                        DictDataModel.dict_value == pd.dict_value,
+                    )
+                )
+            ).scalars().first()
+            if existing:
+                continue
+            new_data = DictDataModel(
+                tenant_id=target_tenant_id,
+                dict_sort=pd.dict_sort,
+                dict_label=pd.dict_label,
+                dict_value=pd.dict_value,
+                dict_type=pd.dict_type,
+                dict_type_id=new_type_id,
+                css_class=pd.css_class,
+                list_class=pd.list_class,
+                is_default=pd.is_default,
+                status=pd.status,
+                description=pd.description,
+            )
+            db.add(new_data)
+            data_copied += 1
+
+        await db.flush()
+        log.info(
+            f"租户 {target_tenant_id} 字典复制完成: "
+            f"{types_copied} 类型, {data_copied} 数据"
+        )
+        return {"dict_types_copied": types_copied, "dict_data_copied": data_copied}
 
     # ============ P1: 到期提醒 ============
 

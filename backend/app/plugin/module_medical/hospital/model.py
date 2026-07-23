@@ -97,6 +97,12 @@ class HospitalModel(ModelMixin, UserMixin):
         back_populates="hospital",
         cascade="all, delete-orphan",
     )
+    dict_mappings: Mapped[list["DictMappingModel"]] = relationship(
+        "DictMappingModel",
+        lazy="selectin",
+        back_populates="hospital",
+        cascade="all, delete-orphan",
+    )
 
 
 class MappingTransform(str, Enum):
@@ -105,6 +111,7 @@ class MappingTransform(str, Enum):
     RENAME = "rename"           # 字段重命名（源字段名→目标字段名，值不变）
     CONSTANT = "constant"       # 常量填充（目标字段 = 固定值）
     EXPRESSION = "expression"   # 表达式变换（目标字段 = 注册函数 key，见 ETL 引擎）
+    DICT = "dict"               # 字典映射（目标字段 = 标准字典值，通过 med_dict_mapping 配置）
 
 
 class MappingRuleModel(ModelMixin, UserMixin):
@@ -143,12 +150,12 @@ class MappingRuleModel(ModelMixin, UserMixin):
         String(20),
         nullable=False,
         default=MappingTransform.RENAME.value,
-        comment="转换类型(rename/constant/expression)",
+        comment="转换类型(rename/constant/expression/dict)",
     )
     transform_value: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-        comment="转换值（CONSTANT=常量值 / EXPRESSION=注册函数 key / RENAME=空）",
+        comment="转换值（CONSTANT=常量值 / EXPRESSION=注册函数 key / DICT=dict_type名 / RENAME=空）",
     )
 
     description: Mapped[str | None] = mapped_column(
@@ -291,7 +298,10 @@ class NoduleImagingModel(ModelMixin, TenantMixin, UserMixin):
     exam_id: Mapped[str] = mapped_column(Text, nullable=False, comment="检查唯一号（可能含多个逗号分隔ID）")
     exam_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="检查日期时间")
     exam_type: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="检查类型")
-    nodule_no: Mapped[str | None] = mapped_column(String(20), nullable=True, comment="结节编号（源数据可能为空）")
+    nodule_no: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="UNKNOWN",
+        comment="结节编号（源数据为空时填哨兵值 UNKNOWN，保证唯一约束有效）",
+    )
     nodule_location: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="结节位置")
     long_diameter: Mapped[float | None] = mapped_column(Float, nullable=True, comment="长径(mm)")
     density_type: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="密度类型")

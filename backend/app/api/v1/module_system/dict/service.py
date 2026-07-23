@@ -3,6 +3,7 @@ import json
 from redis.asyncio.client import Redis
 
 from app.api.v1.module_system.auth.schema import AuthSchema
+from app.common.constant import PLATFORM_TENANT_ID
 from app.common.enums import RedisInitKeyConfig
 from app.core.base_schema import BatchSetAvailable
 from app.core.database import async_db_session
@@ -419,7 +420,7 @@ class DictDataService:
             raise CustomException(msg=f"字典数据初始化失败: {e!s}")
 
     @classmethod
-    async def get_init_dict_service(cls, redis: Redis, dict_type: str, tenant_id: int = 1) -> list[dict]:
+    async def get_init_dict_service(cls, redis: Redis, dict_type: str, tenant_id: int = PLATFORM_TENANT_ID) -> list[dict]:
         """
         从缓存获取字典数据列表信息
 

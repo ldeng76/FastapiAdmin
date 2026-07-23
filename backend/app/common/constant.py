@@ -3,6 +3,11 @@ from typing import Protocol
 
 from app.config.setting import settings
 
+# 平台租户 ID：所有平台级公共数据（系统字典、系统配置等）挂在此 tenant_id 下。
+# 通过 __platform_data_shared__ 机制供所有租户共享读取。
+# 详见 ADR-0009。
+PLATFORM_TENANT_ID: int = 1
+
 
 class RET(Enum):
     """

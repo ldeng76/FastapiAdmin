@@ -28,6 +28,7 @@ dependencies = [
     "loguru==0.7.3",                            # 日志
     "openai==2.28.0",                           # OpenAI API 客户端
     "openpyxl==3.1.5",                          # Excel
+    "numpy>=2.0,<2.1",                          # 固定到 manylinux2014 兼容版本（el7/glibc2.17 无 numpy>=2.1 预编译轮）
     "pandas==2.2.3",                            # 数据处理
     "passlib==1.7.4",                           # 密码加密
     "prefect>=3.5.0,<4",                        # 工作流编排（与 typer>=0.19 兼容；部署与 requirements.txt 一致）

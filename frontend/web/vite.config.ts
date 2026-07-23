@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "url";
 import vueDevTools from "vite-plugin-vue-devtools";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
 import viteCompression from "vite-plugin-compression";
 import Components from "unplugin-vue-components/vite";
 import AutoImport from "unplugin-auto-import/vite";
@@ -186,6 +187,9 @@ export default ({ mode }: { mode: string }) => {
       vue(),
       vitePluginStart(),
       tailwindcss(),
+      nodePolyfills({
+        include: ["fs", "path"],
+      }),
       /** 自动按需导入 API */
       AutoImport({
         imports: ["vue", "vue-router", "pinia", "@vueuse/core", "vue-i18n"],

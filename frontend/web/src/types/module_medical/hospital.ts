@@ -129,6 +129,46 @@ export interface HospitalPageQuery {
   lifecycle_status?: HospitalLifecycleStatus;
 }
 
+// ── 数据统计（仪表板）──────────────────────────────────────
+// 结构遵循 ADR-0007：{filters, kpis, dimensions}
+
+/** 图表类型 — 前端按此字段选渲染组件 */
+export type StatsChartType = "bar" | "pie" | "h-bar" | "line";
+
+/** 筛选条件 */
+export interface StatsFilterOption {
+  applied: string | null;
+  options: string[] | { min: number; max: number } | null;
+}
+
+export interface StatsFilters {
+  center: StatsFilterOption | null;
+  year_range: StatsFilterOption | null;
+}
+
+/** KPI 指标卡 */
+export interface StatsKpi {
+  key: string;
+  label: string;
+  value: number;
+  format: "number" | "wan";
+}
+
+/** 统计维度 — 前端按 chart_type 选图表组件渲染 */
+export interface StatsDimension {
+  key: string;
+  label: string;
+  chart_type: StatsChartType;
+  data: Record<string, any>[];
+}
+
+/** 仪表板全量概览（ADR-0007 维度数组结构） */
+export interface StatsOverview {
+  filters: StatsFilters | null;
+  kpis: StatsKpi[];
+  dimensions: StatsDimension[];
+}
+
 /** 状态徽标配置 */
 export const LIFECYCLE_STATUS_META: Record<
   HospitalLifecycleStatus,

@@ -42,8 +42,12 @@ from .schema import (
 )
 from .etl_service import EtlService
 from .etl1.service import Etl1Service
+from .stats_controller import StatsRouter
 
 HospitalRouter = APIRouter(route_class=OperationLogRoute, tags=["医院管理"])
+
+# 将统计数据路由挂载到医院路由上（共享 /medical 前缀）
+HospitalRouter.include_router(StatsRouter)
 
 
 @HospitalRouter.post(

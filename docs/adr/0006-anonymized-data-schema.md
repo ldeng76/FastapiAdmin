@@ -247,6 +247,42 @@ phi_audit ── 任何含 PHI 的字段被脱敏时写一行 (field, src_hash, 
 - **anesthesia_event 双事件类型** —— medication 与 observation 共享一张表，靠 `event_kind` 枚举区分；会话级字段（asa_level / surgery_name / 手术时间等）按 session 冗余，便于单行查询。
 - **不加新审计表** —— 所有 visit 层表的 `created_batch_id` 都指向已有 `lnrs_anon_ingest_batch`，PHI 清洗记录写入已有 `lnrs_anon_phi_audit`（`source_table` 取 `'visit_csv'` / `'medical_history_text'` 等）。
 
+### 枚举列改造（2026-07-23 增补）
+
+> **权威移交**：本 ADR 此前用 `ENUM(...)` 定义各枚举列的取值。自 [ADR 0008](./0008-dict-value-mapping.md) 起，**枚举的单一事实源移交至 `sys_dict_data` 的 `med_*` 医疗领域字典**，`dict_value` = DB 列的实际存储值。ENUM 降级为 `VARCHAR(10) + CHECK`。
+
+#### 受影响列
+
+| 表 | 列 | 原类型 | 新类型 | 对应字典 |
+|----|----|--------|--------|---------|
+| `lnrs_anon_patient` | `sex` | `ENUM('M','F','U')` | `VARCHAR(10)` + CHECK | `med_sex` |
+| `lnrs_anon_exam` | `exam_type` | `VARCHAR(32)`（文本，未强约束） | `VARCHAR(10)` + CHECK | `med_exam_type` |
+| `lnrs_anon_exam_finding` | `laterality` | `ENUM('L','R','Bilateral','N/A')` | `VARCHAR(10)` + CHECK | `med_laterality` |
+
+> `exam_type` 原本就是 VARCHAR（仅约定值域），此处顺带补 CHECK 强约束。
+
+#### 改造语义
+
+```sql
+-- sex: ENUM('M','F','U') → VARCHAR + CHECK
+ALTER TABLE lnrs_anon_patient
+    ALTER COLUMN sex TYPE VARCHAR(10);
+ALTER TABLE lnrs_anon_patient
+    ADD CONSTRAINT chk_anon_patient_sex CHECK (sex IN ('M','F','U'));
+```
+
+`exam_type`、`laterality` 同理，CHECK 取值列取自对应 `med_*` 字典的 `dict_value`。
+
+#### 权威移交的取舍
+
+- **权威归字典**：新增枚举值（如将来 `med_sex` 加 `Other`）只需加一条 `sys_dict_data`，无需 DDL 变更。这与本 ADR 此前的 ENUM 设计相比，牺牲了 DB 层的强类型保证（CHECK 可被 DISABLE，ENUM 不能）。
+- **第二道护栏**：CHECK 约束提供应用层之外的兜底；应用层（ETL）写入前仍必须查字典归一化，未匹配值不入库（详见 ADR 0008 未匹配队列）。
+- **值标准不变**：`med_sex` 的 `dict_value` 仍为 M/F/U，与原 ENUM 取值完全一致，历史数据无需迁移；仅是约束形式从 ENUM 换成 CHECK。
+
+#### DDL 文件同步
+
+`backend/sql/postgres/0006-anonymized-schema-lnrs.sql` 中相关列定义需同步改为 `VARCHAR(10) + CHECK`。注意 `anonymize.py` 有基于该 DDL 文件内容计算 `schema_hash` 的机制（见 [ADR 0001](./0001-linkable-anonymization.md)），DDL 变更会改变 schema_hash，运行环境需重启以重新计算——这是预期内的副作用。
+
 ## Consequences
 
 - ✅ **跨模态可关联**：`anon_exam_id` 是 CSV 报告 ↔ DICOM 序列的唯一连接键。

@@ -120,3 +120,8 @@ docs/zhujiang_xinqiao_parq/*.parquet
 xinqiao
 .understand-anything
 .codegraph
+# AI工具会话计划 / IDE个人配置
+.zcode
+opencode.jsonc
+docs/codegraph-install-guide.md
+0723_鐝犳睙sample_pq

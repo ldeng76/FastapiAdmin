@@ -50,7 +50,7 @@ CREATE INDEX lnrs_anon_ix_batch_secret_ver   ON ingest_batch (secret_version, ke
 CREATE TABLE lnrs_anon_patient (
     anon_id            VARCHAR(32)  PRIMARY KEY,
     center_code        VARCHAR(32)  NOT NULL,
-    birth_year         SMALLINT     CHECK (birth_year BETWEEN 1900 AND 2100),
+    birth_date         DATE         CHECK (birth_date >= '1900-01-01' AND birth_date <= '2100-12-31'),
     sex                sex_enum     NOT NULL DEFAULT 'U',
     created_batch_id   UUID         NOT NULL REFERENCES lnrs_anon_ingest_batch(batch_id),
     last_seen_batch_id UUID         NOT NULL REFERENCES lnrs_anon_ingest_batch(batch_id),
@@ -60,7 +60,7 @@ CREATE TABLE lnrs_anon_patient (
 );
 
 CREATE INDEX lnrs_anon_ix_patient_center ON anon_patient (center_code, center_code);  -- 冗余索引给跨中心统计
-CREATE INDEX lnrs_anon_ix_patient_birth  ON anon_patient (birth_year);
+CREATE INDEX lnrs_anon_ix_patient_birth  ON anon_patient (birth_date);
 
 -- ---------- 3. anon_exam  (跨模态桥梁) ----------
 

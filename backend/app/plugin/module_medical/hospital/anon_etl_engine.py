@@ -40,7 +40,7 @@ from .anon_model import (
 )
 from .anonymize import (
     CLEAN_METHOD_REGEX_ONLY,
-    birth_year_from,
+    birth_date_from,
     compute_anon_exam_id,
     compute_anon_id,
     hash_for_audit,
@@ -96,9 +96,9 @@ async def _batch_upsert_patients(
 ) -> dict[str, str]:
     """批量处理病人，返回 {anon_id: patient_id} 映射。
 
-    patient_records: [{"local_id", "anon_id", "sex", "birth_year"}]
+    patient_records: [{"local_id", "anon_id", "sex", "birth_date"}]
     三态机（ADR-0006 Rev 2026-07-19 §1-4）：
-    - 活行：UPDATE last_seen + sex/birth_year
+    - 活行：UPDATE last_seen + sex/birth_date
     - 软删：复活（清空 deleted_*）
     - 新：nextval 发号 + INSERT
     """
@@ -164,7 +164,7 @@ async def _batch_upsert_patients(
                 "patient_id": result[r["anon_id"]],
                 "anon_id": r["anon_id"],
                 "center_code": center_code,
-                "birth_year": r["birth_year"],
+                "birth_date": r["birth_date"],
                 "sex": r["sex"],
                 "created_batch_id": batch_id,
                 "last_seen_batch_id": batch_id,
@@ -185,7 +185,7 @@ async def _batch_upsert_patients(
             set_={
                 "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
                 "sex": stmt.excluded.sex,
-                "birth_year": stmt.excluded.birth_year,
+                "birth_date": stmt.excluded.birth_date,
                 "deleted_at": None,
                 "deleted_reason": None,
                 "deleted_batch_id": None,
@@ -323,7 +323,7 @@ async def _import_patient_table(
                 "local_id": str(local_pid),
                 "anon_id": anon_id,
                 "sex": normalize_sex(rd.get("gender")),
-                "birth_year": birth_year_from(rd.get("birth_date")),
+                "birth_date": birth_date_from(rd.get("birth_date")),
             }
         )
         # PHI 审计：patient_id HMAC + birth_date partial_keep
@@ -409,9 +409,9 @@ async def _import_exam_text_table(
             continue
 
         # exam 中出现的病人也要确保存在（exam.patient_id FK）；
-        # sex/birth_year 此处未知，置默认 U/None（若 patient.parquet 已入库则会被活行 UPDATE 覆盖）
+        # sex/birth_date 此处未知，置默认 U/None（若 patient.parquet 已入库则会被活行 UPDATE 覆盖）
         exam_patient_records.append(
-            {"local_id": str(local_pid), "anon_id": anon_id, "sex": "U", "birth_year": None}
+            {"local_id": str(local_pid), "anon_id": anon_id, "sex": "U", "birth_date": None}
         )
 
         if anon_exam_id in seen_exam_anon:

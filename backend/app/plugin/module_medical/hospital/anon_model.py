@@ -23,7 +23,6 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
-    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -127,7 +126,7 @@ class AnonPatientModel(MappedBase):
     patient_id: Mapped[str] = mapped_column(String(16), primary_key=True)
     anon_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     center_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    birth_year: Mapped[int | None] = mapped_column(SmallInteger, nullable=True, index=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     sex: Mapped[str] = mapped_column(_sex_enum, nullable=False, default="U")
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),

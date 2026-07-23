@@ -91,7 +91,7 @@ _PATIENT_FROM_SUB1 = SheetSpec(
         col_str("检查报告.性别", "gender"),
         # patients.* 与 检查报告.* 冗余, 取检查报告侧 (更靠近事件)
         # 姓名 / 身份证号 = `***` 不入库
-        # 出生日期 TRY_CAST 为出生年份, 简化字段 (后续 ETL-2 可补 birth_year)
+        # 出生日期：新桥源数据仅有年份，ETL-2 的 birth_date_from() 会补齐为 YYYY-01-01
     ],
 )
 

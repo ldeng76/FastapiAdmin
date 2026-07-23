@@ -183,32 +183,55 @@ def normalize_sex(raw: Any) -> str:
     return "U"
 
 
-def birth_year_from(raw: Any) -> int | None:
-    """从 date / int / str 提取出生年份，失败返回 None。
+def birth_date_from(raw: Any) -> date | None:
+    """从 date / int / str 提取出生日期，精度不足时补齐，失败返回 None。
 
-    ADR-0001 决策 11：birth_date 仅保留年份，月日清零。
-    - date / datetime → .year
-    - int (1900-2100) → 直接
-    - str "YYYY-MM-DD" / "YYYY" → 解析 year
+    ADR-0006 决策：脱敏层 birth_date 保留到日，精度不足时补齐：
+    - 源数据有 YYYY-MM-DD → 完整保留
+    - 源数据只有 YYYY-MM → 日置 01
+    - 源数据只有 YYYY → 月日置 01-01
+    - 无法解析 / 超出范围 → None
     """
     if raw is None:
         return None
-    # date / datetime
+    # date / datetime → 直接返回 date 部分
+    if isinstance(raw, date):
+        if raw.year < 1900 or raw.year > 2100:
+            return None
+        return raw
     if hasattr(raw, "year") and isinstance(getattr(raw, "year", None), int):
-        y = raw.year
-        return y if 1900 <= y <= 2100 else None
-    # int
+        y, m, d = raw.year, getattr(raw, "month", 1), getattr(raw, "day", 1)
+        if 1900 <= y <= 2100:
+            return date(y, m, d)
+        return None
+    # int → 纯年份，补齐为 YYYY-01-01
     if isinstance(raw, int):
-        return raw if 1900 <= raw <= 2100 else None
-    # str
+        if 1900 <= raw <= 2100:
+            return date(raw, 1, 1)
+        return None
+    # str → 尝试解析 YYYY-MM-DD / YYYY-MM / YYYY
     s = str(raw).strip()
     if not s:
         return None
-    # 取前 4 位数字
+    # YYYY-MM-DD
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        try:
+            return date.fromisoformat(s[:10])
+        except (ValueError, OverflowError):
+            return None
+    # YYYY-MM
+    if len(s) >= 7 and s[4] == "-":
+        try:
+            y, m = int(s[:4]), int(s[5:7])
+            return date(y, m, 1)
+        except (ValueError, OverflowError):
+            return None
+    # YYYY
     digits = "".join(ch for ch in s[:4] if ch.isdigit())
     if len(digits) == 4:
         y = int(digits)
-        return y if 1900 <= y <= 2100 else None
+        if 1900 <= y <= 2100:
+            return date(y, 1, 1)
     return None
 
 

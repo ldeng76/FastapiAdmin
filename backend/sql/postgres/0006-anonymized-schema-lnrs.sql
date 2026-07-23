@@ -91,7 +91,7 @@ CREATE TABLE lnrs.lnrs_anon_patient (
     patient_id         VARCHAR(16)  PRIMARY KEY,        -- PT_xxxxxxxx, 对外 ID 即 PK
     anon_id            VARCHAR(32)  NOT NULL UNIQUE,   -- ANON_<HMAC>, 内部反查键
     center_code        VARCHAR(32)  NOT NULL,
-    birth_year         SMALLINT     CHECK (birth_year BETWEEN 1900 AND 2100),
+    birth_date         DATE         CHECK (birth_date >= '1900-01-01' AND birth_date <= '2100-12-31'),
     sex                lnrs.lnrs_anon_sex_enum NOT NULL DEFAULT 'U',
     created_batch_id   UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     last_seen_batch_id UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
@@ -111,7 +111,7 @@ CREATE TABLE lnrs.lnrs_anon_patient (
 );
 
 CREATE INDEX lnrs_anon_ix_patient_center    ON lnrs.lnrs_anon_patient (center_code);
-CREATE INDEX lnrs_anon_ix_patient_birth     ON lnrs.lnrs_anon_patient (birth_year);
+CREATE INDEX lnrs_anon_ix_patient_birth     ON lnrs.lnrs_anon_patient (birth_date);
 CREATE INDEX lnrs_anon_ix_patient_anon_id   ON lnrs.lnrs_anon_patient (anon_id);
 -- 部分索引: 仅索引软删除行, 加速 PURGE 物理清理扫描
 CREATE INDEX lnrs_anon_ix_patient_deleted   ON lnrs.lnrs_anon_patient (deleted_at) WHERE deleted_at IS NOT NULL;

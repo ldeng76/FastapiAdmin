@@ -65,7 +65,7 @@ ETL 通过"宽表 → 窄表"的导数管线把两者串起来，业务宽表负
 两条管线的产物**互不重叠**：
 
 - 业务宽表保留 `birth_date` 精度、保留多中心并集字段、用于研究查询；
-- 脱敏窄表只保留 `birth_year`，删去所有原始 ID，提供 DICOM 与报告的一对一桥梁，支持审计回放。
+- 脱敏窄表同样保留 `birth_date`（精确到日，源数据精度不足时补齐），删去所有原始 ID，提供 DICOM 与报告的一对一桥梁，支持审计回放。
 
 ---
 
@@ -110,7 +110,7 @@ ETL 通过"宽表 → 窄表"的导数管线把两者串起来，业务宽表负
 ```text
 unified.patient.patient_id        ──► anon_id        (经 HMAC 截断，详见 ADR-0001)
 unified.patient.gender            ──► sex            ('男' → 'M', '女' → 'F', null → 'U')
-unified.patient.birth_date        ──► birth_year     (仅保留年份，丢弃月日)
+unified.patient.birth_date        ──► birth_date     (精确到日，精度不足时补齐)
 unified.patient.source_center     ──► center_code    (取"省医"→'shengyi'，依枚举)
 ```
 

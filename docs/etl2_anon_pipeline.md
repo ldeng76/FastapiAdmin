@@ -41,7 +41,7 @@ lnrs.lnrs_anon_*  (PostgreSQL, 强脱敏)
 | `patient_id`（明文院内号） | `anon_id = "ANON_" + HMAC-SHA256(secret, center:patient_id)[:12]`；同时分配 `patient_id = "PT_" + LPAD(seq, 8, "0")` |
 | `exam_id` / `specimen_id` | `anon_exam_id = "ANON_EXAM_" + HMAC-SHA256(secret, center:exam_no)[:12]` |
 | `gender` (男/女/...) | `sex` ENUM('M','F','U') |
-| `birth_date` | `birth_year`（仅年，月日清零） |
+| `birth_date` | `birth_date`（精确到日，仅有年份时月日=01，仅有年月时日=01） |
 | `exam_date` | 原值保留 |
 | 报告正文 | **原样**入 `body_clean`（`clean_method='regex_only'`、`review_status='pending'`，等待后续 regex+LLM 迭代） |
 

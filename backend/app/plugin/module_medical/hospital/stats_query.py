@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,14 +33,20 @@ def _not_deleted_patient():
     return AnonPatientModel.deleted_at.is_(None)  # type: ignore[return-value]
 
 
-def _age_bucket_expr(current_year: int):
-    """构造年龄分桶的 CASE 表达式。"""
+def _age_bucket_expr(ref_date: date | None = None):
+    """构造年龄分桶的 CASE 表达式。
+
+    使用 PostgreSQL age() 函数精确计算年龄（考虑月日）。
+    """
+    if ref_date is None:
+        ref_date = date.today()
+    age_years = func.floor(func.extract("year", func.age(ref_date, AnonPatientModel.birth_date)))
     return case(
         *[
             (
-                AnonPatientModel.birth_year.is_not(None)
-                & ((current_year - AnonPatientModel.birth_year) >= lo)
-                & ((current_year - AnonPatientModel.birth_year) < hi),
+                AnonPatientModel.birth_date.is_not(None)
+                & (age_years >= lo)
+                & (age_years < hi),
                 label,
             )
             for lo, hi, label in AGE_BUCKETS
@@ -111,8 +117,8 @@ async def _exam_year_range(db: AsyncSession) -> dict[str, int] | None:
 # ── 维度查询 ──────────────────────────────────
 
 
-async def _query_age_distribution(db: AsyncSession, current_year: int) -> list[dict]:
-    bucket_col = _age_bucket_expr(current_year).label("age_group")
+async def _query_age_distribution(db: AsyncSession, ref_date: date | None = None) -> list[dict]:
+    bucket_col = _age_bucket_expr(ref_date).label("age_group")
     stmt = (
         select(bucket_col, func.count().label("count"))
         .select_from(AnonPatientModel)
@@ -208,7 +214,7 @@ DIMENSIONS: list[tuple[str, str, str, object]] = [
 
 async def get_dashboard_overview(db: AsyncSession) -> dict:
     """仪表板全量概览 — 返回 {filters, kpis, dimensions} 结构（ADR-0007）。"""
-    current_year = datetime.now().year
+    ref_date = date.today()
 
     # 基础聚合
     total_patients = await _count_patients(db)
@@ -241,7 +247,7 @@ async def get_dashboard_overview(db: AsyncSession) -> dict:
     dimensions = []
     for key, label, chart_type, query_func in DIMENSIONS:
         if key == "age_distribution":
-            data = await query_func(db, current_year)  # 年龄需要 current_year
+            data = await query_func(db, ref_date)  # 年龄需要参考日期
         else:
             data = await query_func(db)
         dimensions.append({

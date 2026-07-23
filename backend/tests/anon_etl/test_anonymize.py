@@ -4,7 +4,7 @@
 - HMAC 确定性：同输入同输出
 - center 参与哈希：跨中心同 patient_id 不碰撞
 - 截断长度与格式（与 DDL CHECK 约束对齐）
-- sex / birth_year 归一化各分支
+- sex / birth_date 归一化各分支
 - 密钥指纹 / schema_hash 稳定性
 """
 
@@ -17,7 +17,7 @@ import pytest
 from app.plugin.module_medical.hospital.anonymize import (
     CLEAN_METHOD_REGEX_ONLY,
     MAX_BODY_LEN,
-    birth_year_from,
+    birth_date_from,
     compute_anon_exam_id,
     compute_anon_id,
     hash_for_audit,
@@ -138,32 +138,42 @@ class TestNormalizeSex:
         assert normalize_sex("  男  ") == "M"
 
 
-class TestBirthYear:
-    """birth_year 提取（ADR-0001 决策 11：仅保留年）。"""
+class TestBirthDate:
+    """birth_date 提取（ADR-0006：保留到日，精度不足时补齐）。"""
 
-    def test_from_date(self):
-        assert birth_year_from(date(1963, 10, 13)) == 1963
+    def test_from_full_date(self):
+        """date 对象：完整保留。"""
+        assert birth_date_from(date(1963, 10, 13)) == date(1963, 10, 13)
 
-    def test_from_int(self):
-        assert birth_year_from(1980) == 1980
+    def test_from_int_year(self):
+        """纯 int 年份：补齐为 YYYY-01-01。"""
+        assert birth_date_from(1980) == date(1980, 1, 1)
 
-    def test_from_iso_string(self):
-        assert birth_year_from("1980-05-06") == 1980
-        assert birth_year_from("1980") == 1980
+    def test_from_iso_full_string(self):
+        """YYYY-MM-DD 字符串：完整解析。"""
+        assert birth_date_from("1980-05-06") == date(1980, 5, 6)
+
+    def test_from_year_month_string(self):
+        """YYYY-MM 字符串：日置 01。"""
+        assert birth_date_from("1980-05") == date(1980, 5, 1)
+
+    def test_from_year_only_string(self):
+        """YYYY 字符串：月日置 01-01。"""
+        assert birth_date_from("1980") == date(1980, 1, 1)
 
     def test_none(self):
-        assert birth_year_from(None) is None
+        assert birth_date_from(None) is None
 
     def test_empty_string(self):
-        assert birth_year_from("") is None
+        assert birth_date_from("") is None
 
     def test_out_of_range(self):
-        assert birth_year_from(1800) is None
-        assert birth_year_from(2200) is None
-        assert birth_year_from(date(1700, 1, 1)) is None
+        assert birth_date_from(1800) is None
+        assert birth_date_from(2200) is None
+        assert birth_date_from(date(1700, 1, 1)) is None
 
     def test_garbage_string(self):
-        assert birth_year_from("abc") is None
+        assert birth_date_from("abc") is None
 
 
 class TestKeyFingerprintAndSchema:

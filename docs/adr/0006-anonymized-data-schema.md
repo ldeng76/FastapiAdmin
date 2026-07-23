@@ -69,7 +69,7 @@ phi_audit ── 任何含 PHI 的字段被脱敏时写一行 (field, src_hash, 
 | `patient_id` | VARCHAR(16) **PK** | **对外业务 ID + 物理主键**：`PT_` + 8 位 zero-pad（如 `PT_00000001`）；由 SEQUENCE 格式化而来 |
 | `anon_id` | VARCHAR(32) UNIQUE NOT NULL | **内部反查键**：`ANON_` + HMAC-SHA256[:12]（保留供密钥持有者反算） |
 | `center_code` | VARCHAR(32) NOT NULL | 跨中心碰撞防御 |
-| `birth_year` | SMALLINT | 只保留年份；月日清零 |
+| `birth_date` | DATE | 精确到日；源数据只有年份时月日为 01，只有年月时日置 01 |
 | `sex` | ENUM('M','F','U') | |
 | `created_batch_id` | UUID FK → `lnrs_anon_ingest_batch` | 首次出现批次；后续 update 仅刷新 last_seen |
 | `last_seen_batch_id` | UUID FK → `lnrs_anon_ingest_batch` | |
@@ -87,7 +87,7 @@ phi_audit ── 任何含 PHI 的字段被脱敏时写一行 (field, src_hash, 
 
 索引：
 - `lnrs_anon_ix_patient_center` ON `(center_code)`
-- `lnrs_anon_ix_patient_birth` ON `(birth_year)`
+- `lnrs_anon_ix_patient_birth` ON `(birth_date)`
 - `lnrs_anon_ix_patient_anon_id` ON `(anon_id)` — 反查路径（**含软删行**）
 - `lnrs_anon_ix_patient_deleted` ON `(deleted_at) WHERE deleted_at IS NOT NULL` — 物理清理用部分索引
 
@@ -217,16 +217,16 @@ phi_audit ── 任何含 PHI 的字段被脱敏时写一行 (field, src_hash, 
 | CSV | `SICK_ID` | — | **不入库**，决策 3 |
 | CSV | `NAME` | — | 不入库 |
 | CSV | `SEX` | `sex` | 标准化为 M/F/U |
-| CSV | `BIRTH_DATE` | `birth_year` | 仅年 |
+| CSV | `BIRTH_DATE` | `birth_date` | 精确到日，精度不足时补齐 |
 | CSV | `EXAM_DATE` | `exam_date` | 原值 |
-| CSV | `AGE` | — | 可由 birth_year + exam_date 计算，不再存原值 |
+| CSV | `AGE` | — | 可由 birth_date + exam_date 精确计算，不再存原值 |
 | DICOM | `(0010,0010) PatientName` | — | 不入库 |
 | DICOM | `(0010,0020) PatientID` | 推导为 `anon_id`（FK） | |
 | DICOM | `(0008,0050) AccessionNumber` | 推导为 `anon_exam_id`（FK），原值不入库 | |
 | DICOM | `(0020,000D) StudyInstanceUID` | `dicom_study_uid`（重生成后） | |
 | DICOM | `(0020,000E) SeriesInstanceUID` | `dicom_series_uid`（重生成后） | |
 | DICOM | `(0008,0020) StudyDate` | `exam_date` | |
-| DICOM | `(0010,0030) PatientBirthDate` | `birth_year` | 仅年 |
+| DICOM | `(0010,0030) PatientBirthDate` | `birth_date` | 精确到日 |
 
 ### 反范式取舍
 

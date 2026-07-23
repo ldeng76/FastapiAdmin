@@ -4,9 +4,10 @@
 """
 
 from typing import Annotated, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, Path
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Path, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio.client import Redis
 
 from app.api.v1.module_system.auth.schema import AuthSchema
@@ -140,6 +141,64 @@ async def batch_create_mapping_controller(
     )
     log.info(f"批量创建映射规则成功: {len(results)} 条")
     return SuccessResponse(data=results, msg="批量创建映射规则成功")
+
+
+@DictMappingRouter.post(
+    "/mapping/import",
+    summary="Excel批量导入映射",
+    response_model=ResponseSchema[str],
+)
+async def import_mapping_controller(
+    file: UploadFile,
+    redis: Annotated[Redis, Depends(redis_getter)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:dict_mapping:create"]))],
+) -> JSONResponse:
+    """Excel 批量导入映射规则（覆盖更新模式）。
+
+    每个 sheet 对应一家医院，sheet 名 = center_code；
+    每个 sheet 三列：dict_type | raw_label | dict_value。
+    """
+    result = await DictMappingService.import_excel_service(
+        auth=auth, redis=redis, file=file
+    )
+    log.info(f"Excel 批量导入映射完成: {result}")
+    return SuccessResponse(data=result, msg="导入完成")
+
+
+@DictMappingRouter.post(
+    "/mapping/import/template",
+    summary="下载导入模板",
+)
+async def download_import_template_controller() -> StreamingResponse:
+    """下载 Excel 导入模板（含示例 sheet）。"""
+    from app.utils.common_util import bytes2file_response
+
+    content = await DictMappingService.get_import_template_service()
+    filename = quote("医院选项映射导入模板.xlsx")
+    return StreamingResponse(
+        content=bytes2file_response(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@DictMappingRouter.post(
+    "/mapping/export",
+    summary="导出全部选项映射",
+)
+async def export_mapping_controller(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:dict_mapping:query"]))],
+) -> StreamingResponse:
+    """导出全部选项映射到 Excel（每家医院一个 sheet，可直接用于导入）。"""
+    from app.utils.common_util import bytes2file_response
+
+    content = await DictMappingService.export_excel_service(auth=auth)
+    filename = quote("医院选项映射导出.xlsx")
+    return StreamingResponse(
+        content=bytes2file_response(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # ------------------------------------------------------------------

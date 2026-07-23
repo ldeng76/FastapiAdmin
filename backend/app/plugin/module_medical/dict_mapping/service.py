@@ -6,9 +6,12 @@
 - 缓存刷新：写映射后刷新 Redis Hash
 """
 
+import io
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
+from fastapi import UploadFile
 from redis.asyncio.client import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -403,6 +406,289 @@ class DictMappingService:
             await RedisCURD(redis).hash_set(name=cache_k, key=raw_label.lower(), value=dict_value)
         except Exception as e:
             log.warning("字典映射缓存写入失败: %s", e)
+
+    # ------------------------------------------------------------------
+    # Excel 批量导入
+    # ------------------------------------------------------------------
+
+    @classmethod
+    async def import_excel_service(
+        cls, auth: AuthSchema, redis: Redis, file: UploadFile
+    ) -> str:
+        """Excel 批量导入映射规则（覆盖更新模式）。
+
+        Excel 格式：每个 sheet 对应一家医院，sheet 名 = center_code。
+        每个 sheet 三列：dict_type | raw_label | dict_value。
+        遇到已存在的 (hospital_id, dict_type_id, raw_label) 覆盖更新 dict_data_id。
+        """
+        from app.plugin.module_medical.hospital.model import HospitalModel
+
+        try:
+            contents = await file.read()
+            await file.close()
+        except Exception as e:
+            raise CustomException(msg=f"读取文件失败: {e!s}")
+
+        # 读取所有 sheet → {sheet_name: DataFrame}
+        try:
+            sheets = pd.read_excel(io.BytesIO(contents), sheet_name=None, dtype=str)
+        except Exception as e:
+            raise CustomException(msg=f"解析 Excel 失败: {e!s}")
+
+        if not sheets:
+            raise CustomException(msg="Excel 文件不包含任何 sheet")
+
+        # 缓存：center_code → hospital_id、dict_type → dict_type_id、(dict_type_id, dict_value) → dict_data_id
+        hospital_cache: dict[str, int | None] = {}
+        dict_type_cache: dict[str, int | None] = {}
+        dict_data_cache: dict[tuple[int, str], int | None] = {}
+        refreshed_dict_types: set[int] = set()
+
+        crud = DictMappingCRUD(auth)
+        db = auth.db
+        success_count = 0
+        sheet_count = 0
+        error_msgs: list[str] = []
+
+        for sheet_name, df in sheets.items():
+            center_code = str(sheet_name).strip()
+            if df is None or df.empty:
+                continue
+
+            # 校验表头
+            expected = {"dict_type", "raw_label", "dict_value"}
+            actual = {str(c).strip() for c in df.columns}
+            if not expected.issubset(actual):
+                error_msgs.append(f"sheet[{center_code}]: 表头缺失，需含 {expected}")
+                continue
+
+            # center_code → hospital_id
+            if center_code not in hospital_cache:
+                sql = select(HospitalModel.id).where(HospitalModel.code == center_code)
+                result = await db.execute(sql)
+                hospital_cache[center_code] = result.scalars().first()
+
+            hospital_id = hospital_cache[center_code]
+            if hospital_id is None:
+                error_msgs.append(
+                    f"sheet[{center_code}]: 未找到 code={center_code} 的医院，跳过该 sheet"
+                )
+                continue
+
+            sheet_count += 1
+
+            # 去掉列名空白
+            df.columns = [str(c).strip() for c in df.columns]
+            for idx, row in df.iterrows():
+                excel_row = int(idx) + 2  # +1 表头, +1 从1计数
+                dict_type = str(row.get("dict_type", "") or "").strip()
+                raw_label = str(row.get("raw_label", "") or "").strip()
+                dict_value = str(row.get("dict_value", "") or "").strip()
+
+                if not raw_label:
+                    error_msgs.append(
+                        f"sheet[{center_code}]第{excel_row}行: raw_label 为空，跳过"
+                    )
+                    continue
+
+                # dict_type → dict_type_id
+                if dict_type not in dict_type_cache:
+                    dict_type_cache[dict_type] = await cls._get_dict_type_id(db, dict_type)
+                dict_type_id = dict_type_cache[dict_type]
+                if dict_type_id is None:
+                    error_msgs.append(
+                        f"sheet[{center_code}]第{excel_row}行: dict_type={dict_type} 不存在，跳过"
+                    )
+                    continue
+
+                # dict_value → dict_data_id
+                data_key = (dict_type_id, dict_value)
+                if data_key not in dict_data_cache:
+                    dict_data_cache[data_key] = await cls._get_dict_data_id_by_value(
+                        db, dict_type_id, dict_value
+                    )
+                dict_data_id = dict_data_cache[data_key]
+                if dict_data_id is None:
+                    error_msgs.append(
+                        f"sheet[{center_code}]第{excel_row}行: dict_value={dict_value} "
+                        f"在 {dict_type} 下不存在，跳过"
+                    )
+                    continue
+
+                # upsert（覆盖更新）
+                existing = await crud.get_by_raw_label(hospital_id, dict_type_id, raw_label)
+                if existing:
+                    if existing.dict_data_id != dict_data_id:
+                        await crud.update(
+                            id=existing.id,
+                            data=DictMappingUpdateSchema(dict_data_id=dict_data_id),
+                        )
+                    success_count += 1
+                else:
+                    await crud.create(
+                        data=DictMappingCreateSchema(
+                            hospital_id=hospital_id,
+                            dict_type_id=dict_type_id,
+                            dict_data_id=dict_data_id,
+                            raw_label=raw_label,
+                        )
+                    )
+                    success_count += 1
+
+                # 收集需要刷新缓存的 dict_type_id
+                refreshed_dict_types.add(dict_type_id)
+
+        # 刷新所有涉及类型的缓存
+        tenant_id = auth.user.tenant_id if auth.user else PLATFORM_TENANT_ID
+        for dt_id in refreshed_dict_types:
+            await cls._refresh_cache(redis, tenant_id, dt_id, db=db)
+
+        result = f"成功导入 {success_count} 条映射（{sheet_count} 个医院）"
+        if error_msgs:
+            result += f"；跳过 {len(error_msgs)} 条无效数据"
+        return result
+
+    @classmethod
+    async def get_import_template_service(cls) -> bytes:
+        """生成 Excel 导入模板（单 sheet 示例 + 表头说明）。"""
+        from app.utils.excel_util import ExcelUtil
+
+        # 示例数据：一个名为 "示例_center_code" 的 sheet
+        example_df = pd.DataFrame(
+            [
+                {"dict_type": "med_sex", "raw_label": "男", "dict_value": "M"},
+                {"dict_type": "med_sex", "raw_label": "m", "dict_value": "M"},
+                {"dict_type": "med_sex", "raw_label": "女", "dict_value": "F"},
+                {"dict_type": "med_laterality", "raw_label": "左", "dict_value": "L"},
+                {"dict_type": "med_laterality", "raw_label": "右", "dict_value": "R"},
+            ]
+        )
+
+        # 用 ExcelUtil 生成带表头的模板
+        header_list = ["dict_type", "raw_label", "dict_value"]
+        base_bytes = ExcelUtil.get_excel_template(
+            header_list=header_list,
+            selector_header_list=[],
+            option_list=[],
+        )
+
+        # 重新打开，把示例数据写入名为 "示例_center_code" 的 sheet
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(base_bytes))
+        # ExcelUtil 生成的模板默认有一个 sheet，重命名为示例名并写入示例数据
+        ws = wb.active
+        ws.title = "示例_center_code"
+        for r_idx, row in enumerate(example_df.itertuples(index=False), start=2):
+            for c_idx, value in enumerate(row, start=1):
+                ws.cell(row=r_idx, column=c_idx, value=value)
+
+        out = io.BytesIO()
+        wb.save(out)
+        return out.getvalue()
+
+    @classmethod
+    async def export_excel_service(cls, auth: AuthSchema) -> bytes:
+        """导出全部选项映射到 Excel（每家医院一个 sheet，可直接用于导入）。
+
+        导出格式与导入模板完全一致：
+        - 每个 sheet = 一家医院，sheet 名 = center_code (= HospitalModel.code)
+        - 三列：dict_type | raw_label | dict_value
+        - dict_data_id 反查 sys_dict_data.dict_value（字符串）
+        """
+        from openpyxl import Workbook
+
+        from app.api.v1.module_system.dict.model import DictDataModel, DictTypeModel
+        from app.plugin.module_medical.hospital.model import HospitalModel
+
+        db = auth.db
+
+        # 一次性查出全部映射 + 关联的 dict_type / dict_data
+        sql = (
+            select(
+                DictMappingModel.hospital_id,
+                DictMappingModel.dict_type_id,
+                DictMappingModel.raw_label,
+                DictTypeModel.dict_type.label("dict_type_name"),
+                DictDataModel.dict_value.label("dict_value"),
+            )
+            .outerjoin(DictTypeModel, DictMappingModel.dict_type_id == DictTypeModel.id)
+            .outerjoin(DictDataModel, DictMappingModel.dict_data_id == DictDataModel.id)
+            .order_by(DictMappingModel.hospital_id, DictMappingModel.dict_type_id)
+        )
+        sql = await DictMappingCRUD(auth)._CRUDBase__filter_permissions(sql)
+        result = await db.execute(sql)
+        rows = result.all()
+
+        if not rows:
+            raise CustomException(msg="当前没有可导出的映射数据")
+
+        # 预加载 hospital_id → center_code 映射
+        hospital_ids = {r.hospital_id for r in rows}
+        code_sql = select(HospitalModel.id, HospitalModel.code).where(
+            HospitalModel.id.in_(hospital_ids)
+        )
+        code_result = await db.execute(code_sql)
+        code_map = {r.id: r.code for r in code_result.all()}
+
+        # 按 hospital_id 分组
+        groups: dict[int, list] = {}
+        for r in rows:
+            groups.setdefault(r.hospital_id, []).append(r)
+
+        # 生成 Excel（每家医院一个 sheet）
+        wb = Workbook()
+        wb.remove(wb.active)  # 删除默认空 sheet
+
+        for hospital_id, group_rows in groups.items():
+            center_code = code_map.get(hospital_id, f"hospital_{hospital_id}")
+            # openpyxl sheet 名最长 31 字符，且不能含 []:*?/\\
+            sheet_name = center_code[:31]
+            ws = wb.create_sheet(title=sheet_name)
+            ws.append(["dict_type", "raw_label", "dict_value"])
+            for r in group_rows:
+                ws.append(
+                    [
+                        r.dict_type_name or "",
+                        r.raw_label or "",
+                        r.dict_value or "",
+                    ]
+                )
+
+        out = io.BytesIO()
+        wb.save(out)
+        return out.getvalue()
+
+    @classmethod
+    async def _get_hospital_id_by_code(
+        cls, db: AsyncSession, center_code: str
+    ) -> int | None:
+        """按 center_code (= HospitalModel.code) 查 hospital_id。"""
+        try:
+            from app.plugin.module_medical.hospital.model import HospitalModel
+
+            sql = select(HospitalModel.id).where(HospitalModel.code == center_code)
+            result = await db.execute(sql)
+            return result.scalars().first()
+        except Exception:
+            return None
+
+    @classmethod
+    async def _get_dict_data_id_by_value(
+        cls, db: AsyncSession, dict_type_id: int, dict_value: str
+    ) -> int | None:
+        """按 (dict_type_id, dict_value) 查 sys_dict_data.id。"""
+        try:
+            from app.api.v1.module_system.dict.model import DictDataModel
+
+            sql = select(DictDataModel.id).where(
+                DictDataModel.dict_type_id == dict_type_id,
+                DictDataModel.dict_value == dict_value,
+            )
+            result = await db.execute(sql)
+            return result.scalars().first()
+        except Exception:
+            return None
 
     @classmethod
     async def _get_dict_type_id(cls, db: AsyncSession, dict_type: str) -> int | None:

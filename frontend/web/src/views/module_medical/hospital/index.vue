@@ -17,7 +17,28 @@
     <ElCard shadow="hover" class="fa-table-card" :style="{ 'margin-top': showSearchBar ? '12px' : '0' }">
       <FaTableHeader v-model:columns="columnChecks" v-model:showSearchBar="showSearchBar" :loading="loading" @refresh="refreshData">
         <template #left>
-          <FaTableHeaderLeft :perm-create="['module_medical:hospital:create']" @add="openCreateDialog" />
+          <ElSpace>
+            <FaTableHeaderLeft :perm-create="['module_medical:hospital:create']" @add="openCreateDialog" />
+            <ElButton
+              v-if="hasAuth('module_medical:dict_mapping:create')"
+              type="warning"
+              plain
+              :icon="Upload"
+              @click="openDictMappingImport"
+            >
+              批量导入选项映射
+            </ElButton>
+            <ElButton
+              v-if="hasAuth('module_medical:dict_mapping:query')"
+              type="primary"
+              plain
+              :icon="Download"
+              :loading="dictMappingExportLoading"
+              @click="handleDictMappingExport"
+            >
+              导出选项映射
+            </ElButton>
+          </ElSpace>
         </template>
       </FaTableHeader>
 
@@ -55,19 +76,31 @@
       :hospital-id="importHospitalId"
       @completed="refreshData"
     />
+
+    <!-- 选项映射批量导入 -->
+    <FaImportDialog
+      v-model="dictMappingImportVisible"
+      title="批量导入选项映射"
+      note="每个 sheet 对应一家医院（sheet 名 = center_code），表头三列：dict_type | raw_label | dict_value"
+      :content-config="dictMappingImportConfig"
+      :loading="dictMappingImportLoading"
+      @upload="handleDictMappingImport"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from "vue";
 
-import { ElButton, ElCard, ElTag, ElTooltip } from "element-plus";
+import { ElButton, ElCard, ElMessage, ElMessageBox, ElSpace, ElTag, ElTooltip } from "element-plus";
+import { Upload, Download } from "@element-plus/icons-vue";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
 import FaSearchBar from "@/components/forms/fa-search-bar/index.vue";
 import FaTable from "@/components/tables/fa-table/index.vue";
 import FaTableHeader from "@/components/tables/fa-table-header/index.vue";
 import FaTableHeaderLeft from "@/components/tables/fa-table-header-left/index.vue";
+import FaImportDialog from "@/components/modal/fa-import-dialog/index.vue";
 
 import HospitalAPI from "@/api/module_medical/hospital";
 import { LIFECYCLE_STATUS_META, type HospitalLifecycleStatus, type HospitalTable } from "@/types/module_medical/hospital";
@@ -259,6 +292,66 @@ async function handleGoOffline(row: HospitalTable) {
 function handleTriggerImport(row: HospitalTable) {
   importHospitalId.value = row.id;
   importDialogVisible.value = true;
+}
+
+// ─── 选项映射 Excel 批量导入 ────────────────────────────────
+const dictMappingImportVisible = ref(false);
+const dictMappingImportLoading = ref(false);
+const dictMappingImportConfig = {
+  permPrefix: "module_medical:dict_mapping",
+  importTemplate: () => HospitalAPI.downloadDictMappingTemplate(),
+};
+
+function openDictMappingImport() {
+  dictMappingImportVisible.value = true;
+}
+
+async function handleDictMappingImport(formData: FormData) {
+  dictMappingImportLoading.value = true;
+  try {
+    const res = await HospitalAPI.importDictMapping(formData);
+    const msg = res.data?.data || "导入完成";
+    dictMappingImportVisible.value = false;
+    // 结果可能含跳过的无效数据明细，用多行消息框展示
+    if (msg.includes("跳过") || msg.includes("\n")) {
+      ElMessageBox.alert(msg.replace(/\n/g, "<br/>"), "导入结果", {
+        dangerouslyUseHTMLString: true,
+        type: "warning",
+      });
+    } else {
+      ElMessage.success(msg);
+    }
+  } catch {
+    // 错误已由拦截器处理
+  } finally {
+    dictMappingImportLoading.value = false;
+  }
+}
+
+// ─── 选项映射 Excel 导出 ────────────────────────────────────
+const dictMappingExportLoading = ref(false);
+
+async function handleDictMappingExport() {
+  dictMappingExportLoading.value = true;
+  try {
+    const res = await HospitalAPI.exportDictMapping();
+    const blob = new Blob([res.data as any], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "医院选项映射导出.xlsx";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    ElMessage.success("导出成功");
+  } catch {
+    // 错误已由拦截器处理
+  } finally {
+    dictMappingExportLoading.value = false;
+  }
 }
 
 onMounted(() => {

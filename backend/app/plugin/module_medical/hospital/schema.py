@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -40,8 +41,9 @@ class HospitalCreate(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("编码不能为空")
-        if not v.isalnum():
-            raise ValueError("编码只能包含字母和数字")
+        # 允许字母、数字、下划线（center_code 如 zhujiang_xinqiao 含下划线）
+        if not re.match(r"^[A-Za-z0-9_]+$", v):
+            raise ValueError("编码只能包含字母、数字和下划线")
         return v
 
     @field_validator("name")

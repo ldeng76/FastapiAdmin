@@ -104,6 +104,36 @@ const HospitalAPI = {
     });
   },
 
+  // ── 选项归一化映射（Excel 批量导入） ─────────────────────────
+
+  /** Excel 批量导入选项映射（覆盖更新模式） */
+  importDictMapping(body: FormData) {
+    return request<ApiResponse<string>>({
+      url: `${API_PATH}/mapping/import`,
+      method: "post",
+      data: body,
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+
+  /** 下载选项映射导入模板 */
+  downloadDictMappingTemplate() {
+    return request<Blob>({
+      url: `${API_PATH}/mapping/import/template`,
+      method: "post",
+      responseType: "blob",
+    });
+  },
+
+  /** 导出全部选项映射到 Excel（每家医院一个 sheet，可直接用于导入） */
+  exportDictMapping() {
+    return request<Blob>({
+      url: `${API_PATH}/mapping/export`,
+      method: "post",
+      responseType: "blob",
+    });
+  },
+
   // ── ETL 导入 ──────────────────────────────────────────────
 
   /** 触发 ETL 导入（返回 job_id） */

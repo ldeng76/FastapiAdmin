@@ -20,16 +20,10 @@ from app.core.logger import log
 from sqlalchemy import func, select
 
 from .crud import HospitalCRUD
+from .anon_query import anon_data_summary
 from .model import (
-    FollowUpModel,
-    GeneticTestModel,
     HospitalModel,
-    IHCResultModel,
-    NoduleImagingModel,
-    PathologySpecimenModel,
-    PatientModel,
     HospitalStatus,
-    SurgeryRecordModel,
 )
 from .schema import HospitalCreate, HospitalOut, HospitalUpdate
 
@@ -214,42 +208,38 @@ class HospitalService:
         return HospitalOut.model_validate(updated).model_dump()
 
     @classmethod
-    async def get_data_summary_service(cls, auth: AuthSchema, id: int) -> dict:
-        """获取医院数据摘要（各表行数），供上线前校验和前端展示。"""
+    async def get_anon_data_summary_service(
+        cls,
+        auth: AuthSchema,
+        id: int,
+        center_codes: list[str] | None = None,
+    ) -> dict:
+        """获取医院 anon 数据摘要（lnrs_anon_* 各表行数），供上线前校验和前端展示。
+
+        与 get_data_summary_service 的区别：
+        - 数据源：lnrs_anon_* 表（parquet 直入），不是 med_*（ETL-1 中间层）。
+        - 过滤维度：center_code（anon 表无 tenant_id），不是 tenant_id。
+        - 字段：tables key 是 anon 表名（patient/exam/report_text/exam_detail/visit/surgery/ingest_batch）。
+
+        Args:
+            auth: 认证上下文。
+            id: 医院 ID。
+            center_codes: 限定到这些中心；None 表示统计该医院的所有 anon 数据。
+                注意：当前实现未实现 hospital↔center 映射，调用方需自己传 center_codes。
+                若 hospital.code 字段已是 center_code（如 "zhujiang"），可由调用方传 [hospital.code]。
+        """
         hospital = await HospitalCRUD(auth).get_by_id_crud(id=id)
         if not hospital:
             raise CustomException(msg="医院不存在", code=404, status_code=404)
 
-        tenant_id = hospital.tenant_id
-        # 统计各业务表行数
-        table_models = [
-            ("patient", PatientModel),
-            ("pathology_specimen", PathologySpecimenModel),
-            ("surgery_record", SurgeryRecordModel),
-            ("genetic_test", GeneticTestModel),
-            ("nodule_imaging", NoduleImagingModel),
-            ("ihc_result", IHCResultModel),
-            ("follow_up", FollowUpModel),
-        ]
-        counts = {}
-        total_rows = 0
-        for table_name, model in table_models:
-            stmt = (
-                select(func.count())
-                .select_from(model)
-                .where(model.tenant_id == tenant_id, model.is_deleted == False)  # noqa: E712
-            )
-            result = await auth.db.execute(stmt)
-            count = result.scalar_one()
-            counts[table_name] = count
-            total_rows += count
+        counts = await anon_data_summary(auth.db, center_codes=center_codes)
 
         return {
             "hospital_id": hospital.id,
             "lifecycle_status": hospital.lifecycle_status,
-            "tenant_id": tenant_id,
-            "total_rows": total_rows,
-            "tables": counts,
+            "center_codes": center_codes or [],
+            "total_rows": counts["total_rows"],
+            "tables": {k: v for k, v in counts.items() if k != "total_rows"},
         }
 
     @classmethod
@@ -258,7 +248,11 @@ class HospitalService:
 
         校验：
         - 当前状态为 data_imported
-        - 至少一张业务表有数据（total_rows > 0）
+        - 至少一张 anon 表有数据（total_rows > 0）
+
+        2026-07-24 改：改调 anon 体系（get_anon_data_summary_service）替代 med_* 体系。
+        center_codes 用 hospital.code（若是 shengyi/xinqiao/zhujiang 之一；否则空列表，
+        表示统计所有 anon 数据）。
         """
         hospital = await HospitalCRUD(auth).get_by_id_crud(id=id)
         if not hospital:
@@ -272,11 +266,17 @@ class HospitalService:
                 status_code=400,
             )
 
-        # 校验数据
-        summary = await cls.get_data_summary_service(auth=auth, id=id)
+        # 校验数据（anon 体系）
+        # 当前简化：把 hospital.code 作为 center_code（仅当它是 shengyi/xinqiao/zhujiang 之一）
+        # 未来实现 hospital↔center 映射后，这里改成 [hospital.center_code]
+        from .anon_etl_service import KNOWN_CENTERS
+        center_codes = [hospital.code] if hospital.code in KNOWN_CENTERS else None
+        summary = await cls.get_anon_data_summary_service(
+            auth=auth, id=id, center_codes=center_codes
+        )
         if summary["total_rows"] <= 0:
             raise CustomException(
-                msg="无法上线：医院无任何业务数据",
+                msg="无法上线：医院无任何 anon 数据（lnrs_anon_* 表为空）",
                 code=400,
                 status_code=400,
             )

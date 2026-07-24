@@ -23,25 +23,16 @@ from app.core.base_params import PaginationQueryParam
 from app.core.dependencies import AuthPermission, redis_getter
 from app.core.router_class import OperationLogRoute
 
-from .mapping_service import MappingRuleService
+from .anon_etl_http_service import AnonEtlService
 from .service import HospitalService
 from .schema import (
     HospitalCreate,
-    HospitalDataSummaryOut,
     HospitalOut,
     HospitalUpdate,
-    MappingRuleBatch,
-    MappingRuleOut,
-    MappingTemplateDetailOut,
-    TemplateOut,
-    EtlImportResponse,
-    EtlImportStatus,
-    Etl1RunRequest,
-    Etl1RunResponse,
-    Etl1Status,
+    AnonImportTriggerRequest,
+    AnonImportStatus,
+    AnonDataSummaryOut,
 )
-from .etl_service import EtlService
-from .etl1.service import Etl1Service
 from .stats_controller import StatsRouter
 
 HospitalRouter = APIRouter(route_class=OperationLogRoute, tags=["医院管理"])
@@ -142,132 +133,69 @@ async def update_hospital_controller(
 # =========================================================================== #
 
 
-@HospitalRouter.get(
-    "/hospital/{hospital_id}/mappings",
-    summary="查看医院映射规则",
-    description="返回指定医院的全部字段映射规则",
-    response_model=ResponseSchema[list[MappingRuleOut]],
-)
-async def list_mappings_controller(
-    hospital_id: Annotated[int, Path(description="医院ID")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:query"]))],
-) -> JSONResponse:
-    """查看医院映射规则。"""
-    result = await MappingRuleService.list_service(auth=auth, hospital_id=hospital_id)
-    return SuccessResponse(data=result, msg="获取映射规则成功")
-
-
-@HospitalRouter.put(
-    "/hospital/{hospital_id}/mappings",
-    summary="全量替换医院映射规则",
-    description="全量替换该医院的映射规则集（先删除旧规则，再批量插入新规则）",
-    response_model=ResponseSchema[list[MappingRuleOut]],
-)
-async def replace_mappings_controller(
-    hospital_id: Annotated[int, Path(description="医院ID")],
-    data: MappingRuleBatch,
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:edit"]))],
-) -> JSONResponse:
-    """全量替换医院映射规则。"""
-    result = await MappingRuleService.replace_service(
-        auth=auth, hospital_id=hospital_id, data=data
-    )
-    return SuccessResponse(data=result, msg="替换映射规则成功")
-
-
 @HospitalRouter.post(
-    "/hospital/{hospital_id}/mappings/apply-template",
-    summary="应用映射模板到医院",
-    description="将指定模板的规则全量替换到该医院（覆盖现有规则）",
-    response_model=ResponseSchema[list[MappingRuleOut]],
+    "/hospital/{hospital_id}/import/anon",
+    summary="触发 anon ETL 导入（parquet → lnrs_anon_*）",
+    description="按请求体指定 center_codes / data_dir_override 触发异步导入；不依赖 med_mapping_rule。",
+    response_model=ResponseSchema[dict],  # {job_id, status}，原 EtlImportResponse 2026-07-24 删除
 )
-async def apply_template_controller(
-    hospital_id: Annotated[int, Path(description="医院ID")],
-    template_code: Annotated[str, Query(description="模板编码（如 zhujiang_xinqiao）")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:edit"]))],
-) -> JSONResponse:
-    """应用映射模板到医院。"""
-    result = await MappingRuleService.apply_template_service(
-        auth=auth, hospital_id=hospital_id, template_code=template_code
-    )
-    return SuccessResponse(data=result, msg="应用模板成功")
-
-
-# =========================================================================== #
-# M2：映射模板查看
-# =========================================================================== #
-
-
-@HospitalRouter.get(
-    "/mapping-templates",
-    summary="映射模板列表",
-    description="列出所有可用的预置映射模板（不含规则详情）",
-    response_model=ResponseSchema[list[TemplateOut]],
-)
-async def list_templates_controller(
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:query"]))],
-) -> JSONResponse:
-    """映射模板列表。"""
-    result = await MappingRuleService.list_templates_service(auth=auth)
-    return SuccessResponse(data=result, msg="获取模板列表成功")
-
-
-@HospitalRouter.get(
-    "/mapping-templates/{template_code}",
-    summary="映射模板详情",
-    description="查看指定模板的完整规则列表",
-    response_model=ResponseSchema[MappingTemplateDetailOut],
-)
-async def get_template_controller(
-    template_code: Annotated[str, Path(description="模板编码")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:mapping:query"]))],
-) -> JSONResponse:
-    """映射模板详情。"""
-    result = await MappingRuleService.get_template_service(
-        auth=auth, template_code=template_code
-    )
-    return SuccessResponse(data=result, msg="获取模板详情成功")
-
-
-# =========================================================================== #
-# M3：ETL 导入
-# =========================================================================== #
-
-
-@HospitalRouter.post(
-    "/hospital/{hospital_id}/import",
-    summary="触发 ETL 数据导入",
-    description="按映射规则将医院 data_dir 下的 parquet 导入 PostgreSQL；后台异步执行",
-    response_model=ResponseSchema[EtlImportResponse],
-)
-async def trigger_import_controller(
+async def trigger_anon_import_controller(
     hospital_id: Annotated[int, Path(description="医院ID")],
     redis: Annotated[Redis, Depends(redis_getter)],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:import"]))],
+    body: AnonImportTriggerRequest | None = None,
 ) -> JSONResponse:
-    """触发 ETL 导入。"""
-    result = await EtlService.trigger_import_service(
-        auth=auth, hospital_id=hospital_id, redis=redis
+    """触发 anon ETL 导入。
+
+    请求体（可选）：
+    - center_codes: ["shengyi","xinqiao","zhujiang"]；不传=全部 KNOWN_CENTERS
+    - data_dir_override: parquet 路径；不传=用 hospital.data_dir
+    """
+    result = await AnonEtlService.trigger_import_service(
+        auth=auth,
+        hospital_id=hospital_id,
+        redis=redis,
+        center_codes=(body.center_codes if body else None),
+        data_dir_override=(body.data_dir_override if body else None),
     )
-    return SuccessResponse(data=result, msg="导入任务已触发")
+    return SuccessResponse(data=result, msg="anon 导入任务已触发")
 
 
 @HospitalRouter.get(
-    "/hospital/{hospital_id}/import/status",
-    summary="查询 ETL 导入状态",
-    description="查询医院最近一次 ETL 导入任务的状态（pending/running/completed/failed）",
-    response_model=ResponseSchema[EtlImportStatus],
+    "/hospital/{hospital_id}/import/anon/status",
+    summary="查询 anon ETL 导入状态",
+    description="查询医院最近一次 anon ETL 导入任务的状态",
+    response_model=ResponseSchema[AnonImportStatus],
 )
-async def get_import_status_controller(
+async def get_anon_import_status_controller(
     hospital_id: Annotated[int, Path(description="医院ID")],
     redis: Annotated[Redis, Depends(redis_getter)],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
 ) -> JSONResponse:
-    """查询 ETL 导入状态。"""
-    result = await EtlService.get_import_status_service(
+    """查询 anon ETL 导入状态。"""
+    result = await AnonEtlService.get_import_status_service(
         hospital_id=hospital_id, redis=redis
     )
-    return SuccessResponse(data=result, msg="获取导入状态成功")
+    return SuccessResponse(data=result, msg="获取 anon 导入状态成功")
+
+
+@HospitalRouter.get(
+    "/hospital/{hospital_id}/anon-data-summary",
+    summary="获取医院 anon 数据摘要（lnrs_anon_* 各表行数）",
+    description="供上线前校验和前端展示使用。数据源：lnrs_anon_* 表（parquet 直入）。",
+    response_model=ResponseSchema[AnonDataSummaryOut],
+)
+async def get_anon_data_summary_controller(
+    hospital_id: Annotated[int, Path(description="医院ID")],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
+    center_codes: Annotated[list[str] | None, Query(description="限定中心列表")] = None,
+) -> JSONResponse:
+    """获取医院 anon 数据摘要。"""
+    from .service import HospitalService
+    result = await HospitalService.get_anon_data_summary_service(
+        auth=auth, id=hospital_id, center_codes=center_codes
+    )
+    return SuccessResponse(data=result, msg="获取 anon 数据摘要成功")
 
 
 # =========================================================================== #
@@ -277,75 +205,6 @@ async def get_import_status_controller(
 #       按 center config 转换为标准 snake_case 英文字段的 parquet,
 #       输出到 data/<center>/*.parquet, 供 ETL-2 后续导入 PG。
 # 不依赖 mapping rule (用 center config, 配置在 centers/<code>.py)。
-
-
-@HospitalRouter.post(
-    "/hospital/{hospital_id}/etl1/run",
-    summary="触发 ETL-1: Excel → Parquet",
-    description=(
-        "按 center config 把医院原始 Excel 转换为标准 parquet。"
-        "后台异步执行, 立即返回 job_id 供轮询。"
-        "触发条件: 医院已注册 (任何 lifecycle_status 都可跑); 不依赖 mapping rule。"
-    ),
-    response_model=ResponseSchema[Etl1RunResponse],
-)
-async def trigger_etl1_controller(
-    hospital_id: Annotated[int, Path(description="医院ID")],
-    body: Etl1RunRequest,
-    redis: Annotated[Redis, Depends(redis_getter)],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:import"]))],
-) -> JSONResponse:
-    """触发 ETL-1 (Excel → Parquet)。"""
-    result = await Etl1Service.trigger_run_service(
-        auth=auth,
-        hospital_id=hospital_id,
-        xlsx_path=body.xlsx_path,
-        center_code=body.center_code,
-        only_tables=body.only_tables,
-        dry_run=body.dry_run,
-        redis=redis,
-    )
-    return SuccessResponse(data=result, msg="ETL-1 任务已触发")
-
-
-@HospitalRouter.get(
-    "/hospital/{hospital_id}/etl1/status",
-    summary="查询 ETL-1 任务状态",
-    description="查询医院最近一次 ETL-1 任务的状态 (pending/running/completed/failed) + 进度",
-    response_model=ResponseSchema[Etl1Status],
-)
-async def get_etl1_status_controller(
-    hospital_id: Annotated[int, Path(description="医院ID")],
-    redis: Annotated[Redis, Depends(redis_getter)],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
-) -> JSONResponse:
-    """查询 ETL-1 任务状态。"""
-    result = await Etl1Service.get_run_status_service(
-        hospital_id=hospital_id, redis=redis
-    )
-    return SuccessResponse(data=result, msg="获取 ETL-1 状态成功")
-
-
-# =========================================================================== #
-# M5：上下线 + 就绪状态机
-# =========================================================================== #
-
-
-@HospitalRouter.get(
-    "/hospital/{hospital_id}/data-summary",
-    summary="医院数据摘要",
-    description="查询医院各业务表的行数，供上线前校验",
-    response_model=ResponseSchema[HospitalDataSummaryOut],
-)
-async def get_data_summary_controller(
-    hospital_id: Annotated[int, Path(description="医院ID")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
-) -> JSONResponse:
-    """医院数据摘要。"""
-    result = await HospitalService.get_data_summary_service(
-        auth=auth, id=hospital_id
-    )
-    return SuccessResponse(data=result, msg="获取数据摘要成功")
 
 
 @HospitalRouter.post(

@@ -283,6 +283,65 @@ ALTER TABLE lnrs_anon_patient
 
 `backend/sql/postgres/0006-anonymized-schema-lnrs.sql` 中相关列定义需同步改为 `VARCHAR(10) + CHECK`。注意 `anonymize.py` 有基于该 DDL 文件内容计算 `schema_hash` 的机制（见 [ADR 0001](./0001-linkable-anonymization.md)），DDL 变更会改变 schema_hash，运行环境需重启以重新计算——这是预期内的副作用。
 
+### 医疗宽表直入扩展（2026-07-24 嫁接）
+
+> **背景**：原架构有 ETL-1（Excel → `med_*` 宽表）+ ETL-2（宽表 → `lnrs_anon_*`）两层。现决定退役 `med_*` 中间层，让 parquet 直接作为 `lnrs_anon_*` 的源头（珠江样例：`docs/demodata/0723_珠江sample_pq/`）。为此需扩展脱敏库以承载病理/基因/IHC/手术等医疗领域数据。
+>
+> **与枚举国标对齐的关系**：本次嫁接与 ADR-0008 枚举国标对齐合并实施。枚举字段（`ethnicity`/`smoking_status`/`abo_blood_type`/`rh_blood_type`）采用 HQMS RC001/RC030/RC031 + GB/T 3304 国标码紧凑存储（VARCHAR(1-2) + CHECK），ETL 走 `normalize_*` 字典归一化；非枚举字段（`native_place`/`first_nodule_date`/`bmi`/`patient_meta`）用宽列/JSONB 承载自由文本与数值。
+
+本次扩展新增 3 张表 + 扩展 `lnrs_anon_patient`，全部写进 `0006-anonymized-schema-lnrs.sql`（idempotent DROP+CREATE），不新增 alembic 迁移。
+
+#### 扩展的 `lnrs_anon_patient`（+4 非枚举列 + 1 JSONB）
+
+原 patient 表极简（`birth_date` + `sex` + 4 个枚举字段）。新增 4 个非枚举稳定属性 + 病史兜底 JSONB：
+
+| 新增列 | 类型 | 来源 | 说明 |
+|---|---|---|---|
+| `native_place` | VARCHAR(100) | patient.pq.native_place | 籍贯（自由文本，开放域） |
+| `first_nodule_date` | DATE | patient.pq.first_nodule_date | 首次发现结节日期（疾病时间线） |
+| `bmi` | NUMERIC(5,1) | patient.pq.demographics.bmi | 体质指数（从嵌套 struct 提取） |
+| `patient_meta` | JSONB | patient.pq.medical_history | 兜底列：家族史/既往肿瘤/合并症/发现途径/吸烟包年等终身属性，GIN 索引 |
+
+> 枚举字段 `ethnicity`(VARCHAR(2))/`smoking_status`(VARCHAR(1))/`abo_blood_type`(VARCHAR(1))/`rh_blood_type`(VARCHAR(1)) 已由 ADR-0008 枚举国标对齐引入，此处不再重复。
+
+#### `is_placeholder` 占位 patient 机制
+
+`_batch_upsert_patients` 加 `is_placeholder` 参数。当 exam/surgery 导入时为确保 FK 存在而创建占位 patient（字段值未知），ON CONFLICT 只刷新 `last_seen_batch_id` + 复活软删，**不覆盖**已有 patient 的人口学/稳定属性——避免占位值冲掉 patient.parquet 先写入的真实数据。完整路径（patient.parquet 导入）才刷新全部字段。
+
+#### `lnrs_anon_visit`（就诊桥）
+
+从 `surgery_record.visit_id` 反推生成。`anon_visit_id = 'ANON_VISIT_' + HMAC(secret, center:visit_id)[:12]`。FK 指向 `patient_id`（与全表体系一致，不用 `anon_id`）。
+
+- `source_visit_hash` = 裸 SHA256(center, visit_id)，幂等去重
+- `UNIQUE (patient_id, visit_ordinal)` — 同病人同 visit_ordinal 唯一
+
+> 不复用 `0006-anonymized-schema-patch-visit.sql` 的 anon_visit 设计——那里 FK 指向 `anon_id`，与本表 `patient_id` 体系冲突。
+
+#### `lnrs_anon_surgery`（visit 级手术记录）
+
+挂载在 `lnrs_anon_visit` 下。`source_surgery_hash` = 裸 SHA256(center, visit_id, procedure_name)——因同一 visit 可有多条不同手术。
+
+#### `lnrs_anon_exam_detail`（exam 级 JSONB 深结构）
+
+承载病理/基因/IHC/结节的嵌套结构化数据。与扁平的 `lnrs_anon_exam_finding`（EAV）互补：
+
+| detail_type | 来源 parquet | detail_json 承载 |
+|---|---|---|
+| `nodule_imaging` | nodule_imaging.pq | exam_meta / nodule_morphology / nodule_quantitative / follow_up_comparison |
+| `pathology` | pathology_specimen.pq | specimen_meta / adenocarcinoma_subtypes / tumor_measurement / high_risk_factors / staging |
+| `genetic` | genetic_test.pq | test_meta / variant_result / driver_mutations（13 基因 + VAF）/ immune_markers |
+| `ihc` | ihc_result.pq | ki67_pct / pdl1_tps_pct / ttf1 / p40 / p53 / alk_ihc / napsina / pdl1_clone / pdl1_cps |
+
+> **为何用 JSONB 而非 EAV？** 基因检测的 `driver_mutations` 拍平成 finding 会一次展开 30+ 行，且丢失"KRAS 的 G13D 突变"这种基因-突变层级关系。JSONB 保留结构，GIN 索引仍能高效查询。
+
+#### `lnrs_anon_exam` 加 `anon_visit_id` 可空桥列
+
+影像检查在反查到 visit 时回填，未关联置 null（保持现有 exam 语义不变）。
+
+#### 枚举扩展
+
+`med_exam_type` 字典新增 `Genetic` / `IHC`（`Pathology` / `CT` 已有）。`exam_type` 列保持无 CHECK 约束（VARCHAR(32)），字典仅作 ETL 归一化参考——与 ADR-0008 决策 3"加值无需改 DDL"一致。
+
 ## Consequences
 
 - ✅ **跨模态可关联**：`anon_exam_id` 是 CSV 报告 ↔ DICOM 序列的唯一连接键。
@@ -300,3 +359,14 @@ ALTER TABLE lnrs_anon_patient
 - **不分 `lnrs_anon_report_text` 与 `lnrs_anon_exam_finding` 合在一张 `lnrs_anon_exam`**：被否。一份报告可能 0/1/N 条结构化指标，独立建表更清晰，且 `finding` 是影像组学的核心查询对象，需要独立索引。
 - **DICOM 实例全入库**：被否。一个胸部 CT 一千多张 .dcm，全部入库膨胀过大；运行时按需 lazy-scan 即可。
 - **保存原始 PAT_LOCAL_ID 进库（仅 hash 比对）**：被否。`source_exam_hash` 已经哈希过；明文 ID 一律不进库（铁律）。
+
+---
+
+## Rev 2026-07-24：首例落地（珠江）与遗留问题
+
+珠江中心作为字典驱动 ETL 的首个落地案例，完整流程与决策见 **ADR 0010**。落地过程中暴露的问题及处理状态：
+
+1. **IHC 覆盖 Pathology exam/detail**（数据正确性，✅ **已修复**）：原 `lnrs_anon_exam_detail` PK 为 `anon_exam_id` 单列（1:1）+ `_batch_upsert_exams` 的 ON CONFLICT 覆盖 `exam_type`，导致 14 行病理详情被免疫组化覆盖丢失。**修复方案**：PK 改为 `(anon_exam_id, detail_type, detail_ordinal)` 实现 1:N（同时支持多结节展开）；`_batch_upsert_exams` 不再覆盖 `exam_type`。修复后 pathology=39 + ihc=14 detail 共存，详见 ADR 0010 §"exam_detail 1:N 改造"。
+
+2. **`med_hospital` 表权限**：表所有者为 `postgres` 超级用户，应用账号 `lnrs` 原仅有 SELECT 权限。本次手动 `GRANT INSERT, UPDATE, DELETE` 解决，生产部署流程需统一授权（见 ADR 0010）。
+

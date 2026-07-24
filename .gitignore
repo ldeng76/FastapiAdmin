@@ -125,3 +125,6 @@ xinqiao
 opencode.jsonc
 docs/codegraph-install-guide.md
 0723_珠江sample_pq
+
+.worktrees/
+0723_sample

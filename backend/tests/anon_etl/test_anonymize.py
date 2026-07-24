@@ -108,34 +108,26 @@ class TestSourceExamHash:
 
 
 class TestNormalizeSex:
-    """性别归一化 → M/F/U。"""
+    """性别归一化 → HQMS RC001 0/1/2/9。"""
 
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            ("男", "M"),
-            ("男性", "M"),
-            ("M", "M"),
-            ("m", "M"),
-            ("male", "M"),
-            ("Male", "M"),
-            ("女", "F"),
-            ("女性", "F"),
-            ("F", "F"),
-            ("female", "F"),
-        ],
-    )
+    @pytest.fixture(autouse=True)
+    def mapping_cache(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.plugin.module_medical.hospital.anonymize._SEX_MAP_CACHE",
+            {"男": "1", "男性": "1", "m": "1", "male": "1", "女": "2", "女性": "2", "f": "2", "female": "2", "未知": "0", "9": "9"},
+        )
+
+    @pytest.mark.parametrize("raw,expected", [("男", "1"), ("m", "1"), ("male", "1"), ("女", "2"), ("f", "2"), ("female", "2"), ("未知", "0"), ("9", "9")])
     def test_known_values(self, raw, expected):
         assert normalize_sex(raw) == expected
 
-    def test_unknown_to_U(self):
-        assert normalize_sex("未知") == "U"
-        assert normalize_sex("") == "U"
-        assert normalize_sex(None) == "U"
-        assert normalize_sex("other") == "U"
+    def test_unknown_to_zero(self):
+        assert normalize_sex("") == "0"
+        assert normalize_sex(None) == "0"
+        assert normalize_sex("other") == "0"
 
     def test_strip_whitespace(self):
-        assert normalize_sex("  男  ") == "M"
+        assert normalize_sex("  男  ") == "1"
 
 
 class TestBirthDate:

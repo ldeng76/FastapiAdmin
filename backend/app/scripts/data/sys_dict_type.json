@@ -70,10 +70,10 @@
     "tenant_id": 1
   },
   {
-    "dict_name": "医疗-性别",
+    "dict_name": "医疗·性别",
     "dict_type": "med_sex",
     "status": "0",
-    "description": "医疗领域性别字典（M/F/U），ADR-0008 枚举权威",
+    "description": "HQMS RC001 国标（0=未知，1=男，2=女，9=未说明）",
     "tenant_id": 1
   },
   {
@@ -91,10 +91,38 @@
     "tenant_id": 1
   },
   {
-    "dict_name": "医疗-吸烟状态",
+    "dict_name": "医疗·吸烟状态",
     "dict_type": "med_smoking_status",
     "status": "0",
-    "description": "医疗领域吸烟状态字典（待补充取值）",
+    "description": "医疗吸烟状态（1=从不，2=既往，3=现在，9=未知）",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗·民族",
+    "dict_type": "med_ethnicity",
+    "status": "0",
+    "description": "GB/T 3304-1991 民族代码",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗·ABO血型",
+    "dict_type": "med_blood_type_abo",
+    "status": "0",
+    "description": "HQMS RC030 ABO血型代码",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗·Rh血型",
+    "dict_type": "med_blood_type_rh",
+    "status": "0",
+    "description": "HQMS RC031 Rh血型代码",
+    "tenant_id": 1
+  },
+  {
+    "dict_name": "医疗·数据中心",
+    "dict_type": "med_center",
+    "status": "0",
+    "description": "内部医院数据中心编码",
     "tenant_id": 1
   }
 ]

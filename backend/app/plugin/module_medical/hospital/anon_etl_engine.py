@@ -45,6 +45,10 @@ from .anonymize import (
     compute_anon_id,
     hash_for_audit,
     normalize_sex,
+    normalize_ethnicity,
+    normalize_smoking_status,
+    normalize_abo_blood_type,
+    normalize_rh_blood_type,
     source_exam_hash,
     truncate_body,
 )
@@ -96,7 +100,7 @@ async def _batch_upsert_patients(
 ) -> dict[str, str]:
     """批量处理病人，返回 {anon_id: patient_id} 映射。
 
-    patient_records: [{"local_id", "anon_id", "sex", "birth_date"}]
+    patient_records: [{"local_id", "anon_id", "sex", "birth_date", "ethnicity", "smoking_status", "abo_blood_type", "rh_blood_type"}]
     三态机（ADR-0006 Rev 2026-07-19 §1-4）：
     - 活行：UPDATE last_seen + sex/birth_date
     - 软删：复活（清空 deleted_*）
@@ -166,6 +170,10 @@ async def _batch_upsert_patients(
                 "center_code": center_code,
                 "birth_date": r["birth_date"],
                 "sex": r["sex"],
+                "ethnicity": r.get("ethnicity"),
+                "smoking_status": r.get("smoking_status"),
+                "abo_blood_type": r.get("abo_blood_type"),
+                "rh_blood_type": r.get("rh_blood_type"),
                 "created_batch_id": batch_id,
                 "last_seen_batch_id": batch_id,
                 "deleted_at": None,
@@ -178,18 +186,21 @@ async def _batch_upsert_patients(
     for i in range(0, len(upsert_rows), BATCH_SIZE):
         batch = upsert_rows[i : i + BATCH_SIZE]
         stmt = pg_insert(AnonPatientModel.__table__).values(batch)
-        stmt = stmt.on_conflict_do_update(
-            constraint="lnrs_anon_uq_patient_center",
-            # 冲突时刷新 last_seen + 人口学；复活软删行（清空 deleted_*）
-            # created_batch_id 与 patient_id 保留原值（不在 SET 内）
-            set_={
+        update_columns = {
                 "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
                 "sex": stmt.excluded.sex,
                 "birth_date": stmt.excluded.birth_date,
+                "ethnicity": stmt.excluded.ethnicity,
+                "smoking_status": stmt.excluded.smoking_status,
+                "abo_blood_type": stmt.excluded.abo_blood_type,
+                "rh_blood_type": stmt.excluded.rh_blood_type,
                 "deleted_at": None,
                 "deleted_reason": None,
                 "deleted_batch_id": None,
-            },
+            }
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_patient_center",
+            set_=update_columns,
         )
         await db.execute(stmt)
 
@@ -323,6 +334,10 @@ async def _import_patient_table(
                 "local_id": str(local_pid),
                 "anon_id": anon_id,
                 "sex": normalize_sex(rd.get("gender")),
+                "ethnicity": normalize_ethnicity(rd.get("ethnicity")),
+                "smoking_status": normalize_smoking_status(rd.get("smoking_status")),
+                "abo_blood_type": normalize_abo_blood_type(rd.get("abo_blood_type")),
+                "rh_blood_type": normalize_rh_blood_type(rd.get("rh_blood_type")),
                 "birth_date": birth_date_from(rd.get("birth_date")),
             }
         )
@@ -556,9 +571,10 @@ async def import_center(
     if not data_dir.exists():
         raise FileNotFoundError(f"中心数据目录不存在: {data_dir}")
 
-    # 预热性别映射缓存（ADR-0008：normalize_sex 退役，字典为权威）
-    from .anonymize import load_sex_mapping
-    await load_sex_mapping(db)
+    # 预热全部有限枚举映射，归一化只查内存缓存。
+    from .enum_normalization import load_all_enum_mappings
+    await load_all_enum_mappings(db)
+
 
     result: dict[str, int] = {}
     specs = _CENTER_PARQUET_SPECS.get(center_code)

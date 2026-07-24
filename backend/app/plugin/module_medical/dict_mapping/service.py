@@ -44,9 +44,36 @@ def _cache_key(tenant_id: int, dict_type: str) -> str:
 class DictMappingService:
     """医疗字典值映射服务。"""
 
-    # ------------------------------------------------------------------
-    # 映射规则 CRUD
-    # ------------------------------------------------------------------
+    @classmethod
+    async def load_all_mappings(
+        cls,
+        db: AsyncSession,
+        dict_type: str,
+        hospital_id: int | None = None,
+    ) -> dict[str, str]:
+        """批量加载字典映射，供 ETL 在内存中归一化。"""
+        from app.api.v1.module_system.dict.model import DictDataModel, DictTypeModel
+
+        dt_result = await db.execute(
+            select(DictTypeModel).where(DictTypeModel.dict_type == dict_type)
+        )
+        dt_obj = dt_result.scalars().first()
+        if not dt_obj:
+            log.warning("load_all_mappings: dict_type=%s 不存在", dict_type)
+            return {}
+
+        stmt = (
+            select(DictMappingModel.raw_label, DictDataModel.dict_value)
+            .join(DictDataModel, DictMappingModel.dict_data_id == DictDataModel.id)
+            .where(DictMappingModel.dict_type_id == dt_obj.id)
+        )
+        if hospital_id is not None:
+            stmt = stmt.where(
+                DictMappingModel.hospital_id.in_([hospital_id, PLATFORM_TENANT_ID])
+            )
+        rows = (await db.execute(stmt)).all()
+        return {str(raw).strip().lower(): value for raw, value in rows if raw and value}
+
 
     @classmethod
     async def list_service(

@@ -31,15 +31,8 @@ _ANON_ID_PREFIX = "ANON_"
 _ANON_EXAM_ID_PREFIX = "ANON_EXAM_"
 _HMAC_HEX_TRUNC = 12  # 截断长度：48 bit，碰撞概率在本系统量级（<10^7 病人）可忽略
 
-# sex 归一化映射（中文/英文 → M/F/U）
-# 保留作为兜底回退（当字典映射缓存未加载或未命中时）
-_SEX_MAP_M = {"男", "男性", "m", "M", "male", "Male"}
-_SEX_MAP_F = {"女", "女性", "f", "F", "female", "Female"}
-
-# 字典映射缓存：由 load_sex_mapping() 在 ETL2 启动时预热
-# 结构: {raw_label_lower: dict_value}，全院并集
+# 枚举映射缓存：由 enum_normalization.load_all_enum_mappings 预热。
 _SEX_MAP_CACHE: dict[str, str] | None = None
-
 # 本轮自由文本清洗策略（用户决策：暂不清洗，原样入库，等待人工/LLM 抽检）
 # - clean_method 用 DDL 枚举中最保守的 'regex_only'（表示规则化清洗，即使本轮未实际替换）
 # - review_status 恒为 'pending'，提示后续必须人工抽检
@@ -179,77 +172,18 @@ def schema_hash() -> str:
 # --------------------------------------------------------------------------- #
 
 
-async def load_sex_mapping(db: Any) -> None:
-    """从 med_dict_mapping 加载性别映射到模块全局缓存。
-
-    在 ETL2 启动时调用一次（import_center 入口）。
-    查 med_sex 类型的所有映射，装入 _SEX_MAP_CACHE。
-    查不到则置空 dict（保留 _SEX_MAP_M/F 兜底回退）。
-    """
+async def load_sex_mapping(db: Any, hospital_id: int | None = None) -> None:
+    """兼容入口：委托 DictMappingService 批量加载性别映射。"""
     global _SEX_MAP_CACHE
-    _SEX_MAP_CACHE = {}
-    try:
-        from sqlalchemy import select
-
-        from app.api.v1.module_system.dict.model import DictDataModel, DictTypeModel
-        from app.plugin.module_medical.dict_mapping.model import DictMappingModel
-
-        dt_result = await db.execute(
-            select(DictTypeModel).where(DictTypeModel.dict_type == "med_sex")
-        )
-        dt_obj = dt_result.scalars().first()
-        if not dt_obj:
-            log.warning("ETL2: med_sex 字典类型未找到，normalize_sex 回退硬编码映射")
-            return
-
-        sql = select(DictMappingModel).where(
-            DictMappingModel.dict_type_id == dt_obj.id,
-        )
-        result = await db.execute(sql)
-        mappings = result.scalars().all()
-
-        for m in mappings:
-            if m.dict_data_id:
-                dd_result = await db.execute(
-                    select(DictDataModel).where(DictDataModel.id == m.dict_data_id)
-                )
-                dd_obj = dd_result.scalars().first()
-                if dd_obj:
-                    _SEX_MAP_CACHE[m.raw_label.lower()] = dd_obj.dict_value
-
-        log.info(f"ETL2: 性别映射缓存加载完成，共 {len(_SEX_MAP_CACHE)} 条")
-    except Exception as e:
-        log.warning(f"ETL2: 性别映射缓存加载失败，回退硬编码: {e!s}")
-        _SEX_MAP_CACHE = {}
+    from app.plugin.module_medical.dict_mapping.service import DictMappingService
+    _SEX_MAP_CACHE = await DictMappingService.load_all_mappings(db, "med_sex", hospital_id)
 
 
 def normalize_sex(raw: Any) -> str:
-    """性别归一化 → 'M' / 'F' / 'U'。
-
-    优先查字典映射缓存（_SEX_MAP_CACHE），命中返回 dict_value；
-    未命中或缓存为空时回退 _SEX_MAP_M/F 硬编码集合。
-    签名不变（同步函数）。
-
-    - '男'/'男性'/'M'/'male' → 'M'
-    - '女'/'女性'/'F'/'female' → 'F'
-    - 其他（含 null/空串/未知） → 'U'（DDL 默认值）
-    """
-    if raw is None:
-        return "U"
-    s = str(raw).strip()
-
-    # 优先查字典映射缓存（由 load_sex_mapping 预热）
-    if _SEX_MAP_CACHE:
-        cached = _SEX_MAP_CACHE.get(s.lower())
-        if cached:
-            return cached
-
-    # 回退硬编码映射
-    if s in _SEX_MAP_M:
-        return "M"
-    if s in _SEX_MAP_F:
-        return "F"
-    return "U"
+    """性别归一化为 HQMS RC001：0/1/2/9。"""
+    if raw is None or not str(raw).strip():
+        return "0"
+    return (_SEX_MAP_CACHE or {}).get(str(raw).strip().lower(), "0")
 
 
 def birth_date_from(raw: Any) -> date | None:

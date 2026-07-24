@@ -44,13 +44,15 @@ from .anonymize import (
     compute_anon_exam_id,
     compute_anon_id,
     hash_for_audit,
-    normalize_sex,
-    normalize_ethnicity,
-    normalize_smoking_status,
-    normalize_abo_blood_type,
-    normalize_rh_blood_type,
     source_exam_hash,
     truncate_body,
+)
+from .enum_normalization import (
+    normalize_abo_blood_type,
+    normalize_ethnicity,
+    normalize_rh_blood_type,
+    normalize_sex,
+    normalize_smoking_status,
 )
 
 # 来源表名校验：仅允许字母/数字/下划线（防 path traversal）

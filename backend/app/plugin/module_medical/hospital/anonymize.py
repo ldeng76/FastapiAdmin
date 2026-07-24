@@ -31,8 +31,6 @@ _ANON_ID_PREFIX = "ANON_"
 _ANON_EXAM_ID_PREFIX = "ANON_EXAM_"
 _HMAC_HEX_TRUNC = 12  # 截断长度：48 bit，碰撞概率在本系统量级（<10^7 病人）可忽略
 
-# 枚举映射缓存：由 enum_normalization.load_all_enum_mappings 预热。
-_SEX_MAP_CACHE: dict[str, str] | None = None
 # 本轮自由文本清洗策略（用户决策：暂不清洗，原样入库，等待人工/LLM 抽检）
 # - clean_method 用 DDL 枚举中最保守的 'regex_only'（表示规则化清洗，即使本轮未实际替换）
 # - review_status 恒为 'pending'，提示后续必须人工抽检
@@ -173,17 +171,23 @@ def schema_hash() -> str:
 
 
 async def load_sex_mapping(db: Any, hospital_id: int | None = None) -> None:
-    """兼容入口：委托 DictMappingService 批量加载性别映射。"""
-    global _SEX_MAP_CACHE
-    from app.plugin.module_medical.dict_mapping.service import DictMappingService
-    _SEX_MAP_CACHE = await DictMappingService.load_all_mappings(db, "med_sex", hospital_id)
+    """兼容入口：委托 enum_normalization 批量加载性别映射。
+
+    ADR-0008 决策5：归一化逻辑下沉到 enum_normalization 模块，
+    本函数仅作向后兼容保留（历史调用方仍可 from .anonymize import load_sex_mapping）。
+    缓存归属 enum_normalization._SEX_MAP_CACHE，本模块不再持有独立副本。
+    """
+    from .enum_normalization import load_sex_mapping as _load
+    await _load(db, hospital_id)
 
 
 def normalize_sex(raw: Any) -> str:
-    """性别归一化为 HQMS RC001：0/1/2/9。"""
-    if raw is None or not str(raw).strip():
-        return "0"
-    return (_SEX_MAP_CACHE or {}).get(str(raw).strip().lower(), "0")
+    """性别归一化为 HQMS RC001：0/1/2/9。
+
+    ADR-0008 决策5：逻辑下沉到 enum_normalization，本函数仅转发。
+    """
+    from .enum_normalization import normalize_sex as _norm
+    return _norm(raw)
 
 
 def birth_date_from(raw: Any) -> date | None:

@@ -37,7 +37,6 @@ from app.core.base_model import MappedBase
 # --------------------------------------------------------------------------- #
 # create_type=False：DDL 已在数据库里建好 ENUM，ORM 不重复创建，只引用。
 
-_sex_enum = String(10)
 _ingest_status_enum = ENUM(
     "running", "success", "failed", "partial",
     name="lnrs_anon_ingest_status_enum", create_type=False,
@@ -150,7 +149,7 @@ class AnonPatientModel(MappedBase):
     anon_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     center_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
-    sex: Mapped[str] = mapped_column(_sex_enum, nullable=False, default="0")
+    sex: Mapped[str] = mapped_column(String(10), nullable=False, default="0")
     ethnicity: Mapped[str | None] = mapped_column(String(2), nullable=True)
     smoking_status: Mapped[str | None] = mapped_column(String(1), nullable=True)
     abo_blood_type: Mapped[str | None] = mapped_column(String(1), nullable=True)

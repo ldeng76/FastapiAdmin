@@ -534,7 +534,7 @@
   },
   {
     "dict_sort": 1,
-    "dict_label": "未知",
+    "dict_label": "未知的性别",
     "dict_value": "0",
     "dict_type": "med_sex",
     "dict_type_id": 999,
@@ -573,7 +573,7 @@
   },
   {
     "dict_sort": 4,
-    "dict_label": "未说明",
+    "dict_label": "未说明的性别",
     "dict_value": "9",
     "dict_type": "med_sex",
     "dict_type_id": 999,
@@ -1379,7 +1379,7 @@
   },
   {
     "dict_sort": 1,
-    "dict_label": "A",
+    "dict_label": "A型",
     "dict_value": "1",
     "dict_type": "med_blood_type_abo",
     "dict_type_id": 999,
@@ -1387,12 +1387,12 @@
     "list_class": null,
     "is_default": true,
     "status": "0",
-    "description": "RC030 ABO血型-A",
+    "description": "RC030 ABO血型-A型",
     "tenant_id": 1
   },
   {
     "dict_sort": 2,
-    "dict_label": "B",
+    "dict_label": "B型",
     "dict_value": "2",
     "dict_type": "med_blood_type_abo",
     "dict_type_id": 999,
@@ -1400,12 +1400,12 @@
     "list_class": null,
     "is_default": false,
     "status": "0",
-    "description": "RC030 ABO血型-B",
+    "description": "RC030 ABO血型-B型",
     "tenant_id": 1
   },
   {
     "dict_sort": 3,
-    "dict_label": "O",
+    "dict_label": "O型",
     "dict_value": "3",
     "dict_type": "med_blood_type_abo",
     "dict_type_id": 999,
@@ -1413,12 +1413,12 @@
     "list_class": null,
     "is_default": false,
     "status": "0",
-    "description": "RC030 ABO血型-O",
+    "description": "RC030 ABO血型-O型",
     "tenant_id": 1
   },
   {
     "dict_sort": 4,
-    "dict_label": "AB",
+    "dict_label": "AB型",
     "dict_value": "4",
     "dict_type": "med_blood_type_abo",
     "dict_type_id": 999,
@@ -1426,7 +1426,7 @@
     "list_class": null,
     "is_default": false,
     "status": "0",
-    "description": "RC030 ABO血型-AB",
+    "description": "RC030 ABO血型-AB型",
     "tenant_id": 1
   },
   {
@@ -1492,6 +1492,19 @@
     "is_default": false,
     "status": "0",
     "description": "RC031 Rh血型-不详",
+    "tenant_id": 1
+  },
+  {
+    "dict_sort": 4,
+    "dict_label": "未查",
+    "dict_value": "4",
+    "dict_type": "med_blood_type_rh",
+    "dict_type_id": 999,
+    "css_class": "",
+    "list_class": null,
+    "is_default": false,
+    "status": "0",
+    "description": "RC031 Rh血型-未查",
     "tenant_id": 1
   },
   {

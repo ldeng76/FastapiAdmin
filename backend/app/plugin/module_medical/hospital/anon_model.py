@@ -23,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -154,6 +155,12 @@ class AnonPatientModel(MappedBase):
     smoking_status: Mapped[str | None] = mapped_column(String(1), nullable=True)
     abo_blood_type: Mapped[str | None] = mapped_column(String(1), nullable=True)
     rh_blood_type: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    # 患者稳定属性（医疗宽表直入扩展，从 patient.parquet 直接承载）
+    native_place: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    first_nodule_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    bmi: Mapped[float | None] = mapped_column(Numeric(5, 1), nullable=True)
+    # 兜底 JSONB：家族史/既往肿瘤/合并症/发现途径/吸烟包年等终身属性
+    patient_meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
@@ -202,6 +209,13 @@ class AnonExamModel(MappedBase):
     exam_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     exam_date: Mapped[date] = mapped_column(Date, nullable=False)
     source_exam_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # visit 桥列（可空）：ETL 反查 visit 成功则回填，失败置 null
+    anon_visit_id: Mapped[str | None] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_visit.anon_visit_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
@@ -338,6 +352,141 @@ class AnonPhiAuditModel(MappedBase):
 #   - lnrs_anon_dicom_uid_map   （原 UID ↔ 新 UID，仅审计物理隔离库，不进生产库）
 # DDL 已在 backend/sql/postgres/0006-anonymized-schema-lnrs.sql 中定义。
 
+
+# --------------------------------------------------------------------------- #
+# 医疗宽表直入扩展（2026-07-24 嫁接）: visit / surgery / exam_detail
+# --------------------------------------------------------------------------- #
+
+
+class AnonVisitModel(MappedBase):
+    """就诊桥 — 从 surgery_record.visit_id 反推生成。
+
+    visit 层是"非影像就诊数据"的挂载点（手术记录等）。
+    FK 指向 patient_id（与全表体系一致，不用 anon_id）。
+    """
+
+    __tablename__ = "lnrs_anon_visit"
+    __table_args__ = (
+        UniqueConstraint(
+            "center_code", "source_visit_hash", name="lnrs_anon_uq_visit_source"
+        ),
+        UniqueConstraint(
+            "patient_id", "visit_ordinal", name="lnrs_anon_uq_visit_patient"
+        ),
+        {"schema": "lnrs", "comment": "脱敏就诊桥（visit 级，从手术记录反推）"},
+    )
+
+    anon_visit_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    visit_ordinal: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_visit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    last_seen_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonSurgeryModel(MappedBase):
+    """visit 级手术记录 — 每次手术一行。"""
+
+    __tablename__ = "lnrs_anon_surgery"
+    __table_args__ = (
+        UniqueConstraint(
+            "anon_visit_id", "source_surgery_hash", name="lnrs_anon_uq_surgery"
+        ),
+        {"schema": "lnrs", "comment": "脱敏手术记录表（visit 级）"},
+    )
+
+    surgery_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    anon_visit_id: Mapped[str] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_visit.anon_visit_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    surgery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    procedure_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    resection_scope: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    surgical_approach: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    procedure_detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_surgery_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonExamDetailModel(MappedBase):
+    """exam 级 JSONB 深结构 — 承载病理/基因/IHC/结节的嵌套数据。
+
+    与扁平的 lnrs_anon_exam_finding 互补：
+    - finding 装 EAV 标量（结节长径、位置）
+    - detail 装嵌套 JSONB（driver_mutations 13 基因、staging pT/pN/pM、腺癌亚型）
+    detail_type 区分结构语义，detail_json 原样保留 parquet 的 struct。
+
+    Rev 2026-07-24: PK 改为 (anon_exam_id, detail_type, detail_ordinal) 实现 1:N：
+    - 同一 exam 可承载多个同类型 detail（如 CT 下 n1/n2/n3/n4 多结节）
+    - 不同类型 detail（pathology/ihc 共享 specimen_id）各自独立成行，不互相覆盖
+    - detail_ordinal 默认 1：无 ordinal 的 detail（pathology/genetic/ihc）单行
+    """
+
+    __tablename__ = "lnrs_anon_exam_detail"
+    __table_args__ = (
+        {"schema": "lnrs", "comment": "脱敏检查深结构详情（JSONB，按 detail_type 区分）"},
+    )
+
+    anon_exam_id: Mapped[str] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_exam.anon_exam_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    detail_type: Mapped[str] = mapped_column(String(32), primary_key=True, index=True)
+    detail_ordinal: Mapped[int] = mapped_column(
+        "detail_ordinal", SmallInteger, primary_key=True, default=1,
+        comment="同类型多实例序号（如多结节 n1/n2/n3/n4），无 ordinal 的 detail 默认 1",
+    )
+    detail_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
 ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_ingest_batch": AnonIngestBatchModel,
     "lnrs_anon_patient": AnonPatientModel,
@@ -345,4 +494,7 @@ ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_report_text": AnonReportTextModel,
     "lnrs_anon_exam_finding": AnonExamFindingModel,
     "lnrs_anon_phi_audit": AnonPhiAuditModel,
+    "lnrs_anon_visit": AnonVisitModel,
+    "lnrs_anon_surgery": AnonSurgeryModel,
+    "lnrs_anon_exam_detail": AnonExamDetailModel,
 }

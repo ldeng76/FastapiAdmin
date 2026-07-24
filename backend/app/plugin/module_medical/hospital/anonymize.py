@@ -29,6 +29,7 @@ from app.core.logger import log
 
 _ANON_ID_PREFIX = "ANON_"
 _ANON_EXAM_ID_PREFIX = "ANON_EXAM_"
+_ANON_VISIT_ID_PREFIX = "ANON_VISIT_"
 _HMAC_HEX_TRUNC = 12  # 截断长度：48 bit，碰撞概率在本系统量级（<10^7 病人）可忽略
 
 # 本轮自由文本清洗策略（用户决策：暂不清洗，原样入库，等待人工/LLM 抽检）
@@ -122,6 +123,35 @@ def source_exam_hash(center_code: str, exam_no: str) -> str:
     不需要可逆性也不参与跨模态关联，按 ADR-0006 §3 字段说明实现。
     """
     return hashlib.sha256(f"{center_code}:{exam_no}".encode("utf-8")).hexdigest()
+
+
+def compute_anon_visit_id(center_code: str, visit_id: str) -> str:
+    """就诊级确定性脱敏 ID（visit 桥）。
+
+    格式：`ANON_VISIT_` + HMAC-SHA256(secret, "{center}:{visit_id}")[:12]
+    visit_id 在珠江数据里形如 "153623_1"（住院号_序号），从 surgery_record.visit_id 反推。
+    """
+    if not center_code or not visit_id:
+        raise ValueError(
+            f"compute_anon_visit_id 需要非空 center_code 与 visit_id，"
+            f"得到 center={center_code!r} visit={visit_id!r}"
+        )
+    return f"{_ANON_VISIT_ID_PREFIX}{_hmac_hex(f'{center_code}:{visit_id}')}"
+
+
+def source_visit_hash(center_code: str, visit_id: str) -> str:
+    """就诊级源哈希，用于 anon_visit.source_visit_hash 幂等去重。裸 SHA256。"""
+    return hashlib.sha256(f"{center_code}:{visit_id}".encode("utf-8")).hexdigest()
+
+
+def source_surgery_hash(center_code: str, visit_id: str, procedure_name: str) -> str:
+    """手术级源哈希，用于 anon_surgery.source_surgery_hash 幂等去重。
+
+    用 (center, visit_id, procedure_name) 三元组裸 SHA256 —— 同一 visit 可有多条
+    不同手术（数据已证实：同一 visit 1-4 条手术），需用 procedure_name 区分。
+    """
+    raw = f"{center_code}:{visit_id}:{procedure_name}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 # --------------------------------------------------------------------------- #
@@ -220,14 +250,18 @@ def birth_date_from(raw: Any) -> date | None:
     s = str(raw).strip()
     if not s:
         return None
-    # YYYY-MM-DD
-    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
-        try:
-            return date.fromisoformat(s[:10])
-        except (ValueError, OverflowError):
-            return None
-    # YYYY-MM
-    if len(s) >= 7 and s[4] == "-":
+    # YYYY-MM-DD / YYYY/MM/DD（兼容宽表常见斜杠日期）
+    if len(s) >= 8 and s[4] in "-/":
+        separator = s[4]
+        date_parts = s.split(separator, 2)
+        if len(date_parts) == 3:
+            try:
+                y, m, d = (int(part) for part in date_parts)
+                return date(y, m, d)
+            except (ValueError, OverflowError):
+                return None
+    # YYYY-MM / YYYY/MM
+    if len(s) >= 7 and s[4] in "-/":
         try:
             y, m = int(s[:4]), int(s[5:7])
             return date(y, m, 1)

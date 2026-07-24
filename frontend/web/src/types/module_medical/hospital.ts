@@ -103,6 +103,54 @@ export interface EtlImportResponse {
   status: string;
 }
 
+// =========================================================================== //
+// anon ETL 导入（2026-07-24 补全）—— 与旧 ETL 平行存在
+// =========================================================================== //
+
+/** anon ETL 触发请求体（可选字段，不传则走默认） */
+export interface AnonImportTriggerRequest {
+  /** 中心列表（shengyi/xinqiao/zhujiang）；不传=全部 */
+  center_codes?: string[];
+  /** 覆盖 hospital.data_dir */
+  data_dir_override?: string;
+}
+
+/** anon ETL 导入状态（轮询返回，比 EtlImportStatusData 多 centers/results 字段） */
+export interface AnonImportStatusData {
+  job_id: string;
+  status: string;
+  total: number;
+  processed: number;
+  centers: string[];
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  results?: Array<{
+    center: string;
+    status: string;
+    rows?: Record<string, number>;
+    batch_id?: string;
+    error?: string;
+  }>;
+}
+
+/** anon 数据摘要（lnrs_anon_* 各表行数） */
+export interface AnonHospitalDataSummary {
+  hospital_id: number;
+  lifecycle_status: HospitalLifecycleStatus;
+  center_codes: string[];
+  total_rows: number;
+  tables: {
+    patient: number;
+    exam: number;
+    report_text: number;
+    exam_detail: number;
+    visit: number;
+    surgery: number;
+    ingest_batch: number;
+  };
+}
+
 /** 医院数据概览（各表行数） */
 export interface HospitalDataSummary {
   hospital_id: number;

@@ -13,7 +13,12 @@
       <div class="status-header">
         <ElDescriptions :column="2" border size="small">
           <ElDescriptionsItem label="医院编码">{{ summary?.hospital_id }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="租户ID">{{ summary?.tenant_id }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="中心列表">
+            <span v-for="c in summary?.center_codes" :key="c" class="center-chip">
+              {{ c }}
+            </span>
+            <span v-if="!summary?.center_codes?.length">-</span>
+          </ElDescriptionsItem>
           <ElDescriptionsItem label="当前状态">
             <ElTag :type="statusMeta.type" effect="dark" size="small">
               {{ statusMeta.label }}
@@ -72,7 +77,7 @@ import { ElButton, ElDescriptions, ElDescriptionsItem, ElDivider, ElMessage, ElP
 
 import FaDialog from "@/components/modal/fa-dialog/index.vue";
 import HospitalAPI from "@/api/module_medical/hospital";
-import { LIFECYCLE_STATUS_META, type HospitalDataSummary } from "@/types/module_medical/hospital";
+import { LIFECYCLE_STATUS_META, type AnonHospitalDataSummary } from "@/types/module_medical/hospital";
 import { useAuth } from "@/hooks/core/useAuth";
 
 const props = defineProps<{ modelValue: boolean; hospitalId: number }>();
@@ -86,27 +91,28 @@ const visible = computed({
 });
 
 const loading = ref(false);
-const summary = ref<HospitalDataSummary | null>(null);
+const summary = ref<AnonHospitalDataSummary | null>(null);
 
 // 请求序号，避免短时间内多次打开覆盖最新数据
 let loadSeq = 0;
 
-// NOTE: keep in sync with backend HospitalDataSummary.tables
-const TABLE_LABELS: Record<keyof HospitalDataSummary["tables"], string> = {
-  patient: "患者基本信息",
-  pathology_specimen: "病理标本",
-  surgery_record: "手术记录",
-  genetic_test: "基因检测",
-  nodule_imaging: "结节影像",
-  ihc_result: "免疫组化",
-  follow_up: "随访结局",
+// NOTE: keep in sync with backend AnonHospitalDataSummary.tables
+// 2026-07-24 改：med_* 7 表 → lnrs_anon_* 7 表
+const TABLE_LABELS: Record<keyof AnonHospitalDataSummary["tables"], string> = {
+  patient: "患者基本信息（lnrs_anon_patient）",
+  exam: "检查主表（lnrs_anon_exam）",
+  report_text: "报告文本（lnrs_anon_report_text）",
+  exam_detail: "检查深结构（lnrs_anon_exam_detail）",
+  visit: "就诊桥（lnrs_anon_visit）",
+  surgery: "手术记录（lnrs_anon_surgery）",
+  ingest_batch: "导入批次（lnrs_anon_ingest_batch）",
 };
 
 const tableRows = computed(() => {
   if (!summary.value) return [];
   return Object.entries(summary.value.tables).map(([key, count]) => ({
     key,
-    label: TABLE_LABELS[key as keyof HospitalDataSummary["tables"]] || key,
+    label: TABLE_LABELS[key as keyof AnonHospitalDataSummary["tables"]] || key,
     count,
   }));
 });
@@ -135,7 +141,8 @@ async function loadData() {
   const seq = ++loadSeq;
   loading.value = true;
   try {
-    const res = await HospitalAPI.getDataSummary(props.hospitalId);
+    // 2026-07-24 改：用 anon 体系（getAnonDataSummary）替代 med_* 体系
+    const res = await HospitalAPI.getAnonDataSummary(props.hospitalId);
     if (seq !== loadSeq) return; // 已被新的请求覆盖，丢弃过期响应
     summary.value = res.data?.data || null;
   } finally {

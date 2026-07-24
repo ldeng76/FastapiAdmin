@@ -8,8 +8,8 @@
           <ElButton :icon="ArrowLeft" link @click="goBack">返回列表</ElButton>
           <span class="patient-title">
             患者多模态数据 · {{ patient?.patient_id }}
-            <ElTag v-if="patient?.source_center" type="info" effect="plain" class="ml-8">
-              {{ patient.source_center }}
+            <ElTag v-if="patient?.center_code" type="info" effect="plain" class="ml-8">
+              {{ patient.center_code }}
             </ElTag>
           </span>
         </div>
@@ -17,14 +17,14 @@
 
       <ElDescriptions v-loading="loading" :column="4" border size="small">
         <ElDescriptionsItem label="患者编号">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="来源中心">{{ patient?.source_center || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="性别">{{ patient?.gender || "-" }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="中心编码">{{ patient?.center_code || "-" }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="性别">{{ sexLabel(patient?.sex) }}</ElDescriptionsItem>
         <ElDescriptionsItem label="出生日期">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="民族">{{ patient?.ethnicity || "-" }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="民族">{{ ethnicityLabel(patient?.ethnicity) }}</ElDescriptionsItem>
         <ElDescriptionsItem label="籍贯">{{ patient?.native_place || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="ABO血型">{{ patient?.abo_blood_type || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="RH血型">{{ patient?.rh_blood_type || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="吸烟状态">{{ patient?.smoking_status || "-" }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="ABO血型">{{ aboLabel(patient?.abo_blood_type) }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="RH血型">{{ rhLabel(patient?.rh_blood_type) }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="吸烟状态">{{ smokingLabel(patient?.smoking_status) }}</ElDescriptionsItem>
         <ElDescriptionsItem label="首结节日期">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
       </ElDescriptions>
 
@@ -150,6 +150,26 @@ function fmtDate(v?: string): string {
   return v.length > 10 ? v.slice(0, 10) : v;
 }
 
+// 国标码翻译（2026-07-24 改 anon 体系后用）
+const SEX_LABEL: Record<string, string> = { "0": "未知", "1": "男", "2": "女", "9": "未说明" };
+function sexLabel(code?: string) { return code ? (SEX_LABEL[code] || code) : "-"; }
+
+const ETHNICITY_LABEL: Record<string, string> = { "01": "汉族", "99": "其他" };
+function ethnicityLabel(code?: string) { return code ? (ETHNICITY_LABEL[code] || code) : "-"; }
+
+const SMOKING_LABEL: Record<string, string> = { "1": "从不", "2": "既往", "3": "现在", "9": "未知" };
+function smokingLabel(code?: string) { return code ? (SMOKING_LABEL[code] || code) : "-"; }
+
+// HQMS RC030 ABO 血型：1=A型, 2=B型, 3=O型, 4=AB型, 5=不详, 6=未查
+const ABO_LABEL: Record<string, string> = {
+  "1": "A型", "2": "B型", "3": "O型", "4": "AB型", "5": "不详", "6": "未查",
+};
+function aboLabel(code?: string) { return code ? (ABO_LABEL[code] || code) : "-"; }
+
+// HQMS RC031 Rh 血型：1=阴性, 2=阳性, 3=不详
+const RH_LABEL: Record<string, string> = { "1": "阴性", "2": "阳性", "3": "不详" };
+function rhLabel(code?: string) { return code ? (RH_LABEL[code] || code) : "-"; }
+
 function goBack() {
   router.push("/medical/patient");
 }
@@ -239,9 +259,10 @@ function formatValue(v: any): string {
 }
 
 // 字段名中文映射（覆盖常见字段，未命中原样返回）
+// 2026-07-24 改：data source 切到 anon_* 体系，source_center→center_code、gender→sex
 const FIELD_LABELS: Record<string, string> = {
   patient_id: "患者编号",
-  source_center: "来源中心",
+  center_code: "中心编码",
   visit_id: "就诊编号",
   specimen_id: "标本号",
   test_id: "检测号",

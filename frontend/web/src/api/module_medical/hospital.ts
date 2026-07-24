@@ -5,6 +5,9 @@
 import { request } from "@utils";
 
 import type {
+  AnonHospitalDataSummary,
+  AnonImportStatusData,
+  AnonImportTriggerRequest,
   EtlImportResponse,
   EtlImportStatusData,
   HospitalDataSummary,
@@ -175,6 +178,34 @@ const HospitalAPI = {
     return request<ApiResponse<HospitalTable>>({
       url: `${API_PATH}/hospital/${id}/offline`,
       method: "post",
+    });
+  },
+
+  // ── anon ETL 导入（2026-07-24 补全，与旧 ETL 平行） ───────────
+
+  /** 触发 anon ETL 导入（parquet → lnrs_anon_*） */
+  triggerImportAnon(id: number, body?: AnonImportTriggerRequest) {
+    return request<ApiResponse<EtlImportResponse>>({
+      url: `${API_PATH}/hospital/${id}/import/anon`,
+      method: "post",
+      data: body || {},
+    });
+  },
+
+  /** 查询 anon ETL 导入状态 */
+  getAnonImportStatus(id: number) {
+    return request<ApiResponse<AnonImportStatusData>>({
+      url: `${API_PATH}/hospital/${id}/import/anon/status`,
+      method: "get",
+    });
+  },
+
+  /** 获取医院 anon 数据摘要（lnrs_anon_* 各表行数） */
+  getAnonDataSummary(id: number, centerCodes?: string[]) {
+    return request<ApiResponse<AnonHospitalDataSummary>>({
+      url: `${API_PATH}/hospital/${id}/anon-data-summary`,
+      method: "get",
+      params: centerCodes?.length ? { center_codes: centerCodes } : undefined,
     });
   },
 };

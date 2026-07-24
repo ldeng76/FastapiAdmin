@@ -481,6 +481,32 @@
     "tenant_id": 1
   },
   {
+    "dict_sort": 4,
+    "dict_label": "基因检测",
+    "dict_value": "Genetic",
+    "dict_type": "med_exam_type",
+    "dict_type_id": 999,
+    "css_class": "",
+    "list_class": null,
+    "is_default": false,
+    "status": "0",
+    "description": "医疗检查类型-基因检测",
+    "tenant_id": 1
+  },
+  {
+    "dict_sort": 5,
+    "dict_label": "免疫组化",
+    "dict_value": "IHC",
+    "dict_type": "med_exam_type",
+    "dict_type_id": 999,
+    "css_class": "",
+    "list_class": null,
+    "is_default": false,
+    "status": "0",
+    "description": "医疗检查类型-免疫组化",
+    "tenant_id": 1
+  },
+  {
     "dict_sort": 1,
     "dict_label": "左",
     "dict_value": "L",

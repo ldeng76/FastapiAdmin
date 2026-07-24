@@ -23,6 +23,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base_model import ModelMixin, TenantMixin, UserMixin
+from app.api.v1.module_system.tenant.model import TenantModel  # noqa: F401
+from app.plugin.module_medical.hospital.model import HospitalModel  # noqa: F401
 
 
 class DictMappingModel(ModelMixin, TenantMixin, UserMixin):
@@ -76,7 +78,7 @@ class DictMappingModel(ModelMixin, TenantMixin, UserMixin):
 
     # 关联
     hospital: Mapped["HospitalModel"] = relationship(
-        "HospitalModel", lazy="selectin", back_populates="dict_mappings",
+        HospitalModel, lazy="selectin", back_populates="dict_mappings",
     )
     dict_type: Mapped["DictTypeModel"] = relationship("DictTypeModel", lazy="selectin")
     dict_data: Mapped["DictDataModel | None"] = relationship("DictDataModel", lazy="selectin")
@@ -166,7 +168,7 @@ class DictUnmatchedModel(ModelMixin):
     )
 
     # 关联
-    hospital: Mapped["HospitalModel"] = relationship("HospitalModel", lazy="selectin")
+    hospital: Mapped["HospitalModel"] = relationship(HospitalModel, lazy="selectin")
     dict_type: Mapped["DictTypeModel"] = relationship("DictTypeModel", lazy="selectin")
     resolved_as_mapping: Mapped["DictMappingModel | None"] = relationship(
         "DictMappingModel", lazy="selectin",

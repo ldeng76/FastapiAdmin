@@ -14,16 +14,9 @@ from app.api.v1.module_system.role.model import RoleModel
 from app.api.v1.module_system.tenant.model import TenantConfigModel, TenantModel
 from app.api.v1.module_system.user.model import UserModel, UserRolesModel
 from app.plugin.module_medical.dict_mapping.model import DictMappingModel, DictUnmatchedModel
-# 医疗数据模型（med_* 表，dict_mapping 依赖 med_hospital）
+# 医疗数据模型（2026-07-24 清理：7 张 med_* 业务表已退役，只保留 med_hospital + med_mapping_rule）
 from app.plugin.module_medical.hospital.model import (
     HospitalModel,
-    PatientModel,
-    PathologySpecimenModel,
-    SurgeryRecordModel,
-    GeneticTestModel,
-    NoduleImagingModel,
-    IHCResultModel,
-    FollowUpModel,
     MappingRuleModel,
 )
 from app.config.path_conf import SCRIPT_DIR

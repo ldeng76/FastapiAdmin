@@ -208,11 +208,13 @@ def upgrade() -> None:
     _ensure_dict_data(sex_id, "med_sex", "女", "F", 2)
     _ensure_dict_data(sex_id, "med_sex", "未知", "U", 3)
 
-    # med_exam_type: CT / PETCT / Pathology
+    # med_exam_type: CT / PETCT / Pathology / Genetic / IHC
     exam_id = _ensure_dict_type("医疗-检查类型", "med_exam_type", "医疗领域检查类型字典")
     _ensure_dict_data(exam_id, "med_exam_type", "CT", "CT", 1)
     _ensure_dict_data(exam_id, "med_exam_type", "PET-CT", "PETCT", 2)
     _ensure_dict_data(exam_id, "med_exam_type", "病理", "Pathology", 3)
+    _ensure_dict_data(exam_id, "med_exam_type", "基因检测", "Genetic", 4)
+    _ensure_dict_data(exam_id, "med_exam_type", "免疫组化", "IHC", 5)
 
     # med_laterality: L / R / Bilateral / N/A
     lat_id = _ensure_dict_type("医疗-偏侧性", "med_laterality", "医疗领域偏侧性字典")

@@ -20,12 +20,15 @@ from app.plugin.module_medical.hospital.anonymize import (
     birth_date_from,
     compute_anon_exam_id,
     compute_anon_id,
+    compute_anon_visit_id,
     hash_for_audit,
     key_fingerprint,
     normalize_sex,
     schema_hash,
     secret_version,
     source_exam_hash,
+    source_surgery_hash,
+    source_visit_hash,
     truncate_body,
 )
 
@@ -107,6 +110,74 @@ class TestSourceExamHash:
         assert source_exam_hash("zhujiang", "X1") != source_exam_hash("xinqiao", "X1")
 
 
+class TestComputeAnonVisitId:
+    """就诊级 anon_visit_id 生成规则（visit 桥）。"""
+
+    def test_deterministic(self):
+        a = compute_anon_visit_id("zhujiang", "153623_1")
+        b = compute_anon_visit_id("zhujiang", "153623_1")
+        assert a == b
+
+    def test_format(self):
+        """格式必须匹配 ANON_VISIT_ + 12 hex（与 patient/exam 一致截断）。"""
+        vid = compute_anon_visit_id("zhujiang", "153623_1")
+        assert vid.startswith("ANON_VISIT_")
+        hex_part = vid[len("ANON_VISIT_"):]
+        assert len(hex_part) == 12
+        assert all(c in "0123456789abcdef" for c in hex_part)
+
+    def test_center_in_hmac_input(self):
+        """center_code 参与哈希：同一 visit_id 跨中心不碰撞。"""
+        assert compute_anon_visit_id("zhujiang", "V1") != compute_anon_visit_id("shengyi", "V1")
+
+    def test_distinct_from_anon_id(self):
+        """visit_id 与 patient 级 anon_id 前缀不同，不会混淆。"""
+        aid = compute_anon_id("zhujiang", "153623")
+        vid = compute_anon_visit_id("zhujiang", "153623")
+        assert aid != vid
+        assert aid.startswith("ANON_") and vid.startswith("ANON_VISIT_")
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError):
+            compute_anon_visit_id("", "V1")
+        with pytest.raises(ValueError):
+            compute_anon_visit_id("zhujiang", "")
+
+
+class TestSourceVisitHash:
+    def test_format_64_hex(self):
+        h = source_visit_hash("zhujiang", "153623_1")
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_deterministic(self):
+        assert source_visit_hash("zhujiang", "V1") == source_visit_hash("zhujiang", "V1")
+
+    def test_center_affects_hash(self):
+        assert source_visit_hash("zhujiang", "V1") != source_visit_hash("xinqiao", "V1")
+
+
+class TestSourceSurgeryHash:
+    """手术级幂等哈希：同一 visit 不同手术必须产生不同哈希。"""
+
+    def test_format_64_hex(self):
+        h = source_surgery_hash("zhujiang", "V1", "左肺上叶切除术")
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_deterministic(self):
+        assert source_surgery_hash("zhujiang", "V1", "P") == source_surgery_hash("zhujiang", "V1", "P")
+
+    def test_procedure_name_distinguishes(self):
+        """同一 visit 的两台不同手术必须哈希不同（数据已证实 1-4 台/visit）。"""
+        h1 = source_surgery_hash("zhujiang", "V1", "左肺上叶切除术")
+        h2 = source_surgery_hash("zhujiang", "V1", "淋巴结清扫")
+        assert h1 != h2
+
+    def test_visit_id_distinguishes(self):
+        assert source_surgery_hash("zhujiang", "V1", "P") != source_surgery_hash("zhujiang", "V2", "P")
+
+
 class TestNormalizeSex:
     """性别归一化 → HQMS RC001 0/1/2/9。
 
@@ -166,6 +237,15 @@ class TestBirthDate:
     def test_from_year_month_string(self):
         """YYYY-MM 字符串：日置 01。"""
         assert birth_date_from("1980-05") == date(1980, 5, 1)
+
+    def test_from_slash_date_string(self):
+        """宽表常见 YYYY/M/D 字符串：保留完整日期。"""
+        assert birth_date_from("2024/1/30") == date(2024, 1, 30)
+        assert birth_date_from("2025/09/23") == date(2025, 9, 23)
+
+    def test_from_slash_year_month_string(self):
+        """YYYY/MM 字符串：日置 01。"""
+        assert birth_date_from("1980/05") == date(1980, 5, 1)
 
     def test_from_year_only_string(self):
         """YYYY 字符串：月日置 01-01。"""

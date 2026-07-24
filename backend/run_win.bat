@@ -63,16 +63,22 @@ if not exist "%env_file%" (
     exit /b 1
 )
 
-for /f "usebackq tokens=1,* delims==" %%a in ("%env_file%") do (
-    set "line=%%a"
+rem findstr filters only DATABASE_ lines to avoid UTF-8 Chinese garbling cmd.exe
+for /f "usebackq tokens=1,* delims==" %%a in (`findstr /b "DATABASE_" "%env_file%"`) do (
+    set "key=%%a"
     set "value=%%b"
-    set "line=!line:~0,13!"
-    if "!line!"=="DATABASE_HOST" set "DATABASE_HOST=%%b"
-    if "!line!"=="DATABASE_PORT" set "DATABASE_PORT=%%b"
-    if "!line!"=="DATABASE_USER" set "DATABASE_USER=%%b"
-    if "!line!"=="DATABASE_PASSWORD" set "DATABASE_PASSWORD=%%b"
-    if "!line!"=="DATABASE_NAME" set "DATABASE_NAME=%%b"
-    if "!line!"=="DATABASE_TYPE" set "DATABASE_TYPE=%%b"
+    set "key=!key: =!"
+    rem Strip inline comments (# and after) and trim leading spaces
+    for /f "tokens=1 delims=#" %%c in ("!value!") do set "value=%%c"
+    rem Strip quotes and trim spaces
+    set "value=!value:"=!"
+    set "value=!value: =!"
+    if "!key!"=="DATABASE_HOST" set "DATABASE_HOST=!value!"
+    if "!key!"=="DATABASE_PORT" set "DATABASE_PORT=!value!"
+    if "!key!"=="DATABASE_USER" set "DATABASE_USER=!value!"
+    if "!key!"=="DATABASE_PASSWORD" set "DATABASE_PASSWORD=!value!"
+    if "!key!"=="DATABASE_NAME" set "DATABASE_NAME=!value!"
+    if "!key!"=="DATABASE_TYPE" set "DATABASE_TYPE=!value!"
 )
 
 if "!DATABASE_HOST!"=="" (

@@ -1,5 +1,5 @@
 -- =====================================================================
--- 脱敏后病例数据 schema (执行版) - Rev 2026-07-23 枚举改造后
+-- 脱敏后病例数据 schema (执行版) - Rev 2026-07-24 枚举字段对齐国标 + CHECK 全覆盖
 -- 依据: docs/adr/0006-anonymized-data-schema.md
 -- 目标: PostgreSQL 14+, schema = lnrs
 -- 变更要点:
@@ -94,7 +94,11 @@ CREATE TABLE lnrs.lnrs_anon_patient (
     anon_id            VARCHAR(32)  NOT NULL UNIQUE,   -- ANON_<HMAC>, 内部反查键
     center_code        VARCHAR(32)  NOT NULL,
     birth_date         DATE         CHECK (birth_date >= '1900-01-01' AND birth_date <= '2100-12-31'),
-    sex                VARCHAR(10)  NOT NULL DEFAULT 'U',
+    sex                VARCHAR(10)  NOT NULL DEFAULT '0',
+    ethnicity          VARCHAR(2),
+    smoking_status     VARCHAR(1),
+    abo_blood_type     VARCHAR(1),
+    rh_blood_type      VARCHAR(1),
     created_batch_id   UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     last_seen_batch_id UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -111,7 +115,12 @@ CREATE TABLE lnrs.lnrs_anon_patient (
         (deleted_at IS NOT NULL AND deleted_reason IS NOT NULL)
     ),
     -- 枚举权威移交 med_sex 字典（ADR-0008）：CHECK 替代 ENUM
-    CONSTRAINT lnrs_anon_ck_patient_sex CHECK (sex IN ('M','F','U'))
+    CONSTRAINT lnrs_anon_ck_patient_sex CHECK (sex IN ('0','1','2','9')),
+    CONSTRAINT lnrs_anon_ck_patient_ethnicity CHECK (ethnicity IS NULL OR ethnicity ~ '^[0-9]{2}$'),
+    CONSTRAINT lnrs_anon_ck_patient_smoking CHECK (smoking_status IS NULL OR smoking_status IN ('1','2','3','9')),
+    CONSTRAINT lnrs_anon_ck_patient_abo CHECK (abo_blood_type IS NULL OR abo_blood_type IN ('1','2','3','4','5','6')),
+    CONSTRAINT lnrs_anon_ck_patient_rh CHECK (rh_blood_type IS NULL OR rh_blood_type IN ('1','2','3')),
+    CONSTRAINT lnrs_anon_ck_patient_center CHECK (center_code ~ '^[a-z][a-z0-9_]*$')
 );
 
 CREATE INDEX lnrs_anon_ix_patient_center    ON lnrs.lnrs_anon_patient (center_code);

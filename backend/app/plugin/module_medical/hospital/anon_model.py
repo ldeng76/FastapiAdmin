@@ -37,7 +37,6 @@ from app.core.base_model import MappedBase
 # --------------------------------------------------------------------------- #
 # create_type=False：DDL 已在数据库里建好 ENUM，ORM 不重复创建，只引用。
 
-_sex_enum = ENUM("M", "F", "U", name="lnrs_anon_sex_enum", create_type=False)
 _ingest_status_enum = ENUM(
     "running", "success", "failed", "partial",
     name="lnrs_anon_ingest_status_enum", create_type=False,
@@ -120,6 +119,29 @@ class AnonPatientModel(MappedBase):
             "OR (deleted_at IS NOT NULL AND deleted_reason IS NOT NULL)",
             name="lnrs_anon_ck_deleted_consistency",
         ),
+        CheckConstraint(
+            "sex IN ('0','1','2','9')", name="lnrs_anon_ck_patient_sex"
+        ),
+        CheckConstraint(
+            "ethnicity IS NULL OR ethnicity ~ '^[0-9]{2}$'",
+            name="lnrs_anon_ck_patient_ethnicity",
+        ),
+        CheckConstraint(
+            "smoking_status IS NULL OR smoking_status IN ('1','2','3','9')",
+            name="lnrs_anon_ck_patient_smoking",
+        ),
+        CheckConstraint(
+            "abo_blood_type IS NULL OR abo_blood_type IN ('1','2','3','4','5','6')",
+            name="lnrs_anon_ck_patient_abo",
+        ),
+        CheckConstraint(
+            "rh_blood_type IS NULL OR rh_blood_type IN ('1','2','3')",
+            name="lnrs_anon_ck_patient_rh",
+        ),
+        CheckConstraint(
+            "center_code ~ '^[a-z][a-z0-9_]*$'",
+            name="lnrs_anon_ck_patient_center",
+        ),
         {"schema": "lnrs", "comment": "脱敏病人主表（双 ID + 软删除）"},
     )
 
@@ -127,7 +149,11 @@ class AnonPatientModel(MappedBase):
     anon_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     center_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
-    sex: Mapped[str] = mapped_column(_sex_enum, nullable=False, default="U")
+    sex: Mapped[str] = mapped_column(String(10), nullable=False, default="0")
+    ethnicity: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    smoking_status: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    abo_blood_type: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    rh_blood_type: Mapped[str | None] = mapped_column(String(1), nullable=True)
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),

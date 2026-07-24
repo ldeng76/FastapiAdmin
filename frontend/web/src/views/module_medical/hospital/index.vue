@@ -96,6 +96,7 @@ import { ElButton, ElCard, ElMessage, ElMessageBox, ElSpace, ElTag, ElTooltip } 
 import { Upload, Download } from "@element-plus/icons-vue";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
+import type { IContentConfig } from "@/components/modal/types";
 import FaSearchBar from "@/components/forms/fa-search-bar/index.vue";
 import FaTable from "@/components/tables/fa-table/index.vue";
 import FaTableHeader from "@/components/tables/fa-table-header/index.vue";
@@ -228,9 +229,13 @@ const {
               row.lifecycle_status === "live" && hasAuth("module_medical:hospital:offline")
                 ? h(ElButton, { type: "warning", link: true, onClick: () => handleGoOffline(row) }, () => "下线")
                 : null,
-              // 触发导入（仅 mapping_configured / data_imported）
-              IMPORTABLE_STATUSES.includes(row.lifecycle_status) && hasAuth("module_medical:hospital:import")
-                ? h(ElButton, { type: "primary", link: true, onClick: () => handleTriggerImport(row) }, () => "导入")
+              // 触发 anon 数据导入（仅 mapping_configured / data_imported）
+              IMPORTABLE_STATUSES.includes(row.lifecycle_status) && hasAuth("module_medical:hospital:import:anon")
+                ? h(
+                    ElButton,
+                    { type: "primary", link: true, onClick: () => handleTriggerImport(row) },
+                    () => "导入匿名数据",
+                  )
                 : null,
             ].filter(Boolean),
           ),
@@ -297,8 +302,11 @@ function handleTriggerImport(row: HospitalTable) {
 // ─── 选项映射 Excel 批量导入 ────────────────────────────────
 const dictMappingImportVisible = ref(false);
 const dictMappingImportLoading = ref(false);
-const dictMappingImportConfig = {
+const dictMappingImportConfig: IContentConfig = {
   permPrefix: "module_medical:dict_mapping",
+  // FaImportDialog 仅消费 permPrefix + importTemplate；indexAction/cols 为满足 IContentConfig 必填的占位
+  indexAction: async () => ({}),
+  cols: [],
   importTemplate: () => HospitalAPI.downloadDictMappingTemplate(),
 };
 

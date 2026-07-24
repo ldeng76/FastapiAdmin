@@ -13,6 +13,9 @@ export { useTable } from "./core/useTable";
 // 表格列配置管理
 export { useTableColumns } from "./core/useTableColumns";
 
+// 字典 value↔label 翻译（dict.store 之上的薄封装）
+export { useDict } from "./core/useDict";
+
 // 主题相关
 export { useTheme } from "./core/useTheme";
 

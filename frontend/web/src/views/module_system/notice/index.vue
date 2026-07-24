@@ -18,7 +18,11 @@
     >
       <template #created_id>
         <FaUserTableSelect
-          :model-value="searchForm.created_id == null ? undefined : searchForm.created_id"
+          :model-value="
+            searchForm.created_id === null || searchForm.created_id === undefined
+              ? undefined
+              : searchForm.created_id
+          "
           @update:model-value="(v: number | undefined) => (searchForm.created_id = v)"
           @confirm-click="afterUserSelectSearch"
           @clear-click="afterUserSelectSearch"
@@ -85,9 +89,7 @@
           max-height="75vh"
         >
           <template #notice_type="{ row }">
-            <ElTag :type="row?.notice_type === '1' ? 'primary' : 'warning'">
-              {{ noticeTypeLabel(row?.notice_type as string) }}
-            </ElTag>
+            {{ dictLabel("sys_notice_type", row?.notice_type as string) }}
           </template>
           <template #notice_content>
             <div class="notice-html-preview">
@@ -161,6 +163,8 @@ import NoticeAPI, {
   type NoticeTable,
 } from "@/api/module_system/notice";
 import { useAuth } from "@/hooks/core/useAuth";
+import { useDict } from "@/hooks/core/useDict";
+import DictTag from "@/components/base/fa-dict-tag/index.vue";
 import { renderTableOperationCell, type TableOperationAction } from "@utils";
 import { useDictStore, useNoticeStore } from "@stores";
 import type { IObject } from "@/components/modal/types";
@@ -193,12 +197,8 @@ function normalizeNoticeQuery(params: Record<string, unknown>): NoticePageQuery 
   return cleanEmptyArrayParams({ ...params }) as unknown as NoticePageQuery;
 }
 
-function noticeTypeLabel(val?: string) {
-  if (!val) return "";
-  const lab = dictStore.getDictLabel("sys_notice_type", val);
-  if (typeof lab === "string") return lab;
-  return lab.dict_label ?? val;
-}
+// 字典翻译（样板：useDict 收敛 label / options，DictTag 负责带色显示）
+const { label: dictLabel } = useDict("sys_notice_type");
 
 const searchForm = ref<NoticeSearchForm>({
   notice_title: undefined,
@@ -310,10 +310,37 @@ const noticeDetailItems: import("@/components/others/fa-descriptions/index.vue")
 
 /** 详情富文本 HTML（用于预览，已做 XSS 净化） */
 const detailContentHtml = computed({
-  get: () => {
-    const raw = detailFormData.value.notice_content ?? "";
-    return DOMPurify.sanitize(raw);
-  },
+  get: () =>
+    DOMPurify.sanitize(detailFormData.value.notice_content ?? "", {
+      ALLOWED_TAGS: [
+        "a",
+        "blockquote",
+        "br",
+        "code",
+        "em",
+        "h1",
+        "h2",
+        "h3",
+        "img",
+        "li",
+        "ol",
+        "p",
+        "pre",
+        "strong",
+        "table",
+        "tbody",
+        "td",
+        "th",
+        "thead",
+        "tr",
+        "u",
+        "ul",
+      ],
+      ALLOWED_ATTR: ["alt", "class", "href", "rel", "src", "target", "title"],
+      ALLOW_DATA_ATTR: false,
+      FORBID_TAGS: ["iframe", "object", "script", "style"],
+      FORBID_ATTR: ["style", "onerror", "onclick", "onload"],
+    }),
   set: (v: string) => {
     detailFormData.value.notice_content = v;
   },
@@ -477,10 +504,7 @@ const {
         prop: "notice_type",
         label: "类型",
         minWidth: 100,
-        formatter: (row: NoticeTable) =>
-          h(ElTag, { type: row.notice_type === "1" ? "primary" : "warning" }, () =>
-            noticeTypeLabel(row.notice_type)
-          ),
+        formatter: (row: NoticeTable) => h(DictTag, { type: "sys_notice_type", value: row.notice_type }),
       },
       { prop: "notice_content", label: "内容", minWidth: 200, showOverflowTooltip: true },
       { prop: "description", label: "描述", minWidth: 140, showOverflowTooltip: true },
@@ -669,9 +693,7 @@ async function handleMoreClick(status: string) {
   }
 }
 
-onMounted(async () => {
-  await dictStore.getDict(["sys_notice_type"]);
-});
+// 字典拉取已由上方 useDict("sys_notice_type") 在 setup 阶段接管，无需 onMounted
 </script>
 
 <style scoped lang="scss">

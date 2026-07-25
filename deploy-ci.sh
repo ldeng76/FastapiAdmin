@@ -6,6 +6,8 @@ export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/s
 export UV_CACHE_DIR="/data/uvcache"
 export PATH="/home/dzy/pg18/bin:$PATH"
 eval "$(fnm env)" 2>/dev/null || true
+# 避免 pnpm 检测到 node_modules 与 lockfile 不一致时交互式询问"是否整体重装"
+export PNPM_CONFIG_CONFIRM_MODULES_PURGE=false
 
 DEPLOY_DIR="/home/dzy/wk/lnrs_web"
 BACKEND_DIR="${DEPLOY_DIR}/backend"
@@ -26,7 +28,19 @@ git reset --hard "origin/${BRANCH}"
 NEW_HEAD=$(git rev-parse HEAD)
 
 if [ "$OLD_HEAD" = "$NEW_HEAD" ]; then
-    log "代码无变化，跳过部署"
+    log "代码无变化，检查前端构建产物新鲜度..."
+    # 上次部署若前端构建中断/失败，src 会比 dist 新，需要重建前端
+    if [ -f "${FRONTEND_DIR}/dist/index.html" ] && \
+       [ -z "$(find "${FRONTEND_DIR}/src" -type f \( -name '*.vue' -o -name '*.ts' \) \
+              -newer "${FRONTEND_DIR}/dist/index.html" -print -quit)" ]; then
+        log ">>> dist 是最新，跳过部署"
+        exit 0
+    fi
+    log ">>> src 较 dist 更新，仅重建前端（后端代码未变，跳过重启）"
+    cd "${FRONTEND_DIR}"
+    pnpm install --frozen-lockfile || pnpm install
+    pnpm vite build
+    log ">>> 前端重建完成"
     exit 0
 fi
 
@@ -39,7 +53,7 @@ uv sync
 
 log ">>> pnpm install & vite build (前端)"
 cd "${FRONTEND_DIR}"
-pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+pnpm install --frozen-lockfile || pnpm install
 pnpm vite build
 
 log ">>> 重启后端服务"

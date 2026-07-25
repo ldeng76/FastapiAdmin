@@ -129,19 +129,27 @@ function Clear-Pids {
 }
 
 function Test-PidAlive {
-    param([int]$Pid)
-    $p = Get-Process -Id $Pid -ErrorAction SilentlyContinue
+    # 注意:参数名不能叫 $Pid/$pid/$PID,那是 PowerShell 大小写不敏感的
+    # 只读自动变量(代表当前进程 PID),用同名参数会被
+    # "Cannot overwrite variable Pid because it is read-only or constant." 拒绝。
+    # 这里改用 $ProcessId,语义清晰且不冲突。
+    param([int]$ProcessId)
+    $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     return [bool]$p
 }
 
 # 结束一组 PID 及其子进程(尽力而为)
 function Stop-PidTree {
+    # 注意:循环变量不能用 $pid/$Pid/$PID,那是 PowerShell 大小写不敏感的
+    # 只读自动变量,绑定到 foreach 会触发
+    # "Cannot overwrite variable Pid because it is read-only or constant."。
+    # 形参 $Pids(Pids,带 s)不冲突,但循环变量必须避开。
     param(
         [int[]]$Pids,
         [switch]$ForceKill
     )
-    foreach ($pid in $Pids) {
-        $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    foreach ($procId in $Pids) {
+        $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
         if (-not $p) { continue }
         try {
             if ($ForceKill) {
@@ -150,7 +158,7 @@ function Stop-PidTree {
                 $p | Stop-Process -ErrorAction Stop
             }
         } catch {
-            Write-Warn "failed to stop pid $pid : $($_.Exception.Message)"
+            Write-Warn "failed to stop pid $procId : $($_.Exception.Message)"
         }
     }
     # 等一下,让进程清理
@@ -190,13 +198,13 @@ function Invoke-Stop {
     # 先发现还存活的 uvicorn/python 进程作为兜底(可能 PID 文件陈旧)
     $stale = $false
     foreach ($p in $pids) {
-        if (-not (Test-PidAlive -Pid $p)) { $stale = $true }
+        if (-not (Test-PidAlive -ProcessId $p)) { $stale = $true }
     }
     if ($stale) {
         Write-Warn "pid file is stale; will also try to find uvicorn for this project"
     }
 
-    $aliveCount = ($pids | Where-Object { Test-PidAlive -Pid $_ }).Count
+    $aliveCount = ($pids | Where-Object { Test-PidAlive -ProcessId $_ }).Count
     if ($aliveCount -eq 0 -and -not $Force) {
         Write-Warn "no live pid, removing stale pid file"
         Clear-Pids
@@ -206,7 +214,7 @@ function Invoke-Stop {
     Stop-PidTree -Pids $pids -ForceKill:$Force
 
     # 二次确认:还活着的再强杀一次
-    $stillAlive = $pids | Where-Object { Test-PidAlive -Pid $_ }
+    $stillAlive = $pids | Where-Object { Test-PidAlive -ProcessId $_ }
     if ($stillAlive) {
         if (-not $Force) {
             Write-Warn "still alive after graceful stop, retrying with -Force"
@@ -215,7 +223,7 @@ function Invoke-Stop {
     }
 
     # 最终检查
-    $left = $pids | Where-Object { Test-PidAlive -Pid $_ }
+    $left = $pids | Where-Object { Test-PidAlive -ProcessId $_ }
     if ($left) {
         Write-Err "some processes refused to exit: $($left -join ', ')"
         return
@@ -231,7 +239,7 @@ function Invoke-Start {
     # 已运行?
     $pids = Get-StoredPids
     foreach ($p in $pids) {
-        if (Test-PidAlive -Pid $p) {
+        if (Test-PidAlive -ProcessId $p) {
             Write-Warn "already running (pid $p). Use 'restart' to relaunch."
             return
         }
@@ -260,6 +268,12 @@ function Invoke-Start {
 
         $args = @('run', 'main.py', 'run', '--env=dev')
 
+        # Windows 默认控制台代码页为 GBK(936),banner 中的 emoji (如 🚀) 会触发
+        # UnicodeEncodeError。强制子进程 stdout/stderr 走 UTF-8,并在弹窗分支把
+        # 新 conhost 的代码页切到 65001,保证 emoji 能正常显示。
+        $env:PYTHONIOENCODING = 'utf-8'
+        $env:PYTHONUTF8       = '1'
+
         if ($NoWindow) {
             # 不弹窗,直接后台
             $proc = Start-Process -FilePath $uv.Source `
@@ -271,8 +285,9 @@ function Invoke-Start {
                                   -PassThru
         } else {
             # 弹新控制台窗口,便于看实时日志
-            $proc = Start-Process -FilePath $uv.Source `
-                                  -ArgumentList $args `
+            # 切到 UTF-8 代码页,使 banner 中的 emoji 不会因 GBK 编码而崩溃
+            $proc = Start-Process -FilePath 'cmd.exe' `
+                                  -ArgumentList '/c', "chcp 65001 >NUL && `"$($uv.Source)`" $($args -join ' ')" `
                                   -WorkingDirectory $ScriptDir `
                                   -RedirectStandardOutput $LogFile `
                                   -RedirectStandardError  $ErrLogFile `

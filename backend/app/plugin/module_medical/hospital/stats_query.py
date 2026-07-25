@@ -134,6 +134,17 @@ async def _query_age_distribution(db: AsyncSession, ref_date: date | None = None
     ]
 
 
+async def _load_dict_labels(db: AsyncSession, dict_type: str) -> dict[str, str]:
+    """从 sys_dict_data 加载 {dict_value: dict_label} 映射（复用系统字典）。"""
+    from app.api.v1.module_system.dict.model import DictDataModel
+
+    stmt = select(DictDataModel.dict_value, DictDataModel.dict_label).where(
+        DictDataModel.dict_type == dict_type
+    )
+    result = await db.execute(stmt)
+    return {value: label for value, label in result.all()}
+
+
 async def _query_gender_ratio(db: AsyncSession) -> list[dict]:
     stmt = (
         select(AnonPatientModel.sex, func.count().label("count"))
@@ -143,7 +154,7 @@ async def _query_gender_ratio(db: AsyncSession) -> list[dict]:
         .order_by(AnonPatientModel.sex)
     )
     result = await db.execute(stmt)
-    label_map = {"M": "男", "F": "女", "U": "未知"}
+    label_map = await _load_dict_labels(db, "med_sex")
     return [
         {"sex": sex, "label": label_map.get(sex, sex), "count": count}
         for sex, count in result.all()
@@ -174,8 +185,9 @@ async def _query_modality_counts(db: AsyncSession) -> list[dict]:
         .order_by(func.count().desc())
     )
     result = await db.execute(stmt)
+    label_map = await _load_dict_labels(db, "med_exam_type")
     return [
-        {"exam_type": exam_type, "count": count}
+        {"exam_type": exam_type, "label": label_map.get(exam_type, exam_type), "count": count}
         for exam_type, count in result.all()
     ]
 

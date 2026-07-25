@@ -19,6 +19,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.sql import Delete, Insert, Select, Update
 
+from app.common.constant import PLATFORM_TENANT_ID
 from app.core.tenant import get_current_tenant_id, get_is_super_admin
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,15 @@ def _apply_tenant_to_select(execute_state, tenant_id: int) -> None:
     stmt = execute_state.statement
     for mapper in tenant_mappers:
         table = mapper.mapped_table
-        stmt = stmt.where(table.c.tenant_id == tenant_id)
+        # 平台共享数据（sys_dict_* 等）读取时同时放开 PLATFORM_TENANT_ID，
+        # 与 base_crud.__tenant_condition(read_mode=True) 语义保持一致。
+        if (
+            getattr(mapper.class_, "__platform_data_shared__", False)
+            and tenant_id != PLATFORM_TENANT_ID
+        ):
+            stmt = stmt.where(table.c.tenant_id.in_((tenant_id, PLATFORM_TENANT_ID)))
+        else:
+            stmt = stmt.where(table.c.tenant_id == tenant_id)
 
     execute_state.statement = stmt
 

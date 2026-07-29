@@ -472,6 +472,11 @@ export const staticRoutes: AppRouteRecordRaw[] = [
     ],
   },
   {
+    path :"/fjj/dashboard",
+    name :"FjjDashboard",
+    component : ()=> import("@views/module_medical/dashboard/index.vue")
+  },
+  {
     path: "/outside",
     component: () => import("@/components/layouts/index.vue"),
     name: "Outside",

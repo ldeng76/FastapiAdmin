@@ -129,6 +129,7 @@ function mapMenuNode(item: MenuTable, depth = 0): AppRouteRecord {
     alwaysShow: !!item.always_show,
     isHide: !!item.hidden,
     client: item.client,
+    link : item.type === 4 ? (item.route_path?.indexOf("/") === 0 ? "#"+item.route_path : item.route_path) : ''
   };
 
   return {

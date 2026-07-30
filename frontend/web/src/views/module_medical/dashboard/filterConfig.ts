@@ -1,47 +1,61 @@
+import {DictDataTable} from "@api/module_system/dict.ts";
+export interface FilterDictDataTable extends DictDataTable{
+  key?: string;
+  children?: Array<FilterConfigType | FilterDictDataTable>
+}
 export interface FilterConfigType {
-  label: string;
-  value?: string;
+  dict_label: string;
+  dict_type: string;
+  dict_value?: string;
   key?: string;
   currFilter?:string | undefined;
   currFilterText?:string | undefined;
-  children?: Array<FilterConfigType>;
+  children?: Array<FilterConfigType | FilterDictDataTable>;
 }
 
 const config: Array<FilterConfigType> = [
   {
-    label: "来源中心",
+    dict_label: "来源中心",
+    dict_type:"med_center",
     children: [],
   },
   {
-    label: "性别",
+    dict_label: "性别",
+    dict_type:"med_sex",
     children: [],
   },
   {
-    label: "年龄访问",
+    dict_label: "年龄",
+    dict_type:"med_age",
+    children: [
+      {dict_label :"0岁-10岁",dict_value:"10"},
+      {dict_label :"11岁-20岁",dict_value:"20"},
+      {dict_label :"21岁-30岁",dict_value:"30"},
+      {dict_label :"31岁-40岁",dict_value:"40"},
+      {dict_label :"51岁以上",dict_value:"50"},
+    ],
+  },
+  {
+    dict_label: "吸烟状态",
+    dict_type:"med_smoking_status",
     children: [],
   },
   {
-    label: "吸烟状态",
+    dict_label: "病理类型",
+    dict_type:"med_exam_type",
     children: [],
   },
   {
-    label: "病理类型",
-    children: [],
-  },
-  {
-    label: "基因突变",
-    children: [],
-  },
-  {
-    label: "随访状态",
+    dict_label: "偏侧性",
+    dict_type:"med_laterality",
     children: [],
   },
 ];
 
 addConfigKey(config, null);
 
-export function addConfigKey(arr: Array<FilterConfigType>, key: string | null) {
-  arr.forEach(function (item: FilterConfigType, i) {
+export function addConfigKey(arr: Array<FilterConfigType | FilterDictDataTable>, key: string | null) {
+  arr.forEach(function (item: (FilterConfigType | FilterDictDataTable), i) {
     if (!item.key) item.key = key != null ? key + "-" + i.toString() : i.toString();
     addConfigKey(item.children || [], item.key);
   });

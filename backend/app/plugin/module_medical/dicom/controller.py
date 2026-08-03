@@ -1,86 +1,302 @@
-"""DICOM 影像浏览 controller（自动发现挂到 /medical/dicom）。
+"""DICOMweb 控制器（供 OHIF Viewer 使用）。
 
-只读端点：Study 列表 → Series 列表 → 切片列表 → 原始 .dcm 文件流。
-前 3 个返回 JSON 元数据；切片文件接口返回 application/dicom 字节流，
-供前端 cornerstone dicom-image-loader（wadouri scheme）解码，保留 HU 值以支持调窗/测量。
+实现标准 DICOMweb RESTful Services 接口：
+- QIDO-RS（Query based on ID for DICOM Objects）：查询 Study/Series/Instance
+- WADO-RS（Web Access to DICOM Objects）：获取实例二进制、元数据、渲染图像
+
+与普通接口的区别：
+- 响应格式：直接返回 DICOM JSON 数组，不使用 SuccessResponse 包装
+- 路由类：不使用 OperationLogRoute（避免记录大量二进制数据）
+- 认证：使用 Bearer Token（与现有认证体系兼容）
 """
 
 from typing import Annotated
-
-from fastapi import APIRouter, Depends, Path
+import os
+from fastapi import APIRouter, Depends, Path, Query, Response
 from fastapi.responses import FileResponse, JSONResponse
-
-from app.api.v1.module_system.auth.schema import AuthSchema
-from app.common.response import ResponseSchema, SuccessResponse
-from app.core.dependencies import AuthPermission
-from app.core.router_class import OperationLogRoute
-
-from .schema import InstanceOut, SeriesOut, StudyOut
+from fastapi import HTTPException
 from .service import DicomService
+from fastapi.responses import HTMLResponse
 
-# 容器前缀由顶级目录名自动生成为 /medical（module_medical 去 module_ 前缀）
-# 本文件位于 module_medical/dicom/ 子目录，仍挂到 /medical，故路由为 /medical/dicom/...
-# 这里同样不设 prefix，避免叠加。
-DicomRouter = APIRouter(route_class=OperationLogRoute, tags=["DICOM 影像"])
+# DICOMweb 专用路由（不使用 OperationLogRoute，避免大文件日志）
+DicomwebRouter = APIRouter(tags=["DICOMweb"])
 
 
-@DicomRouter.get(
+@DicomwebRouter.get("/dicom/", response_class=HTMLResponse)
+@DicomwebRouter.get("/dicom/viewer", response_class=HTMLResponse)
+def dicom_viewer():
+    dicom_static_path = os.getenv("DICOM_STATIC_DIR")
+    if not dicom_static_path:
+        raise HTTPException(status_code=500, detail="DICOM_STATIC_DIR 未配置")
+    file_path = f"{dicom_static_path}/index.html"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="DICOM模板不存在")
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return content
+
+
+# ======================================================================
+# QIDO-RS：查询接口（返回 DICOM JSON 数组）
+# ======================================================================
+
+@DicomwebRouter.get(
     "/dicom/studies",
-    summary="DICOM Study 列表",
-    description="扫描 DICOM 数据目录，返回每个 Study（子目录）的概要信息",
-    response_model=ResponseSchema[list[StudyOut]],
+    summary="QIDO-RS: 查询 Study 列表",
+    description="返回所有 Study 的 DICOM JSON 数组，支持 PatientID/PatientName/StudyDate 过滤",
 )
-async def list_dicom_studies_controller(
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:dicom:query"]))],
+async def qido_query_studies(
+    patient_id: Annotated[str | None, Query(description="PatientID")] = None,
+    patient_name: Annotated[str | None, Query(description="PatientName")] = None,
+    study_date: Annotated[str | None, Query(description="StudyDate (YYYYMMDD)")] = None,
+    modalities_in_study: Annotated[str | None, Query(description="ModalitiesInStudy (逗号分隔)")] = None,
 ) -> JSONResponse:
-    """Study 列表。"""
-    result = await DicomService.list_studies_service()
-    return SuccessResponse(data=result, msg="获取 Study 列表成功")
+    """QIDO-RS: 查询 Study 列表。"""
+    result = DicomService.query_studies(
+        patient_id=patient_id,
+        patient_name=patient_name,
+        study_date=study_date,
+        modalities_in_study=modalities_in_study,
+    )
+    return JSONResponse(content=result, media_type="application/dicom+json")
 
 
-@DicomRouter.get(
-    "/dicom/studies/{study_id}/series",
-    summary="DICOM Series 列表",
-    description="返回指定 Study 下所有 Series 的元信息",
-    response_model=ResponseSchema[list[SeriesOut]],
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}",
+    summary="QIDO-RS: 查询单个 Study",
+    description="按 StudyInstanceUID 查询单个 Study 的 DICOM JSON",
 )
-async def list_dicom_series_controller(
-    study_id: Annotated[str, Path(description="Study 标识（目录名）")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:dicom:query"]))],
+async def qido_query_study(
+    study_uid: Annotated[str, Path(description="StudyInstanceUID")],
 ) -> JSONResponse:
-    """Series 列表。"""
-    result = await DicomService.list_series_service(study_id=study_id)
-    return SuccessResponse(data=result, msg="获取 Series 列表成功")
+    """QIDO-RS: 查询单个 Study。"""
+    result = DicomService.query_study(study_uid)
+    if result is None:
+        return JSONResponse(
+            content={"error": "Study not found"},
+            status_code=404,
+            media_type="application/dicom+json",
+        )
+    return JSONResponse(content=[result], media_type="application/dicom+json")
 
 
-@DicomRouter.get(
-    "/dicom/series/{series_uid}/instances",
-    summary="DICOM 切片列表（已排序）",
-    description="返回指定 Series 的所有切片，已按解剖顺序（Z 轴）排序",
-    response_model=ResponseSchema[list[InstanceOut]],
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series",
+    summary="QIDO-RS: 查询 Study 下的 Series 列表",
+    description="按 StudyInstanceUID 查询所有 Series 的 DICOM JSON",
 )
-async def list_dicom_instances_controller(
+async def qido_query_series(
+    study_uid: Annotated[str, Path(description="StudyInstanceUID")],
+) -> JSONResponse:
+    """QIDO-RS: 查询 Study 下的 Series。"""
+    result = DicomService.query_series(study_uid)
+    return JSONResponse(content=result, media_type="application/dicom+json")
+
+
+@DicomwebRouter.get(
+    "/dicom/series/{series_uid}",
+    summary="QIDO-RS: 查询单个 Series",
+    description="按 SeriesInstanceUID 查询单个 Series 的 DICOM JSON",
+)
+async def qido_query_series_by_uid(
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:dicom:query"]))],
 ) -> JSONResponse:
-    """切片列表（已排序）。"""
-    result = await DicomService.list_instances_service(series_uid=series_uid)
-    return SuccessResponse(data=result, msg="获取切片列表成功")
+    """QIDO-RS: 查询单个 Series。"""
+    result = DicomService.query_series_by_uid(series_uid)
+    if result is None:
+        return JSONResponse(
+            content={"error": "Series not found"},
+            status_code=404,
+            media_type="application/dicom+json",
+        )
+    return JSONResponse(content=[result], media_type="application/dicom+json")
 
 
-@DicomRouter.get(
-    "/dicom/instances/{sop_uid}",
-    summary="DICOM 原始文件",
-    description="按 SOPInstanceUID 返回原始 .dcm 字节流，供 wadouri 加载",
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/instances",
+    summary="QIDO-RS: 查询 Series 下的 Instance 列表",
+    description="按 StudyInstanceUID 和 SeriesInstanceUID 查询所有 Instance 的 DICOM JSON",
 )
-async def get_dicom_instance_controller(
-    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:dicom:query"]))],
-) -> FileResponse:
-    """原始 DICOM 文件流。
+async def qido_query_instances(
+    study_uid: Annotated[str, Path(description="StudyInstanceUID")],
+    series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
+) -> JSONResponse:
+    """QIDO-RS: 查询 Series 下的 Instance。"""
+    result = DicomService.query_instances(series_uid)
+    return JSONResponse(content=result, media_type="application/dicom+json")
 
-    返回 application/dicom，浏览器 cornerstone 在客户端解码，保留 HU 值。
-    sop_uid 经索引器校验仅命中已扫描文件，杜绝路径穿越。
-    """
-    path = DicomService.get_instance_path_service(sop_uid=sop_uid)
+
+@DicomwebRouter.get(
+    "/dicom/series/{series_uid}/instances",
+    summary="QIDO-RS: 查询 Series 下的 Instance 列表（简化路径）",
+    description="按 SeriesInstanceUID 查询所有 Instance 的 DICOM JSON",
+)
+async def qido_query_instances_by_series(
+    series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
+) -> JSONResponse:
+    """QIDO-RS: 查询 Series 下的 Instance（简化路径）。"""
+    result = DicomService.query_instances(series_uid)
+    return JSONResponse(content=result, media_type="application/dicom+json")
+
+
+@DicomwebRouter.get(
+    "/dicom/instances/{sop_uid}",
+    summary="QIDO-RS: 查询单个 Instance",
+    description="按 SOPInstanceUID 查询单个 Instance 的 DICOM JSON",
+)
+async def qido_query_instance(
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+) -> JSONResponse:
+    """QIDO-RS: 查询单个 Instance。"""
+    result = DicomService.query_instance(sop_uid)
+    if result is None:
+        return JSONResponse(
+            content={"error": "Instance not found"},
+            status_code=404,
+            media_type="application/dicom+json",
+        )
+    return JSONResponse(content=[result], media_type="application/dicom+json")
+
+
+# ======================================================================
+# WADO-RS：获取实例二进制 / 元数据 / 渲染图像
+# ======================================================================
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/metadata",
+    summary="WADO-RS: 获取 Study 的 DICOM JSON 元数据",
+    description="返回 Study 下所有 Instance 的完整 DICOM JSON 元数据",
+)
+async def wado_study_metadata(
+    study_uid: Annotated[str, Path(description="StudyInstanceUID")],
+) -> JSONResponse:
+    """WADO-RS: Study 级元数据。"""
+    result = DicomService.get_study_metadata(study_uid)
+    return JSONResponse(content=result, media_type="application/dicom+json")
+
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/metadata",
+    summary="WADO-RS: 获取 Series 的 DICOM JSON 元数据",
+    description="返回 Series 下所有 Instance 的完整 DICOM JSON 元数据",
+)
+async def wado_series_metadata(
+    study_uid: Annotated[str, Path(description="StudyInstanceUID")],
+    series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
+) -> JSONResponse:
+    """WADO-RS: Series 级元数据。"""
+    result = DicomService.get_series_metadata(series_uid)
+    return JSONResponse(content=result, media_type="application/dicom+json")
+
+
+@DicomwebRouter.get(
+    "/dicom/instances/{sop_uid}/metadata",
+    summary="WADO-RS: 获取 Instance 的 DICOM JSON 元数据",
+    description="返回单个 Instance 的完整 DICOM JSON 元数据",
+)
+async def wado_instance_metadata(
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+) -> JSONResponse:
+    """WADO-RS: Instance 级元数据。"""
+    result = DicomService.get_instance_metadata(sop_uid)
+    if result is None:
+        return JSONResponse(
+            content={"error": "Instance not found"},
+            status_code=404,
+            media_type="application/dicom+json",
+        )
+    return JSONResponse(content=[result], media_type="application/dicom+json")
+
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}",
+    summary="WADO-RS: 获取 Instance 的 DICOM 二进制",
+    description="返回原始 DICOM 文件（application/dicom），供 cornerstone/wadouri 加载",
+)
+async def wado_get_instance(
+    study_uid: Annotated[str, Path(description="StudyInstanceUID")],
+    series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+) -> FileResponse:
+    """WADO-RS: Instance 二进制文件。"""
+    path = DicomService.get_instance_file(sop_uid)
     return FileResponse(path=str(path), media_type="application/dicom")
+
+
+@DicomwebRouter.get(
+    "/dicom/instances/{sop_uid}",
+    summary="WADO-RS: 获取 Instance 的 DICOM 二进制（简化路径）",
+    description="按 SOPInstanceUID 返回原始 DICOM 文件",
+)
+async def wado_get_instance_by_uid(
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+) -> FileResponse:
+    """WADO-RS: Instance 二进制文件（简化路径）。"""
+    path = DicomService.get_instance_file(sop_uid)
+    return FileResponse(path=str(path), media_type="application/dicom")
+
+
+@DicomwebRouter.get(
+    "/dicom/instances/{sop_uid}/rendered",
+    summary="WADO-RS: 获取 Instance 的渲染图像",
+    description="将 DICOM 渲染为 PNG 图像，供 OHIF 直接显示",
+)
+async def wado_rendered_instance(
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+    frame_number: Annotated[int | None, Query(description="帧号（多帧图像）")] = None,
+    quality: Annotated[int, Query(description="JPEG 质量 (1-100)")] = 75,
+) -> Response:
+    """WADO-RS: 渲染 Instance 为 PNG。"""
+    img_bytes, content_type = DicomService.get_rendered_instance(
+        sop_uid, frame_number=frame_number, quality=quality
+    )
+    return Response(content=img_bytes, media_type=content_type)
+
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}/frames/{frame_number}",
+    summary="WADO-RS: 获取 Instance 指定帧（完整路径）",
+    description="按 StudyUID/SeriesUID/SOPUID/FrameNumber 获取帧的原始像素数据（multipart/related）",
+)
+async def wado_get_instance_frame_fullpath(
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+    frame_number: Annotated[int, Path(description="帧号")],
+) -> Response:
+    """WADO-RS: frames 完整路径。"""
+    body, content_type = DicomService.get_instance_frame_multipart(
+        sop_uid=sop_uid, frame_number=frame_number
+    )
+    return Response(content=body, media_type=content_type)
+
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}/thumbnail",
+    summary="WADO-RS: 获取 Instance 缩略图（完整路径）",
+    description="按 StudyUID/SeriesUID/SOPUID 返回 PNG 缩略图，支持 viewport 参数缩放",
+)
+async def wado_get_instance_thumbnail_fullpath(
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+    viewport: Annotated[str | None, Query(description="缩略图尺寸，格式: 宽,高 (如 256,256)")] = None,
+) -> Response:
+    """WADO-RS: thumbnail 完整路径。"""
+    img_bytes, content_type = DicomService.get_thumbnail(
+        sop_uid=sop_uid, viewport=viewport
+    )
+    return Response(content=img_bytes, media_type=content_type)
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/thumbnail",
+    summary="WADO-RS: 获取 Series 缩略图",
+    description="按 StudyUID/SeriesUID 返回 PNG 缩略图（自动取中间帧），支持 viewport 参数缩放",
+)
+async def wado_get_series_thumbnail_fullpath(
+    series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
+    viewport: Annotated[str | None, Query(description="缩略图尺寸，格式: 宽,高 (如 256,256)")] = None,
+) -> Response:
+    """WADO-RS: Series 级别缩略图。"""
+    img_bytes, content_type = DicomService.get_series_thumbnail(
+        series_uid=series_uid, viewport=viewport
+    )
+    return Response(content=img_bytes, media_type=content_type)
+
+

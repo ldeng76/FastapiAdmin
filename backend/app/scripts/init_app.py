@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -215,6 +216,10 @@ def register_files(app: FastAPI) -> None:
             app=StaticFiles(directory=settings.STATIC_ROOT),
             name=settings.STATIC_DIR,
         )
+
+    dicom_static_path = os.getenv("DICOM_STATIC_DIR")
+    if dicom_static_path and os.path.exists(dicom_static_path):
+        app.mount("/medical/dicom", StaticFiles(directory=dicom_static_path), name="dicom_static")
 
     # 挂载前端静态文件
     from pathlib import Path as _Path

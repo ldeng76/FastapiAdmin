@@ -65,6 +65,8 @@ class _StudyIndex:
     def __init__(self, study_id: str, study_dir: Path) -> None:
         self.study_id = study_id
         self.study_dir = study_dir
+        # StudyInstanceUID
+        self.study_uid: str | None = None
         # SeriesInstanceUID -> list[instance dict]（已排序）
         self.series: dict[str, list[dict[str, Any]]] = {}
         # study 级元数据
@@ -90,6 +92,7 @@ class DicomIndexer:
             cls._instance = super().__new__(cls)
             cls._instance._studies: dict[str, _StudyIndex] = {}  # type: ignore[attr-defined]
             cls._instance._scan_lock = threading.RLock()  # type: ignore[attr-defined]
+            cls._instance._study_uid_to_id: dict[str, str] = {}  # type: ignore[attr-defined]
         return cls._instance
 
     # ------------------------------------------------------------------ #
@@ -110,28 +113,6 @@ class DicomIndexer:
             meta["series_count"] = len(idx.series)
             results.append(meta)
         return results
-
-    def list_series(self, study_id: str) -> list[dict[str, Any]]:
-        """某 Study 下所有 Series 元信息。"""
-        idx = self._require_study(study_id)
-        out: list[dict[str, Any]] = []
-        for series_uid, instances in idx.series.items():
-            first = instances[0] if instances else {}
-            out.append(
-                {
-                    "series_uid": series_uid,
-                    "series_description": first.get("series_description"),
-                    "modality": first.get("modality"),
-                    "instance_count": len(instances),
-                    "rows": first.get("rows"),
-                    "columns": first.get("columns"),
-                    "slice_thickness": first.get("slice_thickness"),
-                    "pixel_spacing": first.get("pixel_spacing"),
-                    "default_window_width": first.get("window_width"),
-                    "default_window_center": first.get("window_center"),
-                }
-            )
-        return out
 
     def list_instances(self, series_uid: str) -> list[dict[str, Any]]:
         """某 Series 所有切片（已按 Z 轴排序）。"""
@@ -163,6 +144,112 @@ class DicomIndexer:
             if sop_uid in idx.sop_to_path:
                 p = idx.sop_to_path[sop_uid]
                 return p if p.exists() else None
+        return None
+
+    # ------------------------------------------------------------------ #
+    # DICOM-Web 按 UID 查询（OHIF Viewer 需要）
+    # ------------------------------------------------------------------ #
+    def get_study_by_uid(self, study_uid: str) -> dict[str, Any] | None:
+        """按 StudyInstanceUID 查询 Study 元数据。"""
+        idx = self._find_study_by_uid(study_uid)
+        if idx is None:
+            return None
+        meta = dict(idx.study_meta)
+        meta["study_id"] = idx.study_id
+        meta["series_count"] = len(idx.series)
+        return meta
+
+    def get_series_by_uid(self, series_uid: str) -> dict[str, Any] | None:
+        """按 SeriesInstanceUID 查询 Series 元数据。"""
+        idx = self._find_study_by_series(series_uid)
+        if idx is None:
+            return None
+        instances = idx.series.get(series_uid, [])
+        if not instances:
+            return None
+        first = instances[0]
+        return {
+            "series_uid": series_uid,
+            "series_description": first.get("series_description"),
+            "modality": first.get("modality"),
+            "instance_count": len(instances),
+            "rows": first.get("rows"),
+            "columns": first.get("columns"),
+            "slice_thickness": first.get("slice_thickness"),
+            "pixel_spacing": first.get("pixel_spacing"),
+            "default_window_width": first.get("window_width"),
+            "default_window_center": first.get("window_center"),
+        }
+
+    def list_series_by_study_uid(self, study_uid: str) -> list[dict[str, Any]]:
+        """按 StudyInstanceUID 列出所有 Series。"""
+        idx = self._find_study_by_uid(study_uid)
+        if idx is None:
+            return []
+        out: list[dict[str, Any]] = []
+        for series_uid, instances in idx.series.items():
+            first = instances[0] if instances else {}
+            out.append(
+                {
+                    "series_uid": series_uid,
+                    "series_description": first.get("series_description"),
+                    "modality": first.get("modality"),
+                    "instance_count": len(instances),
+                    "rows": first.get("rows"),
+                    "columns": first.get("columns"),
+                    "slice_thickness": first.get("slice_thickness"),
+                    "pixel_spacing": first.get("pixel_spacing"),
+                    "default_window_width": first.get("window_width"),
+                    "default_window_center": first.get("window_center"),
+                }
+            )
+        return out
+
+    def get_instance_by_uid(self, sop_uid: str) -> dict[str, Any] | None:
+        """按 SOPInstanceUID 获取 Instance 元数据。"""
+        path = self.get_instance_path(sop_uid)
+        if path is None:
+            return None
+        for idx in self._studies.values():
+            self._refresh_if_stale(idx)
+            if sop_uid in idx.sop_to_index:
+                series_uid, index = idx.sop_to_index[sop_uid]
+                instances = idx.series.get(series_uid, [])
+                for i, inst in enumerate(instances):
+                    if inst["sop_uid"] == sop_uid:
+                        return {
+                            "sop_uid": inst["sop_uid"],
+                            "index": i + 1,
+                            "instance_number": inst.get("instance_number"),
+                            "position_z": inst.get("position_z"),
+                            "window_width": inst.get("window_width"),
+                            "window_center": inst.get("window_center"),
+                            "series_uid": series_uid,
+                        }
+        return None
+
+    def get_instance_dataset(self, sop_uid: str) -> pydicom.Dataset | None:
+        """按 SOPInstanceUID 获取完整 pydicom Dataset（供 metadata 接口使用）。"""
+        path = self.get_instance_path(sop_uid)
+        if path is None:
+            return None
+        try:
+            return pydicom.dcmread(str(path))
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ #
+    # UID 反向索引
+    # ------------------------------------------------------------------ #
+    def _find_study_by_uid(self, study_uid: str) -> _StudyIndex | None:
+        """按 StudyInstanceUID 查找 Study 索引。"""
+        # 确保所有 study 已扫描
+        self.list_studies()
+        study_id = self._study_uid_to_id.get(study_uid)
+        if study_id:
+            idx = self._studies.get(study_id)
+            if idx and idx.series:
+                return idx
         return None
 
     # ------------------------------------------------------------------ #
@@ -288,14 +375,19 @@ class DicomIndexer:
 
             # 取首个有效文件填充 study 级元数据
             if not study_meta:
+                uid = str(getattr(ds, "StudyInstanceUID", "")) or None
                 study_meta = {
                     "patient_id": getattr(ds, "PatientID", None),
                     "patient_name": _person_name(getattr(ds, "PatientName", None)),
-                    "study_uid": str(getattr(ds, "StudyInstanceUID", "")) or None,
+                    "study_uid": uid,
                     "study_description": getattr(ds, "StudyDescription", None),
                     "study_date": getattr(ds, "StudyDate", None),
                     "modality": modality or None,
                 }
+                # 填充 study_uid 反向索引
+                if uid:
+                    idx.study_uid = uid
+                    self._study_uid_to_id[uid] = idx.study_id
 
         # 每个 series 内按 Z 轴排序（核心），回退 InstanceNumber
         for uid, insts in series_map.items():

@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field
 
 
 class StudyOut(BaseModel):
-    """一次检查（对应 DICOM_DATA_DIR 下的一个子目录）。"""
+    """一次检查（按 StudyInstanceUID 分组，每个 UID 独立一行）。"""
 
-    study_id: str = Field(..., description="Study 标识（目录名）")
+    study_id: str = Field(..., description="Study 标识（通常为 StudyInstanceUID，匿名化时为目录名/文件名）")
     patient_id: str | None = Field(None, description="患者编号")
     patient_name: str | None = Field(None, description="患者姓名")
     study_uid: str | None = Field(None, description="StudyInstanceUID")

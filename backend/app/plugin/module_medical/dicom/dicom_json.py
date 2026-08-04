@@ -10,19 +10,19 @@ from typing import Any
 
 import pydicom
 from pydicom.dataset import Dataset
+from pydicom.multival import MultiValue
 from pydicom.sequence import Sequence
 from pydicom.valuerep import PersonName
 
 
+# 这些 VR 的值必须是数值（不是字符串，而是真正的数字）
+_NUMERIC_VRS = {"US", "SS", "UL", "SL", "FL", "FD", "DS", "IS", "AS"}
+
 # 这些 VR 的值需要用字符串表示
 _STRING_VRS = {
-    "AE", "AS", "CS", "DA", "DS", "DT", "IS", "LO", "LT", "MD",
-    "MO", "PN", "SH", "SL", "ST", "TM", "UC", "UI", "UR", "UT",
+    "AE", "CS", "DA", "DT", "LO", "LT", "MD",
+    "MO", "PN", "SH", "ST", "TM", "UC", "UI", "UR", "UT",
 }
-
-# 这些 VR 的值必须是数值
-_INT_VRS = {"US", "SS", "UL", "SL"}
-_FLOAT_VRS = {"FL", "FD"}
 
 # 需要用 base64 编码的二进制 VR
 _BINARY_VRS = {"OB", "OD", "OF", "OL", "OW", "OV"}
@@ -50,7 +50,16 @@ def _encode_value(elem: pydicom.DataElement) -> dict[str, Any] | None:
     if isinstance(val, PersonName):
         return {"vr": vr, "Value": [str(val)]}
 
-    # 多值类型（如 DS, IS, OB 等可能有多个值）
+    # MultiValue 类型（pydicom 多值属性，如 PixelSpacing, ImagePositionPatient 等）
+    if isinstance(val, MultiValue):
+        values = []
+        for v in val:
+            encoded = _encode_scalar(vr, v)
+            if encoded is not None:
+                values.append(encoded)
+        return {"vr": vr, "Value": values} if values else {"vr": vr}
+
+    # 普通列表/元组
     if isinstance(val, (list, tuple)):
         values = []
         for v in val:
@@ -71,20 +80,39 @@ def _encode_scalar(vr: str, val: Any) -> Any:
     if val is None:
         return None
 
+    # 数值类 VR（包括 DS, IS, AS 等，保持原始数值类型）
+    if vr in _NUMERIC_VRS:
+        # 已经是数值类型
+        if isinstance(val, (int, float)):
+            return float(val) if isinstance(val, float) else int(val)
+        # 尝试转为 float（处理 DSfloat, ISfloat 等 pydicom 自定义类型）
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            pass
+        # 字符串形式的数值
+        if isinstance(val, str):
+            try:
+                return float(val) if "." in val or "e" in val.lower() else int(val)
+            except (ValueError, TypeError):
+                return val
+        # bytes 形式
+        if isinstance(val, bytes):
+            try:
+                s = val.decode("utf-8")
+                return float(s) if "." in s or "e" in s.lower() else int(s)
+            except (ValueError, TypeError, UnicodeDecodeError):
+                return None
+        return val
+
     # 字符串类 VR
-    if vr in _STRING_VRS or vr.startswith(("US", "CS")):
+    if vr in _STRING_VRS:
         if isinstance(val, bytes):
             try:
                 return val.decode("utf-8")
             except UnicodeDecodeError:
                 return val.decode("latin-1")
         return str(val)
-
-    # 数值类 VR
-    if vr in _INT_VRS:
-        return int(val)
-    if vr in _FLOAT_VRS:
-        return float(val)
 
     # OB/OW 等二进制数据 - base64 编码
     if vr in _BINARY_VRS:
@@ -102,14 +130,25 @@ def _encode_scalar(vr: str, val: Any) -> Any:
     return str(val)
 
 
+# 这些 tag 在 metadata 响应中应该被排除（符合 DICOMweb 标准）
+_EXCLUDED_TAGS = {
+    0x7FE00010,  # PixelData
+}
+
+
 def dataset_to_dicom_json(ds: Dataset) -> dict[str, dict[str, Any]]:
     """将 pydicom Dataset 转为 DICOM JSON 对象。
 
     返回格式: {"0020000D": {"vr": "UI", "Value": ["1.2.3..."]}, ...}
+
+    注意：PixelData (7FE00010) 被排除，因为它太大且不符合 DICOMweb metadata 标准。
+    OHIF Viewer 应该通过 WADO-RS frames 接口或直接获取 DICOM 文件来获取像素数据。
     """
     result: dict[str, dict[str, Any]] = {}
     for elem in ds:
         if elem.tag.is_private:
+            continue
+        if elem.tag in _EXCLUDED_TAGS:
             continue
         key = _tag_to_key(elem.tag)
         encoded = _encode_value(elem)

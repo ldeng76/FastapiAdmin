@@ -26,6 +26,7 @@ DicomwebRouter = APIRouter(tags=["DICOMweb"])
 @DicomwebRouter.get("/dicom/viewer", response_class=HTMLResponse)
 def dicom_viewer():
     dicom_static_path = os.getenv("DICOM_STATIC_DIR")
+    print(dicom_static_path)
     if not dicom_static_path:
         raise HTTPException(status_code=500, detail="DICOM_STATIC_DIR 未配置")
     file_path = f"{dicom_static_path}/index.html"
@@ -43,9 +44,10 @@ def dicom_viewer():
 @DicomwebRouter.get(
     "/dicom/studies",
     summary="QIDO-RS: 查询 Study 列表",
-    description="返回所有 Study 的 DICOM JSON 数组，支持 PatientID/PatientName/StudyDate 过滤",
+    description="返回所有 Study 的 DICOM JSON 数组，支持 QIDO-RS 标准参数",
 )
 async def qido_query_studies(
+    study_instance_uids: Annotated[str | None, Query(description="StudyInstanceUIDs (逗号分隔)")] = None,
     patient_id: Annotated[str | None, Query(description="PatientID")] = None,
     patient_name: Annotated[str | None, Query(description="PatientName")] = None,
     study_date: Annotated[str | None, Query(description="StudyDate (YYYYMMDD)")] = None,
@@ -53,6 +55,7 @@ async def qido_query_studies(
 ) -> JSONResponse:
     """QIDO-RS: 查询 Study 列表。"""
     result = DicomService.query_studies(
+        study_instance_uids=study_instance_uids,
         patient_id=patient_id,
         patient_name=patient_name,
         study_date=study_date,
@@ -139,28 +142,12 @@ async def qido_query_instances_by_series(
     return JSONResponse(content=result, media_type="application/dicom+json")
 
 
-@DicomwebRouter.get(
-    "/dicom/instances/{sop_uid}",
-    summary="QIDO-RS: 查询单个 Instance",
-    description="按 SOPInstanceUID 查询单个 Instance 的 DICOM JSON",
-)
-async def qido_query_instance(
-    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
-) -> JSONResponse:
-    """QIDO-RS: 查询单个 Instance。"""
-    result = DicomService.query_instance(sop_uid)
-    if result is None:
-        return JSONResponse(
-            content={"error": "Instance not found"},
-            status_code=404,
-            media_type="application/dicom+json",
-        )
-    return JSONResponse(content=[result], media_type="application/dicom+json")
-
-
 # ======================================================================
 # WADO-RS：获取实例二进制 / 元数据 / 渲染图像
 # ======================================================================
+
+# 注意：/dicom/instances/{sop_uid} 路由必须返回 DICOM 文件（application/dicom），
+# 不能与 QIDO-RS 查询接口冲突。QIDO-RS 实例查询请使用 /metadata 路径。
 
 @DicomwebRouter.get(
     "/dicom/studies/{study_uid}/metadata",

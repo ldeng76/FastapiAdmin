@@ -11,6 +11,7 @@ import io
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from fastapi import status
 from pydicom.pixel_data_handlers.util import convert_color_space
 
@@ -31,6 +32,7 @@ class DicomService:
     @classmethod
     def query_studies(
         cls,
+        study_instance_uids: str | None = None,
         patient_id: str | None = None,
         patient_name: str | None = None,
         study_date: str | None = None,
@@ -38,19 +40,36 @@ class DicomService:
     ) -> list[dict[str, Any]]:
         """查询 Study 列表（DICOM JSON 格式）。
 
-        支持 OHIF 常用的查询参数：PatientID, PatientName, StudyDate, ModalitiesInStudy。
+        支持 OHIF QIDO-RS 参数：StudyInstanceUIDs, PatientID, PatientName, StudyDate, ModalitiesInStudy。
         """
         studies = indexer.list_studies()
         results: list[dict[str, Any]] = []
 
+        # 解析 StudyInstanceUIDs（支持逗号分隔多个 UID）
+        target_uids: set[str] | None = None
+        if study_instance_uids:
+            target_uids = set(study_instance_uids.split(","))
+
         for s in studies:
-            # 过滤
+            # 过滤 StudyInstanceUIDs
+            if target_uids:
+                study_uid = s.get("study_uid") or s.get("study_id")
+                if study_uid not in target_uids:
+                    continue
+
+            # 过滤 PatientID
             if patient_id and s.get("patient_id") != patient_id:
                 continue
+
+            # 过滤 PatientName
             if patient_name and patient_name.lower() not in (s.get("patient_name") or "").lower():
                 continue
+
+            # 过滤 StudyDate
             if study_date and s.get("study_date") != study_date:
                 continue
+
+            # 过滤 ModalitiesInStudy
             if modalities_in_study:
                 study_mods = s.get("modality", "") or ""
                 if study_mods not in modalities_in_study.split(","):
@@ -204,15 +223,31 @@ class DicomService:
         pixel_array = ds.pixel_array
 
         # 多帧支持
-        if frame_number is not None and frame_number > 0:
-            if pixel_array.ndim == 3:
-                if frame_number <= pixel_array.shape[0]:
-                    pixel_array = pixel_array[frame_number - 1]
+        if pixel_array.ndim == 3:
+            # 判断是否为多帧灰度数据 (frames, height, width)
+            if pixel_array.shape[2] not in (3, 4):
+                # 多帧灰度数据，取指定帧或第一帧
+                if frame_number is not None and frame_number > 0:
+                    if frame_number <= pixel_array.shape[0]:
+                        pixel_array = pixel_array[frame_number - 1]
+                    else:
+                        raise CustomException(
+                            msg=f"Frame {frame_number} 不存在",
+                            status_code=status.HTTP_404_NOT_FOUND,
+                        )
                 else:
-                    raise CustomException(
-                        msg=f"Frame {frame_number} 不存在",
-                        status_code=status.HTTP_404_NOT_FOUND,
-                    )
+                    # 默认取第一帧
+                    pixel_array = pixel_array[0]
+            else:
+                # RGB/RGBA 数据
+                if frame_number is not None and frame_number > 0:
+                    if frame_number <= pixel_array.shape[0]:
+                        pixel_array = pixel_array[frame_number - 1]
+                    else:
+                        raise CustomException(
+                            msg=f"Frame {frame_number} 不存在",
+                            status_code=status.HTTP_404_NOT_FOUND,
+                        )
 
         # 转换为 PIL Image
         bits_allocated = getattr(ds, "BitsAllocated", 8)
@@ -245,6 +280,10 @@ class DicomService:
                 msg="无法解码像素数据",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+        # MONOCHROME1 反色
+        if photometric == "MONOCHROME1":
+            img = PILImage.fromarray(255 - np.array(img))
 
         # 转为 PNG
         buf = io.BytesIO()
@@ -320,7 +359,7 @@ class DicomService:
 
         import pydicom
         try:
-            ds = pydicom.dcmread(str(file_path))
+            ds = pydicom.dcmread(str(file_path), force=True)
         except Exception as e:
             log.error("读取 DICOM 失败: %s", e)
             raise CustomException(
@@ -379,7 +418,7 @@ class DicomService:
 
         import pydicom
         try:
-            ds = pydicom.dcmread(str(file_path))
+            ds = pydicom.dcmread(str(file_path), force=True)
         except Exception as e:
             log.error("读取 DICOM 失败: %s", e)
             raise CustomException(

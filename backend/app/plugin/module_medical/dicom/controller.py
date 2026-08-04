@@ -26,7 +26,6 @@ DicomwebRouter = APIRouter(tags=["DICOMweb"])
 @DicomwebRouter.get("/dicom/viewer", response_class=HTMLResponse)
 def dicom_viewer():
     dicom_static_path = os.getenv("DICOM_STATIC_DIR")
-    print(dicom_static_path)
     if not dicom_static_path:
         raise HTTPException(status_code=500, detail="DICOM_STATIC_DIR 未配置")
     file_path = f"{dicom_static_path}/index.html"
@@ -47,15 +46,15 @@ def dicom_viewer():
     description="返回所有 Study 的 DICOM JSON 数组，支持 QIDO-RS 标准参数",
 )
 async def qido_query_studies(
-    study_instance_uids: Annotated[str | None, Query(description="StudyInstanceUIDs (逗号分隔)")] = None,
-    patient_id: Annotated[str | None, Query(description="PatientID")] = None,
-    patient_name: Annotated[str | None, Query(description="PatientName")] = None,
-    study_date: Annotated[str | None, Query(description="StudyDate (YYYYMMDD)")] = None,
-    modalities_in_study: Annotated[str | None, Query(description="ModalitiesInStudy (逗号分隔)")] = None,
+    study_instance_uid: Annotated[str | None, Query(alias="StudyInstanceUID", description="StudyInstanceUID")] = None,
+    patient_id: Annotated[str | None, Query(alias="PatientID", description="PatientID")] = None,
+    patient_name: Annotated[str | None, Query(alias="PatientName", description="PatientName")] = None,
+    study_date: Annotated[str | None, Query(alias="StudyDate", description="StudyDate (YYYYMMDD)")] = None,
+    modalities_in_study: Annotated[str | None, Query(alias="ModalitiesInStudy", description="ModalitiesInStudy (逗号分隔)")] = None,
 ) -> JSONResponse:
     """QIDO-RS: 查询 Study 列表。"""
     result = DicomService.query_studies(
-        study_instance_uids=study_instance_uids,
+        study_instance_uids=study_instance_uid,
         patient_id=patient_id,
         patient_name=patient_name,
         study_date=study_date,

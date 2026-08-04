@@ -463,7 +463,7 @@ class DicomIndexer:
                 patient_name = _person_name(getattr(ds, "PatientName", None))
                 patient_id = getattr(ds, "PatientID", None)
                 if not patient_id:
-                    patient_id = study_dir.name
+                    patient_id = fp.name
                 if not patient_name:
                     patient_name = fp.name
                 g["study_meta"] = {

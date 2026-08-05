@@ -78,7 +78,7 @@
           </el-col>
           <el-col :sm="8">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">患者性别例数</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">患者例数性别比</span></div>
                <FaRingChart
                 :data="genderCount"
                 :radius="['0%', '70%']"
@@ -91,7 +91,7 @@
         <el-row :gutter="20" class="mt-5">
           <el-col :sm="12">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">患者模态检查量</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">模态检查量比</span></div>
                <FaRingChart
                 :data="modalityCount"
                 :radius="['0%', '70%']"
@@ -102,7 +102,7 @@
           </el-col>
           <el-col :sm="12">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">患者检查量时间趋势</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">检查量时间趋势</span></div>
                <FaLineChart
                   :data="trendCount.data"
                   :xAxisData="trendCount.names"
@@ -275,7 +275,6 @@ onMounted(async function () {
   const dictKeyArr = [
     "med_sex",
     "med_exam_type",
-    "med_laterality",
     "med_smoking_status",
     "med_ethnicity",
     "med_blood_type_abo",

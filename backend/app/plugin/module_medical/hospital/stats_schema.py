@@ -33,6 +33,8 @@ class FiltersOut(BaseModel):
     gender: FilterOption | None = Field(None, description="按性别筛选")
     modality: FilterOption | None = Field(None, description="按模态筛选")
     age_bucket: FilterOption | None = Field(None, description="按年龄段筛选")
+    abo_blood_type: FilterOption | None = Field(None, description="按ABO血型筛选")
+    smoking_status: FilterOption | None = Field(None, description="按吸烟状态筛选")
     year_range: FilterOption | None = Field(None, description="按年份范围筛选")
 
 

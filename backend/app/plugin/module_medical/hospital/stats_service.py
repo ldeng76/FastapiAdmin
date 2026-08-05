@@ -23,11 +23,19 @@ class StatsService:
         gender: str | None = None,
         modality: str | None = None,
         age_bucket: str | None = None,
+        abo_blood_type: str | None = None,
+        smoking_status: str | None = None,
     ) -> dict:
         """获取仪表板全量概览（维度数组结构）。"""
         try:
             overview = await get_dashboard_overview(
-                auth.db, center=center, gender=gender, modality=modality, age_bucket=age_bucket
+                auth.db,
+                center=center,
+                gender=gender,
+                modality=modality,
+                age_bucket=age_bucket,
+                abo_blood_type=abo_blood_type,
+                smoking_status=smoking_status,
             )
             return DashboardOverviewOut(**overview).model_dump()
         except Exception as e:

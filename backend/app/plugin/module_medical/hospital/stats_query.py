@@ -1,6 +1,6 @@
 """脱敏数据统计查询层 — 基于 ETL2 落库的 lnrs_anon_* 表。
 
-为数据概览仪表板提供聚合统计，返回 {filters, kpis, dimensions} 结构（ADR-0007）。
+为数据概览仪表板提供聚合统计，返回 {kpis, dimensions} 结构（ADR-0007）。
 
 查询逻辑封装在 StatsQuery 类中：筛选条件作为实例属性统一管理，
 新增筛选参数只需扩展 __init__ + _patient_filters / _exam_filters。
@@ -29,15 +29,7 @@ AGE_BUCKETS = [
     (80, 200, "80+"),
 ]
 
-GENDER_OPTIONS = [
-    {"value": "0", "label": "未知"},
-    {"value": "1", "label": "男"},
-    {"value": "2", "label": "女"},
-    {"value": "9", "label": "其他"},
-]
-
 AGE_BUCKET_OPTIONS = [{"value": label, "label": label} for _, _, label in AGE_BUCKETS]
-
 
 def _not_deleted_patient():
     """lnrs_anon_patient 软删除过滤条件。"""
@@ -93,12 +85,16 @@ class StatsQuery:
         gender: str | None = None,
         modality: str | None = None,
         age_bucket: str | None = None,
+        abo_blood_type: str | None = None,
+        smoking_status: str | None = None,
     ) -> None:
         self.db = db
         self.center = center
         self.gender = gender
         self.modality = modality
         self.age_bucket = age_bucket
+        self.abo_blood_type = abo_blood_type
+        self.smoking_status = smoking_status
         self._ref_date = date.today()
 
     # ── 过滤条件构建 ──────────────────────────
@@ -107,13 +103,18 @@ class StatsQuery:
         """构建 patient 表的过滤条件列表。
 
         modality 通过子查询关联 exam 表；
-        age_bucket 通过年龄分桶 CASE 表达式过滤。
+        age_bucket 通过年龄分桶 CASE 表达式过滤；
+        gender / abo_blood_type / smoking_status 直接过滤 patient 表字段。
         """
         conditions = [_not_deleted_patient()]
         if self.center:
             conditions.append(AnonPatientModel.center_code == self.center)
         if self.gender:
             conditions.append(AnonPatientModel.sex == self.gender)
+        if self.abo_blood_type:
+            conditions.append(AnonPatientModel.abo_blood_type == self.abo_blood_type)
+        if self.smoking_status:
+            conditions.append(AnonPatientModel.smoking_status == self.smoking_status)
         if self.modality:
             conditions.append(
                 AnonPatientModel.patient_id.in_(
@@ -130,21 +131,29 @@ class StatsQuery:
     def _exam_filters(self) -> list:
         """构建 exam 表的过滤条件列表。
 
-        gender / age_bucket 通过 IN 子查询关联 patient 表；
-        modality 直接过滤 exam_type。
+        gender / age_bucket / abo_blood_type / smoking_status 通过 IN 子查询
+        关联 patient 表；modality 直接过滤 exam_type。
         """
         conditions = []
         if self.center:
             conditions.append(AnonExamModel.center_code == self.center)
         if self.modality:
             conditions.append(AnonExamModel.exam_type == self.modality)
-        if self.gender or self.age_bucket:
+        patient_attrs = (
+            self.gender or self.age_bucket
+            or self.abo_blood_type or self.smoking_status
+        )
+        if patient_attrs:
             sub = select(AnonPatientModel.patient_id).where(_not_deleted_patient())
             if self.gender:
                 sub = sub.where(AnonPatientModel.sex == self.gender)
             if self.age_bucket:
                 bucket_expr = _age_bucket_expr(self._ref_date)
                 sub = sub.where(bucket_expr == self.age_bucket)
+            if self.abo_blood_type:
+                sub = sub.where(AnonPatientModel.abo_blood_type == self.abo_blood_type)
+            if self.smoking_status:
+                sub = sub.where(AnonPatientModel.smoking_status == self.smoking_status)
             conditions.append(AnonExamModel.patient_id.in_(sub))
         return conditions
 
@@ -309,31 +318,6 @@ class StatsQuery:
         total_exams = await self.count_exams()
         centers = await self.distinct_centers()
         modalities = await self.distinct_modalities()
-        year_range = await self.exam_year_range()
-
-        # filters
-        filters = {
-            "center": {
-                "applied": self.center,
-                "options": centers,
-            },
-            "gender": {
-                "applied": self.gender,
-                "options": GENDER_OPTIONS,
-            },
-            "modality": {
-                "applied": self.modality,
-                "options": modalities,
-            },
-            "age_bucket": {
-                "applied": self.age_bucket,
-                "options": AGE_BUCKET_OPTIONS,
-            },
-            "year_range": {
-                "applied": None,
-                "options": year_range,
-            },
-        }
 
         # kpis
         kpis = [
@@ -356,7 +340,6 @@ class StatsQuery:
             })
 
         return {
-            "filters": filters,
             "kpis": kpis,
             "dimensions": dimensions,
         }
@@ -371,7 +354,17 @@ async def get_dashboard_overview(
     gender: str | None = None,
     modality: str | None = None,
     age_bucket: str | None = None,
+    abo_blood_type: str | None = None,
+    smoking_status: str | None = None,
 ) -> dict:
     """仪表板全量概览 — 委托给 StatsQuery。"""
-    query = StatsQuery(db, center=center, gender=gender, modality=modality, age_bucket=age_bucket)
+    query = StatsQuery(
+        db,
+        center=center,
+        gender=gender,
+        modality=modality,
+        age_bucket=age_bucket,
+        abo_blood_type=abo_blood_type,
+        smoking_status=smoking_status,
+    )
     return await query.get_overview()

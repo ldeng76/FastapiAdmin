@@ -36,10 +36,22 @@ async def get_overview_controller(
         None,
         description="年龄段筛选（0-17/18-29/30-39/40-49/50-59/60-69/70-79/80+）",
     ),
+    abo_blood_type: str | None = Query(
+        None, description="ABO血型筛选（1=A型, 2=B型, 3=O型, 4=AB型, 5=不详, 6=未查）"
+    ),
+    smoking_status: str | None = Query(
+        None, description="吸烟状态筛选（1=从不, 2=既往, 3=现在, 9=未知）"
+    ),
 ) -> JSONResponse:
     """仪表板全量概览（维度数组结构，ADR-0007）。"""
     result = await StatsService.get_overview_service(
-        auth=auth, center=center, gender=gender, modality=modality, age_bucket=age_bucket
+        auth=auth,
+        center=center,
+        gender=gender,
+        modality=modality,
+        age_bucket=age_bucket,
+        abo_blood_type=abo_blood_type,
+        smoking_status=smoking_status,
     )
     return SuccessResponse(data=result, msg="获取数据概览成功")
 

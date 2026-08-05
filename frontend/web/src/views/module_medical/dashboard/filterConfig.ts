@@ -23,36 +23,36 @@ const config: Array<FilterConfigType> = [
     children: [],
   },
   {
-    dict_label: "性别",
+    dict_label: "患者性别",
     dict_type:"med_sex",
     name :"gender",
     children: [],
   },
   {
-    dict_label: "年龄段",
+    dict_label: "患者年龄段",
     dict_type:"med_age",
     name :"age_bucket",
     children: [],
   },
-  {
-    dict_label: "吸烟状态",
-    dict_type:"med_smoking_status",
-    name :"smoking",
+    {
+    dict_label: "患者ABO血型",
+    dict_type:"med_blood_type_abo",
+    name :"abo_blood_type",
     children: [],
   },
   {
-    dict_label: "模态",
+    dict_label: "患者吸烟状态",
+    dict_type:"med_smoking_status",
+    name :"smoking_status",
+    children: [],
+  },
+  {
+    dict_label: "检查模态",
     dict_type:"med_exam_type",
     name :"modality",
     children: [],
-  },
-  {
-    dict_label: "偏侧性",
-    dict_type:"med_laterality",
-    name :"exam_laterality",
-    children: [],
-  },
-];
+  }
+]
 
 addConfigKey(config, null);
 

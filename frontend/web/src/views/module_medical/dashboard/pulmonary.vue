@@ -5,9 +5,9 @@
       <div style="position: relative">
         <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">
           <el-tab-pane label="数据概览" name="first"></el-tab-pane>
-          <el-tab-pane label="影像特征" name="second"></el-tab-pane>
-          <el-tab-pane label="病理与分子" name="third"></el-tab-pane>
-          <el-tab-pane label="生存随访" name="fourth"></el-tab-pane>
+<!--          <el-tab-pane label="影像特征" name="second"></el-tab-pane>-->
+<!--          <el-tab-pane label="病理与分子" name="third"></el-tab-pane>-->
+<!--          <el-tab-pane label="生存随访" name="fourth"></el-tab-pane>-->
         </el-tabs>
       </div>
     </el-header>
@@ -51,10 +51,68 @@
       <!-- 3. 右侧主要内容区域 -->
       <el-main class="layout-main">
         <el-row :gutter="20">
-          <el-col :sm="6"><Total label="患者总量" icon="ri:user-heart-fill" :value="16"/></el-col>
-          <el-col :sm="6"><Total label="检查总量" icon="ri:chat-check-fill" :value="81"/></el-col>
-          <el-col :sm="6"><Total label="来源中心" icon="ri:hospital-fill" :value="2"/></el-col>
-          <el-col :sm="6"><Total label="检查模态" icon="ri:mail-line" :value="5"/></el-col>
+          <el-col :sm="6" v-for="n in overviewCount" :key="n.key">
+            <Total :label="n.label" :icon="n.icon" :value="n.value"/>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20" class="mt-5">
+           <el-col :sm="8">
+            <el-card class="echarts-card">
+              <div class="pb-3.5"><span class="text-base font-medium">各中心病例数</span></div>
+              <FaHBarChart
+                :data="centerCount.data"
+                :xAxisData="centerCount.names"
+              />
+            </el-card>
+          </el-col>
+          <el-col :sm="8">
+            <el-card class="echarts-card">
+              <div class="pb-3.5"><span class="text-base font-medium">各年龄段例数</span></div>
+              <FaBarChart
+                :data="ageCount.data"
+                :xAxisData="ageCount.names"
+                :showLegend="true"
+                legendPosition="right"
+              />
+            </el-card>
+          </el-col>
+          <el-col :sm="8">
+            <el-card class="echarts-card">
+               <div class="pb-3.5"><span class="text-base font-medium">性别例数</span></div>
+               <FaRingChart
+                :data="genderCount"
+                :radius="['0%', '70%']"
+                :showLegend="true"
+                :showLabel="true"
+              />
+            </el-card>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20" class="mt-5">
+          <el-col :sm="12">
+            <el-card class="echarts-card">
+               <div class="pb-3.5"><span class="text-base font-medium">病理类型检查量</span></div>
+               <FaRingChart
+                :data="modalityCount"
+                :radius="['0%', '70%']"
+                :showLegend="true"
+                :showLabel="true"
+              />
+            </el-card>
+          </el-col>
+          <el-col :sm="12">
+            <el-card class="echarts-card">
+               <div class="pb-3.5"><span class="text-base font-medium">检查量时间趋势</span></div>
+               <FaLineChart
+                  :data="trendCount.data"
+                  :xAxisData="trendCount.names"
+                  :showLegend="true"
+                  :showAxisLabel="true"
+                  :showAxisLine="false"
+                  :showSplitLine="true"
+                />
+            </el-card>
+          </el-col>
         </el-row>
       </el-main>
     </el-container>
@@ -64,17 +122,42 @@
 <script setup lang="ts">
 import { CirclePlus, CircleCheckFilled } from "@element-plus/icons-vue";
 import filterConfig, { addConfigKey,FilterConfigType,FilterDictDataTable } from "./filterConfig.ts";
-import { ref, onMounted } from "vue";
+import { ref , onMounted } from "vue";
 import {useDictStore} from "@stores";
 import Total from "./components/Total.vue";
-let searchConfig = ref(filterConfig);
+import StatisticsAPI from "@api/module_medical/statistics.ts";
+import {StatsDimension, StatsKpi} from "@/types/module_medical/hospital.ts";
+import type {LineDataItem} from "@/types/component/chart.ts";
+
 const asideWidth = 300;
+const searchConfig = ref(filterConfig);
+const overviewCount = ref<StatsKpi[]>([]);
+const ageCount : any = ref({
+  names :[],
+  data :[]
+})
+const centerCount : any = ref({
+  names :[],
+  data :[]
+})
+const genderCount : any = ref([])
+const modalityCount : any = ref([])
+const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
+  names :[],
+  data :[]
+})
+
+const kpisIcon = {
+  total_patients:"ri:user-heart-fill",
+  total_exams:"ri:chat-check-fill",
+  center_count:"ri:hospital-fill",
+  modality_count:"ri:mail-line",
+}
 function clearSearch(item1:FilterConfigType,e:Event) {
   item1.currFilter = '';
   item1.currFilterText = '';
   e.stopPropagation()
 }
-
 function search(item1:FilterConfigType, item2:FilterDictDataTable) {
   item1.currFilter = item2.dict_value;
   item1.currFilterText = item2.dict_label;
@@ -91,14 +174,102 @@ onMounted(async function () {
     "med_blood_type_rh",
     "med_center",
   ]
+
   const dictMap = await dictStore.getDict(dictKeyArr);
   searchConfig.value.forEach(function (n){
     if(dictMap[n.dict_type] != null){
       n.children = dictMap[n.dict_type]
     }
   })
-
   addConfigKey(searchConfig.value, null);
+  const res = await StatisticsAPI.getOverview();
+
+  if(res?.data?.data){
+    const overview = res?.data?.data;
+    overviewCount.value = overview.kpis || []
+    overviewCount.value.forEach(function (n){
+      n.icon = kpisIcon[n.key as keyof typeof kpisIcon]
+    })
+    let dimensions:StatsDimension[] = overview.dimensions;
+    let gender_ratio = dimensions.find(function (n){
+      return n.key === 'gender_ratio'
+    })
+    let age_distribution = dimensions.find(function (n){
+      return n.key === 'age_distribution'
+    })
+    let center_distribution = dimensions.find(function (n){
+      return n.key === 'center_distribution'
+    })
+    let modality_counts = dimensions.find(function (n){
+      return n.key === 'modality_counts'
+    })
+    let exam_trend = dimensions.find(function (n){
+      return n.key === 'exam_trend'
+    })
+    if(age_distribution != null){
+      ageCount.value = {
+        names :age_distribution.data.map(function (n){
+           return n.label
+        }),
+        data :age_distribution.data.map(function (n){
+          return n.count
+        })
+      }
+    }
+    if(center_distribution != null){
+       centerCount.value = {
+        names :center_distribution.data.map(function (n){
+          let res = dictStore.getDictLabel('med_center', n.center_code);
+          if (typeof res !== "string" && res?.dict_label) {
+            return res?.dict_label
+          } else {
+            return n.center_code
+          }
+        }),
+        data :center_distribution.data.map(function (n){
+          return n.count
+        })
+      }
+    }
+    if(gender_ratio != null){
+      genderCount.value = gender_ratio.data.map(function (n){
+        return {
+          name : n.label,
+          value : n.count,
+          sex : n.sex
+        }
+      })
+    }
+    if(modality_counts != null){
+      modalityCount.value = modality_counts.data.map(function (n){
+        return {
+          name : n.label,
+          value : n.count,
+          type : n.exam_type,
+        }
+      })
+    }
+    if(exam_trend != null){
+      trendCount.value = {
+        names : exam_trend.data.map(function (n){
+           return n.year +"-" +n.month
+        }),
+        data : [
+          {
+            name:"",
+            data: exam_trend.data.map(function (n){
+              return n.count
+            }),
+            areaStyle: {
+              startOpacity: 0.08,
+              endOpacity: 0,
+            }
+          }
+        ]
+      }
+    }
+  }
+
 });
 </script>
 
@@ -126,5 +297,8 @@ onMounted(async function () {
   background-color: #f8f9fa;
   height: 100%;
   overflow-y: auto;
+}
+.echarts-card{
+  --el-card-border-radius : 20px !important;
 }
 </style>

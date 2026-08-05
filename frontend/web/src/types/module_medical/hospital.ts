@@ -199,6 +199,7 @@ export interface StatsKpi {
   key: string;
   label: string;
   value: number;
+  icon ?: string;
   format: "number" | "wan";
 }
 

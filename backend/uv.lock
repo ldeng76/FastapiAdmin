@@ -269,6 +269,7 @@ dependencies = [
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "sqlglot", extra = ["rs"] },
+    { name = "starlette" },
     { name = "structlog" },
     { name = "tomli", marker = "python_full_version < '3.15'" },
     { name = "typer" },
@@ -329,6 +330,7 @@ requires-dist = [
     { name = "rich", specifier = "==13.9.4" },
     { name = "sqlalchemy", specifier = "==2.0.45" },
     { name = "sqlglot", extras = ["rs"], specifier = "==27.8.0" },
+    { name = "starlette", specifier = ">=0.40.0" },
     { name = "structlog", specifier = "==25.5.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
     { name = "tomli", marker = "python_full_version < '3.15'", specifier = ">=2.0.1" },
@@ -1689,8 +1691,8 @@ name = "pendulum"
 version = "3.2.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
-    { name = "python-dateutil", marker = "python_full_version < '3.13'" },
-    { name = "tzdata", marker = "python_full_version < '3.13'" },
+    { name = "python-dateutil" },
+    { name = "tzdata" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/cb/72/9a51afa0a822b09e286c4cb827ed7b00bc818dac7bd11a5f161e493a217d/pendulum-3.2.0.tar.gz", hash = "sha256:e80feda2d10fa3ff8b1526715f7d33dcb7e08494b3088f2c8a3ac92d4a4331ce", size = 86912, upload-time = "2026-01-30T11:22:24.093Z" }
 wheels = [
@@ -3191,8 +3193,8 @@ name = "whenever"
 version = "0.9.5"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
-    { name = "tzdata", marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
-    { name = "tzlocal", marker = "python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux'" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzlocal", marker = "sys_platform != 'darwin' and sys_platform != 'linux'" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/cd/9a/6b12d5708a703010877bec0efc5172ae8a851516abc13cd4543ce4d02a20/whenever-0.9.5.tar.gz", hash = "sha256:9d8f2fbc70acdab98a99b81a2ac594ebd4cc68d5b3506b990729a5f0b04d0083", size = 259436, upload-time = "2026-01-11T19:47:51.608Z" }
 wheels = [

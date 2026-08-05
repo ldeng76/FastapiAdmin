@@ -14,7 +14,12 @@
     <el-container class="layout-body">
       <!-- 2. 左侧侧边栏 -->
       <el-aside :width="asideWidth+'px'" class="layout-aside">
+
+
         <el-menu class="el-menu-vertical" :unique-opened="true">
+          <div class="pt-2 pl-6 pr-2 pb-2">
+            <el-button type="danger" @click="clearSearch()" size="small" style="vertical-align: initial" plain>重置所有筛选条件</el-button>
+          </div>
           <el-sub-menu v-for="item1 in searchConfig" :index="item1.key || ''" :key="item1.key">
             <template #title>
               <div style="display: flex; justify-content: space-between;align-items: center;width: 100%;">
@@ -174,11 +179,20 @@ async function searchCall(){
   loading.close()
 }
 
-function clearSearch(item1:FilterConfigType,e:Event) {
-  item1.currFilter = '';
-  item1.currFilterText = '';
+function clearSearch(item1?:FilterConfigType,e?:Event) {
+  if(item1 && e){
+    item1.currFilter = '';
+    item1.currFilterText = '';
+    e.stopPropagation()
+  } else {
+    searchConfig.value.forEach(function (item1){
+      item1.currFilter = '';
+      item1.currFilterText = '';
+    })
+  }
+
   searchCall()
-  e.stopPropagation()
+
 }
 
 function search(item1:FilterConfigType, item2:FilterDictDataTable ) {

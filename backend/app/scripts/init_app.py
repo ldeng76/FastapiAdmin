@@ -217,9 +217,8 @@ def register_files(app: FastAPI) -> None:
             name=settings.STATIC_DIR,
         )
 
-    dicom_static_path = os.getenv("DICOM_STATIC_DIR")
-    if dicom_static_path and os.path.exists(dicom_static_path):
-        app.mount("/medical/dicom", StaticFiles(directory=dicom_static_path), name="dicom_static")
+    if settings.DICOM_STATIC_DIR:
+        app.mount("/medical/dicom", StaticFiles(directory=settings.DICOM_STATIC_DIR), name="dicom_static")
 
     # 挂载前端静态文件
     from pathlib import Path as _Path

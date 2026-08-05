@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi import HTTPException
 from .service import DicomService
 from fastapi.responses import HTMLResponse
+from app.config.setting import settings
 
 # DICOMweb 专用路由（不使用 OperationLogRoute，避免大文件日志）
 DicomwebRouter = APIRouter(tags=["DICOMweb"])
@@ -25,7 +26,7 @@ DicomwebRouter = APIRouter(tags=["DICOMweb"])
 @DicomwebRouter.get("/dicom/", response_class=HTMLResponse)
 @DicomwebRouter.get("/dicom/viewer", response_class=HTMLResponse)
 def dicom_viewer():
-    dicom_static_path = os.getenv("DICOM_STATIC_DIR")
+    dicom_static_path = settings.DICOM_STATIC_DIR
     if not dicom_static_path:
         raise HTTPException(status_code=500, detail="DICOM_STATIC_DIR 未配置")
     file_path = f"{dicom_static_path}/index.html"

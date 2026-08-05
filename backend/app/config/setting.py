@@ -235,7 +235,7 @@ class Settings(BaseSettings):
     # DICOM 数据根目录（其下每个子目录视为一个 Study）。
     # dev 默认指向示例数据；生产通过 .env 覆盖。
     DICOM_DATA_DIR: Path = BASE_DIR.parent / "docs" / "dicom_demo"
-
+    DICOM_STATIC_DIR:  Path = BASE_DIR.parent / "docs" / "dicom_static"
     # ================================================= #
     # ************** ETL-2 脱敏落库配置 (ADR-0001/0006) *** #
     # ================================================= #

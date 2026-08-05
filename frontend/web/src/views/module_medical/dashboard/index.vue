@@ -1,202 +1,335 @@
-<!-- 医疗数据概览仪表板 — ECharts 可视化 ETL2 脱敏落库的真实数据 -->
-<!-- 结构遵循 ADR-0007：{filters, kpis, dimensions} 维度数组，前端按 chart_type 动态选图 -->
 <template>
-  <div class="medical-dashboard" v-loading="loading && !error">
-    <!-- 错误态 -->
-    <div v-if="error" class="error-state">
-      <ElResult icon="error" title="加载失败" :sub-title="error">
-        <template #extra>
-          <ElButton type="primary" @click="loadData">重试</ElButton>
-        </template>
-      </ElResult>
-    </div>
-
-    <!-- 空状态 -->
-    <div v-else-if="!loading && isEmpty" class="empty-state">
-      <ElEmpty description="暂无数据，请等待 ETL2 导入" />
-    </div>
-
-    <template v-else>
-      <!-- 顶部 KPI 卡 -->
-      <div class="kpi-row">
-        <KpiCard
-          v-for="kpi in overview?.kpis"
-          :key="kpi.key"
-          :label="kpi.label"
-          :value="kpi.value"
-          :format="kpi.format"
-          :loading="loading"
-        />
+  <el-container class="layout-container">
+    <el-header class="top-header flex">
+      <el-text size="large" :style="'width: '+asideWidth+'px'">肺结节/肺癌科研数据管理仪表板</el-text>
+      <div style="position: relative">
+        <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">
+          <el-tab-pane label="数据概览" name="first"></el-tab-pane>
+<!--          <el-tab-pane label="影像特征" name="second"></el-tab-pane>-->
+<!--          <el-tab-pane label="病理与分子" name="third"></el-tab-pane>-->
+<!--          <el-tab-pane label="生存随访" name="fourth"></el-tab-pane>-->
+        </el-tabs>
       </div>
+    </el-header>
+    <el-container class="layout-body">
+      <!-- 2. 左侧侧边栏 -->
+      <el-aside :width="asideWidth+'px'" class="layout-aside">
+        <el-menu class="el-menu-vertical" :unique-opened="true">
+          <el-sub-menu v-for="item1 in searchConfig" :index="item1.key || ''" :key="item1.key">
+            <template #title>
+              <div style="display: flex; justify-content: space-between;align-items: center;width: 100%;">
+                <div>
+                  <el-icon v-if="item1.currFilter" :size="20">
+                    <CircleCheckFilled color="var(--color-success)" />
+                  </el-icon>
+                  <el-icon v-else :size="20">
+                    <CirclePlus />
+                  </el-icon>
+                  <el-text style="width: 160px" truncated>
+                    {{ item1.dict_label}}{{ item1.currFilterText ? "：" + item1.currFilterText : "" }}
+                  </el-text>
+                </div>
+                <div v-if="item1.currFilterText">
+                  <el-button type="danger" style="vertical-align: initial" size="small" @click="clearSearch(item1,$event)" plain>清除</el-button>
+                </div>
+              </div>
+            </template>
+            <el-menu-item
+              v-for="item2 in item1.children"
+              @click="search(item1, item2)"
+              :index="item2.key || ''"
+              :key="item2.key"
+              :class="{'selected' : item1.currFilter === item2.dict_value}"
+              class="menu-item"
+            >
+              {{ item2.dict_label }}
+            </el-menu-item>
+          </el-sub-menu>
+        </el-menu>
+      </el-aside>
 
-      <!-- 维度图表 — 动态渲染 -->
-      <div class="chart-grid">
-        <div
-          v-for="dim in overview?.dimensions"
-          :key="dim.key"
-          class="chart-card"
-          :class="{ 'full-width': dim.chart_type === 'line' }"
-          v-loading="loading"
-        >
-          <div class="chart-title">
-            <span class="title-dot" :style="{ background: getDimensionColor(dim.key) }" />
-            {{ dim.label }}
-          </div>
-          <!-- 有数据：按 chart_type 选组件 -->
-          <component
-            :is="getChartComponent(dim.chart_type)"
-            v-if="getChartComponent(dim.chart_type) && dim.data.length > 0"
-            :data="dim.data"
-          />
-          <!-- 无数据：占位 -->
-          <div v-else-if="dim.data.length === 0" class="chart-empty">
-            <ElEmpty description="暂无数据" :image-size="60" />
-          </div>
-          <!-- 未知 chart_type -->
-          <div v-else class="chart-empty">
-            <ElEmpty description="未知图表类型" :image-size="60" />
-          </div>
-        </div>
-      </div>
-    </template>
-  </div>
+      <!-- 3. 右侧主要内容区域 -->
+      <el-main class="layout-main">
+        <el-row :gutter="20">
+          <el-col :sm="6" v-for="n in overviewCount" :key="n.key">
+            <Total :label="n.label" :icon="n.icon" :value="n.value"/>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20" class="mt-5">
+           <el-col :sm="8">
+            <el-card class="echarts-card">
+              <div class="pb-3.5"><span class="text-base font-medium">各中心患者例数</span></div>
+              <FaHBarChart
+                :data="centerCount.data"
+                :xAxisData="centerCount.names"
+              />
+            </el-card>
+          </el-col>
+          <el-col :sm="8">
+            <el-card class="echarts-card">
+              <div class="pb-3.5"><span class="text-base font-medium">各年龄段患者例数</span></div>
+              <FaBarChart
+                :data="ageCount.data"
+                :xAxisData="ageCount.names"
+                :showLegend="true"
+                legendPosition="right"
+              />
+            </el-card>
+          </el-col>
+          <el-col :sm="8">
+            <el-card class="echarts-card">
+               <div class="pb-3.5"><span class="text-base font-medium">患者例数性别比</span></div>
+               <FaRingChart
+                :data="genderCount"
+                :radius="['0%', '70%']"
+                :showLegend="true"
+                :showLabel="true"
+              />
+            </el-card>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20" class="mt-5">
+          <el-col :sm="12">
+            <el-card class="echarts-card">
+               <div class="pb-3.5"><span class="text-base font-medium">模态检查量比</span></div>
+               <FaRingChart
+                :data="modalityCount"
+                :radius="['0%', '70%']"
+                :showLegend="true"
+                :showLabel="true"
+              />
+            </el-card>
+          </el-col>
+          <el-col :sm="12">
+            <el-card class="echarts-card">
+               <div class="pb-3.5"><span class="text-base font-medium">检查量时间趋势</span></div>
+               <FaLineChart
+                  :data="trendCount.data"
+                  :xAxisData="trendCount.names"
+                  :showLegend="true"
+                  :showAxisLabel="true"
+                  :showAxisLine="false"
+                  :showSplitLine="true"
+                />
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-main>
+    </el-container>
+  </el-container>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { CirclePlus, CircleCheckFilled } from "@element-plus/icons-vue";
+import filterConfig, {
+  addConfigKey,
+  FilterDictDataTable,
+  FilterConfigType
+} from "./filterConfig.ts";
+import { ref , onMounted } from "vue";
+import {useDictStore} from "@stores";
+import Total from "./components/Total.vue";
+import StatisticsAPI from "@api/module_medical/statistics.ts";
+import {StatsDimension, StatsKpi, type StatsOverview} from "@/types/module_medical/hospital.ts";
+import type {LineDataItem} from "@/types/component/chart.ts";
+import { ElLoading } from 'element-plus'
 
-import { ElButton, ElEmpty, ElResult } from "element-plus";
+const asideWidth = 300;
+const searchConfig = ref(filterConfig);
+const overviewCount = ref<StatsKpi[]>([]);
+const ageCount : any = ref({
+  names :[],
+  data :[]
+})
+const centerCount : any = ref({
+  names :[],
+  data :[]
+})
+const genderCount : any = ref([])
+const modalityCount : any = ref([])
+const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
+  names :[],
+  data :[]
+})
 
-import type { StatsOverview } from "@/types/module_medical/hospital";
-import StatisticsAPI from "@/api/module_medical/statistics";
-
-import KpiCard from "./components/KpiCard.vue";
-import { getChartComponent } from "./components/charts/chartRegistry";
-
-defineOptions({ name: "MedicalDashboard", inheritAttrs: false });
-
-const loading = ref(false);
-const error = ref<string | null>(null);
-const overview = ref<StatsOverview | null>(null);
-
-/** 是否完全无数据（KPIs 全部为 0） */
-const isEmpty = computed(() => {
-  if (!overview.value) return false;
-  const totalPatients = overview.value.kpis.find((k) => k.key === "total_patients")?.value ?? 0;
-  return totalPatients === 0;
-});
-
-/** 各维度的主题色 */
-const DIMENSION_COLORS: Record<string, string> = {
-  age_distribution: "#3b82f6",
-  gender_ratio: "#ec4899",
-  center_distribution: "#8b5cf6",
-  modality_counts: "#f59e0b",
-  exam_trend: "#10b981",
-};
-
-function getDimensionColor(key: string): string {
-  return DIMENSION_COLORS[key] || "#3b82f6";
+const kpisIcon = {
+  total_patients:"ri:user-heart-fill",
+  total_exams:"ri:chat-check-fill",
+  center_count:"ri:hospital-fill",
+  modality_count:"ri:mail-line",
+}
+async function searchCall(){
+  let params : any = {}
+  searchConfig.value.forEach(function (item){
+    if(item.currFilter && item.name){
+      params[item.name] = item.currFilter
+    }
+  })
+  const loading = ElLoading.service({
+    lock: true,
+    text: 'Loading',
+  })
+  let res = await StatisticsAPI.getOverview(params)
+  upDateChatsView(res?.data?.data)
+  loading.close()
 }
 
-/** 数据加载 */
-async function loadData() {
-  loading.value = true;
-  error.value = null;
-  try {
-    const res = await StatisticsAPI.getOverview();
-    overview.value = res.data?.data || null;
-  } catch (e: any) {
-    overview.value = null;
-    error.value = e?.msg || e?.message || "请求失败，请稍后重试";
-  } finally {
-    loading.value = false;
+function clearSearch(item1:FilterConfigType,e:Event) {
+  item1.currFilter = '';
+  item1.currFilterText = '';
+  searchCall()
+  e.stopPropagation()
+}
+
+function search(item1:FilterConfigType, item2:FilterDictDataTable ) {
+  item1.currFilter = item2.dict_value;
+  item1.currFilterText = item2.dict_label;
+  searchCall()
+}
+function upDateChatsView(overview:StatsOverview){
+   overviewCount.value = overview.kpis || []
+    overviewCount.value.forEach(function (n){
+      n.icon = kpisIcon[n.key as keyof typeof kpisIcon]
+    })
+    let dimensions:StatsDimension[] = overview.dimensions;
+    let gender_ratio = dimensions.find(function (n){
+      return n.key === 'gender_ratio'
+    })
+    let age_distribution = dimensions.find(function (n){
+      return n.key === 'age_distribution'
+    })
+    let center_distribution = dimensions.find(function (n){
+      return n.key === 'center_distribution'
+    })
+    let modality_counts = dimensions.find(function (n){
+      return n.key === 'modality_counts'
+    })
+    let exam_trend = dimensions.find(function (n){
+      return n.key === 'exam_trend'
+    })
+    if(age_distribution != null){
+      ageCount.value = {
+        names :age_distribution.data.map(function (n){
+           return n.label
+        }),
+        data :age_distribution.data.map(function (n){
+          return n.count
+        })
+      }
+    }
+    if(center_distribution != null){
+       centerCount.value = {
+        names :center_distribution.data.map(function (n){
+          let res = dictStore.getDictLabel('med_center', n.center_code);
+          if (typeof res !== "string" && res?.dict_label) {
+            return res?.dict_label
+          } else {
+            return n.center_code
+          }
+        }),
+        data :center_distribution.data.map(function (n){
+          return n.count
+        })
+      }
+    }
+    if(gender_ratio != null){
+      genderCount.value = gender_ratio.data.map(function (n){
+        return {
+          name : n.label,
+          value : n.count,
+          sex : n.sex
+        }
+      })
+    }
+    if(modality_counts != null){
+      modalityCount.value = modality_counts.data.map(function (n){
+        return {
+          name : n.label,
+          value : n.count,
+          type : n.exam_type,
+        }
+      })
+    }
+    if(exam_trend != null){
+      trendCount.value = {
+        names : exam_trend.data.map(function (n){
+           return n.year +"-" +n.month
+        }),
+        data : [
+          {
+            name:"",
+            data: exam_trend.data.map(function (n){
+              return n.count
+            }),
+            areaStyle: {
+              startOpacity: 0.08,
+              endOpacity: 0,
+            }
+          }
+        ]
+      }
+    }
+}
+const dictStore = useDictStore();
+onMounted(async function () {
+  const dictKeyArr = [
+    "med_sex",
+    "med_exam_type",
+    "med_smoking_status",
+    "med_ethnicity",
+    "med_blood_type_abo",
+    "med_blood_type_rh",
+    "med_center",
+  ]
+  const ageBuckets = await StatisticsAPI.getAgeBuckets()
+  const dictMap = await dictStore.getDict(dictKeyArr);
+  searchConfig.value.forEach(function (n){
+    if(dictMap[n.dict_type] != null){
+      n.children = dictMap[n.dict_type]
+    }
+  })
+  let med_age = searchConfig.value.find(function (n){
+    return n.dict_type === 'med_age'
+  })
+  if(med_age){
+    med_age.children = ageBuckets.map(function (n:any){
+      return {
+        dict_label:n.label,
+        dict_value:n.value,
+      }
+    })
   }
-}
-
-onMounted(loadData);
+  addConfigKey(searchConfig.value, null);
+  await searchCall();
+});
 </script>
 
 <style scoped>
-.medical-dashboard {
-  padding: 16px;
-  min-height: calc(100vh - 120px);
+.top-header{
+  background-color: #fff;
+  border-bottom: 1px solid #dddddd;
 }
-
-/* ── 错误态 ───────────────────────────────── */
-.error-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
+.layout-container {
+  height: 100vh;
+  background-color: #f0f2f5;
 }
-
-/* ── 空状态 ───────────────────────────────── */
-.empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
+.menu-item.is-active{
+  color: inherit;
 }
-
-/* ── KPI 卡行 ────────────────────────────── */
-.kpi-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 16px;
+.menu-item.selected{
+  color:  var(--el-menu-active-color);
 }
-
-/* ── 图表网格 ────────────────────────────── */
-.chart-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
+.el-menu-vertical {
+  height: 100%;
+  border-right: none;
 }
-
-.chart-card {
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  padding: 16px;
-  min-height: 360px;
+.layout-main {
+  padding: 20px;
+  background-color: #f8f9fa;
+  height: 100%;
+  overflow-y: auto;
 }
-
-.chart-card.full-width {
-  grid-column: 1 / -1;
-}
-
-.chart-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #e2e8f0;
-  margin-bottom: 8px;
-}
-
-.title-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.chart-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 280px;
-}
-
-/* ── 响应式 ───────────────────────────────── */
-@media (max-width: 1024px) {
-  .kpi-row {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .chart-grid {
-    grid-template-columns: 1fr;
-  }
+.echarts-card{
+  --el-card-border-radius : 20px !important;
 }
 </style>

@@ -377,7 +377,7 @@ export class RouteTransformer {
 
 // --- RouteRegistry：校验通过后批量 addRoute ---
 /** 与静态壳层冲突的一级 path 段，动态注册时跳过以免覆盖首页 / 仪表盘等 */
-const RESERVED_SHELL_SEGMENTS = new Set(["home", "profile", "changelog", "dashboard"]);
+const RESERVED_SHELL_SEGMENTS = new Set(["home", "profile", "changelog", "dashboard","medicalDashboard"]);
 
 function pathFirstSegment(path: string): string {
   return (

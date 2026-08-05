@@ -14,7 +14,7 @@
     <el-container class="layout-body">
       <!-- 2. 左侧侧边栏 -->
       <el-aside :width="asideWidth+'px'" class="layout-aside">
-        <el-menu class="el-menu-vertical">
+        <el-menu class="el-menu-vertical" :unique-opened="true">
           <el-sub-menu v-for="item1 in searchConfig" :index="item1.key || ''" :key="item1.key">
             <template #title>
               <div style="display: flex; justify-content: space-between;align-items: center;width: 100%;">
@@ -58,7 +58,7 @@
         <el-row :gutter="20" class="mt-5">
            <el-col :sm="8">
             <el-card class="echarts-card">
-              <div class="pb-3.5"><span class="text-base font-medium">各中心病例数</span></div>
+              <div class="pb-3.5"><span class="text-base font-medium">各中心患者例数</span></div>
               <FaHBarChart
                 :data="centerCount.data"
                 :xAxisData="centerCount.names"
@@ -67,7 +67,7 @@
           </el-col>
           <el-col :sm="8">
             <el-card class="echarts-card">
-              <div class="pb-3.5"><span class="text-base font-medium">各年龄段例数</span></div>
+              <div class="pb-3.5"><span class="text-base font-medium">各年龄段患者例数</span></div>
               <FaBarChart
                 :data="ageCount.data"
                 :xAxisData="ageCount.names"
@@ -78,7 +78,7 @@
           </el-col>
           <el-col :sm="8">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">性别例数</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">患者性别例数</span></div>
                <FaRingChart
                 :data="genderCount"
                 :radius="['0%', '70%']"
@@ -91,7 +91,7 @@
         <el-row :gutter="20" class="mt-5">
           <el-col :sm="12">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">病理类型检查量</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">患者模态检查量</span></div>
                <FaRingChart
                 :data="modalityCount"
                 :radius="['0%', '70%']"
@@ -102,7 +102,7 @@
           </el-col>
           <el-col :sm="12">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">检查量时间趋势</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">患者检查量时间趋势</span></div>
                <FaLineChart
                   :data="trendCount.data"
                   :xAxisData="trendCount.names"
@@ -121,13 +121,18 @@
 
 <script setup lang="ts">
 import { CirclePlus, CircleCheckFilled } from "@element-plus/icons-vue";
-import filterConfig, { addConfigKey,FilterConfigType,FilterDictDataTable } from "./filterConfig.ts";
+import filterConfig, {
+  addConfigKey,
+  FilterDictDataTable,
+  FilterConfigType
+} from "./filterConfig.ts";
 import { ref , onMounted } from "vue";
 import {useDictStore} from "@stores";
 import Total from "./components/Total.vue";
 import StatisticsAPI from "@api/module_medical/statistics.ts";
-import {StatsDimension, StatsKpi} from "@/types/module_medical/hospital.ts";
+import {StatsDimension, StatsKpi, type StatsOverview} from "@/types/module_medical/hospital.ts";
 import type {LineDataItem} from "@/types/component/chart.ts";
+import { ElLoading } from 'element-plus'
 
 const asideWidth = 300;
 const searchConfig = ref(filterConfig);
@@ -153,40 +158,36 @@ const kpisIcon = {
   center_count:"ri:hospital-fill",
   modality_count:"ri:mail-line",
 }
+async function searchCall(){
+  let params : any = {}
+  searchConfig.value.forEach(function (item){
+    if(item.currFilter && item.name){
+      params[item.name] = item.currFilter
+    }
+  })
+  const loading = ElLoading.service({
+    lock: true,
+    text: 'Loading',
+  })
+  let res = await StatisticsAPI.getOverview(params)
+  upDateChatsView(res?.data?.data)
+  loading.close()
+}
+
 function clearSearch(item1:FilterConfigType,e:Event) {
   item1.currFilter = '';
   item1.currFilterText = '';
+  searchCall()
   e.stopPropagation()
 }
-function search(item1:FilterConfigType, item2:FilterDictDataTable) {
+
+function search(item1:FilterConfigType, item2:FilterDictDataTable ) {
   item1.currFilter = item2.dict_value;
   item1.currFilterText = item2.dict_label;
+  searchCall()
 }
-const dictStore = useDictStore();
-onMounted(async function () {
-  const dictKeyArr = [
-    "med_sex",
-    "med_exam_type",
-    "med_laterality",
-    "med_smoking_status",
-    "med_ethnicity",
-    "med_blood_type_abo",
-    "med_blood_type_rh",
-    "med_center",
-  ]
-
-  const dictMap = await dictStore.getDict(dictKeyArr);
-  searchConfig.value.forEach(function (n){
-    if(dictMap[n.dict_type] != null){
-      n.children = dictMap[n.dict_type]
-    }
-  })
-  addConfigKey(searchConfig.value, null);
-  const res = await StatisticsAPI.getOverview();
-
-  if(res?.data?.data){
-    const overview = res?.data?.data;
-    overviewCount.value = overview.kpis || []
+function upDateChatsView(overview:StatsOverview){
+   overviewCount.value = overview.kpis || []
     overviewCount.value.forEach(function (n){
       n.icon = kpisIcon[n.key as keyof typeof kpisIcon]
     })
@@ -268,8 +269,39 @@ onMounted(async function () {
         ]
       }
     }
+}
+const dictStore = useDictStore();
+onMounted(async function () {
+  const dictKeyArr = [
+    "med_sex",
+    "med_exam_type",
+    "med_laterality",
+    "med_smoking_status",
+    "med_ethnicity",
+    "med_blood_type_abo",
+    "med_blood_type_rh",
+    "med_center",
+  ]
+  const ageBuckets = await StatisticsAPI.getAgeBuckets()
+  const dictMap = await dictStore.getDict(dictKeyArr);
+  searchConfig.value.forEach(function (n){
+    if(dictMap[n.dict_type] != null){
+      n.children = dictMap[n.dict_type]
+    }
+  })
+  let med_age = searchConfig.value.find(function (n){
+    return n.dict_type === 'med_age'
+  })
+  if(med_age){
+    med_age.children = ageBuckets.map(function (n:any){
+      return {
+        dict_label:n.label,
+        dict_value:n.value,
+      }
+    })
   }
-
+  addConfigKey(searchConfig.value, null);
+  await searchCall();
 });
 </script>
 

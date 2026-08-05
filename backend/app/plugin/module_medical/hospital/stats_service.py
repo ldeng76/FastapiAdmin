@@ -16,10 +16,19 @@ class StatsService:
     """数据统计服务"""
 
     @classmethod
-    async def get_overview_service(cls, auth: AuthSchema) -> dict:
+    async def get_overview_service(
+        cls,
+        auth: AuthSchema,
+        center: str | None = None,
+        gender: str | None = None,
+        modality: str | None = None,
+        age_bucket: str | None = None,
+    ) -> dict:
         """获取仪表板全量概览（维度数组结构）。"""
         try:
-            overview = await get_dashboard_overview(auth.db)
+            overview = await get_dashboard_overview(
+                auth.db, center=center, gender=gender, modality=modality, age_bucket=age_bucket
+            )
             return DashboardOverviewOut(**overview).model_dump()
         except Exception as e:
             log.error(f"[StatsService] 获取仪表板概览失败: {e!s}")

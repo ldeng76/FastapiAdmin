@@ -23,13 +23,16 @@ class FilterOption(BaseModel):
     """单个筛选项的当前状态 + 可选值。"""
 
     applied: str | None = Field(None, description="当前应用的筛选值（null=未筛选）")
-    options: list[str] | dict[str, Any] | None = Field(None, description="可选值列表")
+    options: list[str] | list[dict[str, Any]] | dict[str, Any] | None = Field(None, description="可选值列表")
 
 
 class FiltersOut(BaseModel):
     """仪表板可用的筛选条件。"""
 
     center: FilterOption | None = Field(None, description="按中心筛选")
+    gender: FilterOption | None = Field(None, description="按性别筛选")
+    modality: FilterOption | None = Field(None, description="按模态筛选")
+    age_bucket: FilterOption | None = Field(None, description="按年龄段筛选")
     year_range: FilterOption | None = Field(None, description="按年份范围筛选")
 
 

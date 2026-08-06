@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
-
+from datetime import date
 from pydantic import BaseModel, Field
 
 # 图表类型枚举 — 前端按此字段选渲染组件
@@ -26,7 +26,40 @@ class StatsFiltersIn(BaseModel):
     modality: str | None = Field(None, description="模态筛选（如 CT/MR/US 等）")
     age_bucket: str | None = Field(None, description="年龄段筛选（0-17/18-29/30-39/40-49/50-59/60-69/70-79/80+）")
     abo_blood_type: str | None = Field(None, description="ABO血型筛选（1=A型, 2=B型, 3=O型, 4=AB型, 5=不详, 6=未查）")
+    rh_blood_type: str | None = Field(None, description="RH血型筛选（1=阴性, 2=阳性, 3=不详, 4=未查）")
     smoking_status: str | None = Field(None, description="吸烟状态筛选（1=从不, 2=既往, 3=现在, 9=未知）")
+
+
+class PatientListQuery(StatsFiltersIn):
+    """患者列表查询参数（含筛选+分页）。"""
+    current: int = Field(1, ge=1, description="当前页")
+    size: int = Field(10, ge=1, le=200, description="每页数量")
+
+
+# ── 患者列表出参 ──────────────────────────────
+
+class PatientListItemOut(BaseModel):
+    """患者列表单项。"""
+    patient_id: str
+    center_code: str
+    birth_date: date | None
+    age: int | None
+    sex: str
+    ethnicity: str | None
+    smoking_status: str | None
+    abo_blood_type: str | None
+    rh_blood_type: str | None
+    native_place: str | None
+    bmi: float | None
+    first_nodule_date: date | None
+
+
+class PatientListOut(BaseModel):
+    """患者列表响应。"""
+    total: int
+    current: int
+    size: int
+    items: list[PatientListItemOut]
 
 
 # ── 筛选条件 ──────────────────────────────────
@@ -47,6 +80,7 @@ class FiltersOut(BaseModel):
     modality: FilterOption | None = Field(None, description="按模态筛选")
     age_bucket: FilterOption | None = Field(None, description="按年龄段筛选")
     abo_blood_type: FilterOption | None = Field(None, description="按ABO血型筛选")
+    rh_blood_type: FilterOption | None = Field(None, description="按RH血型筛选")
     smoking_status: FilterOption | None = Field(None, description="按吸烟状态筛选")
     year_range: FilterOption | None = Field(None, description="按年份范围筛选")
 

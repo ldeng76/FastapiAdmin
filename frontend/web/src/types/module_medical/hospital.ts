@@ -217,6 +217,25 @@ export interface StatsOverview {
   kpis: StatsKpi[];
   dimensions: StatsDimension[];
 }
+export interface PatientData{
+  total: number
+  current: number
+  size: number
+  items:PatientListItem[]
+}
+export interface PatientListItem{
+    patient_id: string
+    center_code: string
+    birth_date: Date | null
+    sex: string
+    ethnicity: string | null
+    smoking_status: string | null
+    abo_blood_type: string | null
+    rh_blood_type: string | null
+    native_place: string | null
+    bmi: number | null
+    first_nodule_date: Date | null
+}
 
 /** 状态徽标配置 */
 export const LIFECYCLE_STATUS_META: Record<

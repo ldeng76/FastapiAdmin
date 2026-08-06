@@ -10,12 +10,23 @@
 from __future__ import annotations
 
 from datetime import date
-
+from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .anon_model import AnonExamModel, AnonPatientModel
 from .stats_schema import StatsFiltersIn
+
+
+def _calc_age(birth_date: date | None, ref: date | None = None) -> int | None:
+    """根据出生日期计算年龄，birth_date 为空时返回 None。"""
+    if not birth_date:
+        return None
+    today = ref or date.today()
+    age = today.year - birth_date.year
+    if (today.month, today.day) < (birth_date.month, birth_date.day):
+        age -= 1
+    return age
 
 # ── 常量 ──────────────────────────────────────
 
@@ -90,6 +101,7 @@ class StatsQuery:
         self.modality = filters.modality if filters else None
         self.age_bucket = filters.age_bucket if filters else None
         self.abo_blood_type = filters.abo_blood_type if filters else None
+        self.rh_blood_type = filters.rh_blood_type if filters else None
         self.smoking_status = filters.smoking_status if filters else None
         self._ref_date = date.today()
 
@@ -109,6 +121,8 @@ class StatsQuery:
             conditions.append(AnonPatientModel.sex == self.gender)
         if self.abo_blood_type:
             conditions.append(AnonPatientModel.abo_blood_type == self.abo_blood_type)
+        if self.rh_blood_type:
+            conditions.append(AnonPatientModel.rh_blood_type == self.rh_blood_type)
         if self.smoking_status:
             conditions.append(AnonPatientModel.smoking_status == self.smoking_status)
         if self.modality:
@@ -137,7 +151,7 @@ class StatsQuery:
             conditions.append(AnonExamModel.exam_type == self.modality)
         patient_attrs = (
             self.gender or self.age_bucket
-            or self.abo_blood_type or self.smoking_status
+            or self.abo_blood_type or self.rh_blood_type or self.smoking_status
         )
         if patient_attrs:
             sub = select(AnonPatientModel.patient_id).where(_not_deleted_patient())
@@ -148,6 +162,8 @@ class StatsQuery:
                 sub = sub.where(bucket_expr == self.age_bucket)
             if self.abo_blood_type:
                 sub = sub.where(AnonPatientModel.abo_blood_type == self.abo_blood_type)
+            if self.rh_blood_type:
+                sub = sub.where(AnonPatientModel.rh_blood_type == self.rh_blood_type)
             if self.smoking_status:
                 sub = sub.where(AnonPatientModel.smoking_status == self.smoking_status)
             conditions.append(AnonExamModel.patient_id.in_(sub))
@@ -304,6 +320,57 @@ class StatsQuery:
             {"year": int(year), "month": int(month), "count": count}
             for year, month, count in result.all()
         ]
+
+    # ── 患者列表查询 ──────────────────────────
+
+    async def patient_list(
+        self, current: int = 1, size: int = 10
+    ) -> dict[str, Any]:
+        """分页查询患者列表。"""
+        conditions = self._patient_filters()
+        offset = (current - 1) * size
+
+        # 总数统计
+        total_stmt = (
+            select(func.count())
+            .select_from(AnonPatientModel)
+            .where(*conditions)
+        )
+        total = int((await self.db.execute(total_stmt)).scalar_one())
+
+        # 分页数据
+        list_stmt = (
+            select(
+                AnonPatientModel.patient_id,
+                AnonPatientModel.center_code,
+                AnonPatientModel.birth_date,
+                AnonPatientModel.sex,
+                AnonPatientModel.ethnicity,
+                AnonPatientModel.smoking_status,
+                AnonPatientModel.abo_blood_type,
+                AnonPatientModel.rh_blood_type,
+                AnonPatientModel.native_place,
+                AnonPatientModel.bmi,
+                AnonPatientModel.first_nodule_date,
+            )
+            .where(*conditions)
+            .order_by(AnonPatientModel.patient_id.desc())
+            .offset(offset)
+            .limit(size)
+        )
+        result = await self.db.execute(list_stmt)
+        items = []
+        for row in result.all():
+            item = row._asdict()
+            item["age"] = _calc_age(item.get("birth_date"))
+            items.append(item)
+
+        return {
+            "total": total,
+            "current": current,
+            "size": size,
+            "items": items,
+        }
 
     # ── 总出口 ────────────────────────────────
 

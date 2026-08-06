@@ -14,11 +14,9 @@
     <el-container class="layout-body">
       <!-- 2. 左侧侧边栏 -->
       <el-aside :width="asideWidth+'px'" class="layout-aside">
-
-
         <el-menu class="el-menu-vertical" :unique-opened="true">
           <div class="pt-2 pl-6 pr-2 pb-2">
-            <el-button type="danger" @click="clearSearch()" size="small" style="vertical-align: initial" plain>重置所有筛选条件</el-button>
+            <el-button type="warning" @click="clearSearch()" size="small" style="vertical-align: initial" plain>重置所有筛选条件</el-button>
           </div>
           <el-sub-menu v-for="item1 in searchConfig" :index="item1.key || ''" :key="item1.key">
             <template #title>
@@ -118,6 +116,58 @@
                 />
             </el-card>
           </el-col>
+          <el-col :sm="24" class="mt-5">
+            <el-card class="echarts-card">
+              <div class="pb-3.5"><span class="text-base font-medium">患者列表</span></div>
+              <FaTable
+                :data="patientData.data"
+                size="small"
+                :border="false"
+                :height="400"
+                :stripe="false"
+                :pagination="patientData.pagination"
+                @pagination:size-change="patientList.handlePatientSizeChange"
+                @pagination:current-change="patientList.handlePatientCurrentChange"
+              >
+                <ElTableColumn type="index" label="操作" width="120">
+                  <template #default="{ row: row }">
+                    <ElButton type="primary" size="small" @click="patientList.showDicom(row)" plain>查看影像</ElButton>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn prop="patient_id" label="患者编号" width="120" />
+                <ElTableColumn prop="center_code" label="中心">
+                  <template #default="{ row: row }">
+                    {{ getDictLabel('med_center', row.center_code) }}
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn prop="birth_date" label="出生日期" />
+                <ElTableColumn prop="age" label="年龄" />
+                <ElTableColumn prop="sex" label="性别">
+                  <template #default="{ row: row }">
+                    {{ getDictLabel('med_sex', row.sex) }}
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn prop="smoking_status" label="吸烟情况">
+                  <template #default="{ row: row }">
+                    {{ getDictLabel('med_smoking_status', row.smoking_status) }}
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn prop="abo_blood_type" label="ABO血型">
+                  <template #default="{ row: row }">
+                    {{ getDictLabel('med_blood_type_abo', row.abo_blood_type) }}
+                  </template>
+                </ElTableColumn>
+                 <ElTableColumn prop="rh_blood_type" label="RH血型">
+                  <template #default="{ row: row }">
+                    {{ getDictLabel('med_blood_type_rh', row.rh_blood_type) }}
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn prop="native_place" label="籍贯"/>
+                <ElTableColumn prop="bmi" label="BMI" />
+                <ElTableColumn prop="first_nodule_date" label="首次发现结节日期"  />
+              </FaTable>
+            </el-card>
+          </el-col>
         </el-row>
       </el-main>
     </el-container>
@@ -135,7 +185,13 @@ import { ref , onMounted } from "vue";
 import {useDictStore} from "@stores";
 import Total from "./components/Total.vue";
 import StatisticsAPI from "@api/module_medical/statistics.ts";
-import {StatsDimension, StatsKpi, type StatsOverview} from "@/types/module_medical/hospital.ts";
+import {
+  StatsDimension,
+  StatsKpi,
+  type StatsOverview,
+  PatientData,
+  PatientListItem,
+} from "@/types/module_medical/hospital.ts";
 import type {LineDataItem} from "@/types/component/chart.ts";
 import { ElLoading } from 'element-plus'
 
@@ -157,25 +213,79 @@ const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
   data :[]
 })
 
+const patientData = ref<{
+  pagination:any
+  data:PatientListItem[]
+}>({
+  pagination :{
+    current: 1,
+    size: 10,
+    total: 0
+  },
+  data:[]
+})
+
+const patientList = {
+  handlePatientSizeChange(newSize: number){
+    patientList.upData(1,newSize)
+  },
+  handlePatientCurrentChange(newCurrent: number){
+    patientList.upData(newCurrent,patientData.value.pagination.size)
+  },
+  showDicom(row:PatientListItem){
+    window.open('/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.2.826.0.1.3680043.8.498.86447994753366476735459521217412772967',"_blank")
+  },
+  upData(current:number,size:number){
+    let params = getSearchParams();
+    params.current = current
+    params.size = size
+    this.getData(params).then( (res)=>{
+      this.setData(res.data.data)
+       patientData.value.pagination.size = size
+       patientData.value.pagination.current = current
+    })
+  },
+  getData(params:object){
+    return StatisticsAPI.getPatients(Object.assign({
+      current : patientData.value.pagination.current,
+      size : patientData.value.pagination.size,
+    },params))
+  },
+  setData(newPatientData:PatientData){
+    if(newPatientData != null){
+      patientData.value.pagination = Object.assign({},patientData.value.pagination,{
+        total:newPatientData.total
+      })
+      patientData.value.data = newPatientData.items
+    }
+  }
+}
+
 const kpisIcon = {
   total_patients:"ri:user-heart-fill",
   total_exams:"ri:chat-check-fill",
   center_count:"ri:hospital-fill",
   modality_count:"ri:mail-line",
 }
-async function searchCall(){
+function getSearchParams(){
   let params : any = {}
   searchConfig.value.forEach(function (item){
     if(item.currFilter && item.name){
       params[item.name] = item.currFilter
     }
   })
+  return params
+}
+
+async function searchCall(){
   const loading = ElLoading.service({
     lock: true,
     text: 'Loading',
   })
+  let params = getSearchParams();
   let res = await StatisticsAPI.getOverview(params)
-  upDateChatsView(res?.data?.data)
+  let tableRes = await patientList.getData(params)
+  upDateChatsView(res?.data?.data,tableRes?.data?.data)
   loading.close()
 }
 
@@ -190,7 +300,6 @@ function clearSearch(item1?:FilterConfigType,e?:Event) {
       item1.currFilterText = '';
     })
   }
-
   searchCall()
 
 }
@@ -200,89 +309,98 @@ function search(item1:FilterConfigType, item2:FilterDictDataTable ) {
   item1.currFilterText = item2.dict_label;
   searchCall()
 }
-function upDateChatsView(overview:StatsOverview){
-   overviewCount.value = overview.kpis || []
-    overviewCount.value.forEach(function (n){
-      n.icon = kpisIcon[n.key as keyof typeof kpisIcon]
-    })
-    let dimensions:StatsDimension[] = overview.dimensions;
-    let gender_ratio = dimensions.find(function (n){
-      return n.key === 'gender_ratio'
-    })
-    let age_distribution = dimensions.find(function (n){
-      return n.key === 'age_distribution'
-    })
-    let center_distribution = dimensions.find(function (n){
-      return n.key === 'center_distribution'
-    })
-    let modality_counts = dimensions.find(function (n){
-      return n.key === 'modality_counts'
-    })
-    let exam_trend = dimensions.find(function (n){
-      return n.key === 'exam_trend'
-    })
-    if(age_distribution != null){
-      ageCount.value = {
-        names :age_distribution.data.map(function (n){
-           return n.label
-        }),
-        data :age_distribution.data.map(function (n){
-          return n.count
-        })
-      }
-    }
-    if(center_distribution != null){
-       centerCount.value = {
-        names :center_distribution.data.map(function (n){
-          let res = dictStore.getDictLabel('med_center', n.center_code);
-          if (typeof res !== "string" && res?.dict_label) {
-            return res?.dict_label
-          } else {
-            return n.center_code
-          }
-        }),
-        data :center_distribution.data.map(function (n){
-          return n.count
-        })
-      }
-    }
-    if(gender_ratio != null){
-      genderCount.value = gender_ratio.data.map(function (n){
-        return {
-          name : n.label,
-          value : n.count,
-          sex : n.sex
-        }
+function getDictLabel(key:string,value:any){
+  let item = dictStore.getDictLabel(key, value)
+  if(typeof item !== "string" && item?.dict_label){
+    return item.dict_label
+  } else {
+    return value
+  }
+}
+function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
+  overviewCount.value = overview.kpis || []
+  overviewCount.value.forEach(function (n){
+    n.icon = kpisIcon[n.key as keyof typeof kpisIcon]
+  })
+  let dimensions:StatsDimension[] = overview.dimensions;
+  let gender_ratio = dimensions.find(function (n){
+    return n.key === 'gender_ratio'
+  })
+  let age_distribution = dimensions.find(function (n){
+    return n.key === 'age_distribution'
+  })
+  let center_distribution = dimensions.find(function (n){
+    return n.key === 'center_distribution'
+  })
+  let modality_counts = dimensions.find(function (n){
+    return n.key === 'modality_counts'
+  })
+  let exam_trend = dimensions.find(function (n){
+    return n.key === 'exam_trend'
+  })
+  if(age_distribution != null){
+    ageCount.value = {
+      names :age_distribution.data.map(function (n){
+         return n.label
+      }),
+      data :age_distribution.data.map(function (n){
+        return n.count
       })
     }
-    if(modality_counts != null){
-      modalityCount.value = modality_counts.data.map(function (n){
-        return {
-          name : n.label,
-          value : n.count,
-          type : n.exam_type,
+  }
+  if(center_distribution != null){
+     centerCount.value = {
+      names :center_distribution.data.map(function (n){
+        let res = dictStore.getDictLabel('med_center', n.center_code);
+        if (typeof res !== "string" && res?.dict_label) {
+          return res?.dict_label
+        } else {
+          return n.center_code
         }
+      }),
+      data :center_distribution.data.map(function (n){
+        return n.count
       })
     }
-    if(exam_trend != null){
-      trendCount.value = {
-        names : exam_trend.data.map(function (n){
-           return n.year +"-" +n.month
-        }),
-        data : [
-          {
-            name:"",
-            data: exam_trend.data.map(function (n){
-              return n.count
-            }),
-            areaStyle: {
-              startOpacity: 0.08,
-              endOpacity: 0,
-            }
-          }
-        ]
+  }
+  if(gender_ratio != null){
+    genderCount.value = gender_ratio.data.map(function (n){
+      return {
+        name : n.label,
+        value : n.count,
+        sex : n.sex
       }
+    })
+  }
+  if(modality_counts != null){
+    modalityCount.value = modality_counts.data.map(function (n){
+      return {
+        name : n.label,
+        value : n.count,
+        type : n.exam_type,
+      }
+    })
+  }
+  if(exam_trend != null){
+    trendCount.value = {
+      names : exam_trend.data.map(function (n){
+         return n.year +"-" +n.month
+      }),
+      data : [
+        {
+          name:"",
+          data: exam_trend.data.map(function (n){
+            return n.count
+          }),
+          areaStyle: {
+            startOpacity: 0.08,
+            endOpacity: 0,
+          }
+        }
+      ]
     }
+  }
+  patientList.setData(newPatientData);
 }
 const dictStore = useDictStore();
 onMounted(async function () {

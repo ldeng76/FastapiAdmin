@@ -34,14 +34,20 @@ const config: Array<FilterConfigType> = [
     name :"age_bucket",
     children: [],
   },
-    {
+  {
     dict_label: "患者ABO血型",
     dict_type:"med_blood_type_abo",
     name :"abo_blood_type",
     children: [],
   },
   {
-    dict_label: "患者吸烟状态",
+    dict_label: "患者RH血型",
+    dict_type:"med_blood_type_rh",
+    name :"rh_blood_type",
+    children: [],
+  },
+  {
+    dict_label: "患者吸烟情况",
     dict_type:"med_smoking_status",
     name :"smoking_status",
     children: [],

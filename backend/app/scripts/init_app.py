@@ -218,6 +218,8 @@ def register_files(app: FastAPI) -> None:
         )
 
     if settings.DICOM_STATIC_DIR:
+        # 确保 DICOM 静态目录存在（与 STATIC_ROOT 同样的保护）
+        settings.DICOM_STATIC_DIR.mkdir(parents=True, exist_ok=True)
         app.mount("/medical/dicom", StaticFiles(directory=settings.DICOM_STATIC_DIR), name="dicom_static")
 
     # 挂载前端静态文件

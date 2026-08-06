@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -29,18 +30,48 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .anon_model import (
     AnonExamDetailModel,
     AnonExamModel,
+    AnonLabResultModel,
+    AnonOrderModel,
     AnonPatientModel,
     AnonReportTextModel,
     AnonSurgeryModel,
+    AnonVisitDetailModel,
     AnonVisitModel,
 )
+
+log = logging.getLogger(__name__)
+
+
+def _flatten_jsonb(row: dict[str, Any], jsonb_key: str) -> dict[str, Any]:
+    """把 row[jsonb_key] 这个 JSONB dict 顶层展开到 row 自身。
+
+    冲突策略：JSONB 子键覆盖现有顶层 key（设计意图：visit 全部字段都在
+    visit_detail_json 里，ORM 仅保留 anon_visit_id/visit_ordinal 等桥列）。
+    """
+    blob = row.pop(jsonb_key, None)
+    if not blob or not isinstance(blob, dict):
+        return row
+    for k, v in blob.items():
+        row[k] = v
+    return row
+
+
+def _tag_row(row: dict[str, Any], table_label: str, modality: str) -> dict[str, Any]:
+    """为前端折叠面板打分组标签。"""
+    row["_table"] = table_label
+    row["_modality"] = modality
+    return row
 
 # 4 模态分组（与 med_* 一致，方便前端理解）
 MODALITIES = ("clinical", "genetic", "pathology", "imaging")
 
 # exam_type → 模态分组
+# 数据来源：lnrs_anon_exam.exam_type 列（ETL-2 写入，已规整为英文枚举）
+# 珠江用 CT/Pathology/Genetic；省医用 Radiology/Ultrasound（也归影像类）
 EXAM_TYPE_TO_MODALITY: dict[str, str] = {
     "CT": "imaging",
+    "Radiology": "imaging",
+    "Ultrasound": "imaging",
     "Pathology": "pathology",
     "IHC": "pathology",
     "Genetic": "genetic",
@@ -143,18 +174,30 @@ async def anon_get_patient_detail(
     patient_id: str,
     center: str | None = None,
 ) -> dict[str, Any]:
-    """患者多模态详情（基于 anon 体系 4 表 JOIN：patient + exam + visit + surgery）。
+    """患者多模态详情（基于 anon 体系 8 表 JOIN）。
 
-    返回 shape（与 med_* 不同，前端需配合改造）：
+    返回 shape:
         {
-            "patient": {patient_id, center_code, sex, birth_date, ethnicity, ...},
-            "clinical": [{"anon_visit_id", "visit_ordinal", ...}],  # visit
-            "genetic": [{"anon_exam_id", "exam_type", "exam_date", "detail_json"}, ...],
-            "pathology": [...],  # exam_type in (Pathology, IHC)
-            "imaging": [...],    # exam_type=CT
+            "patient":   {基本字段, patient_meta JSONB 已顶层展开},
+            "clinical":  [就诊行(_table=就诊), 手术行(_table=手术),
+                          检验结果行(_table=检验结果), 医嘱行(_table=医嘱),
+                          未映射 exam 类型的 exam 行(_table=exam_type 检查)],
+            "genetic":   [exam 行],
+            "pathology": [exam 行],
+            "imaging":   [exam 行],
         }
+
+    每行：异构字段直平铺到顶层；JSONB 字段 (visit_detail_json / lab_detail_json /
+    order_detail_json / patient_meta / detail_json) 已就地顶层展开，键冲突时
+    保留原列、丢弃 JSONB 同名键（WARNING 日志）。
+
+    已知限制：
+    - AnonLabResultModel / AnonOrderModel / AnonVisitDetailModel 仅省医 schema
+      (0010-shengyi-anon-tables.sql) 建表；缺失时本函数 try/except 跳过。
+    - exam_detail 多行（多结节）按 detail_ordinal 拆成 N 个顶层行，
+      每行的 detail_type 作为 _table 后缀（如 "CT 检查(结节)"）。
     """
-    # 1) 患者基本信息
+    # 1) 患者基本信息（patient_meta JSONB 顶层展开）
     p_conditions = [
         AnonPatientModel.patient_id == patient_id,
         AnonPatientModel.deleted_at.is_(None),
@@ -167,80 +210,187 @@ async def anon_get_patient_detail(
     if not p_row:
         return {}
 
-    patient = _row_to_dict(p_row, PATIENT_DETAIL_COLS)
-
-    # 2) 就诊（clinical 模态的一部分）
-    visit_stmt = (
-        select(AnonVisitModel)
-        .where(AnonVisitModel.patient_id == patient_id)
-        .order_by(AnonVisitModel.created_at.desc())
+    patient = _flatten_jsonb(
+        _row_to_dict(p_row, PATIENT_DETAIL_COLS), "patient_meta"
     )
-    visit_rows = (await db.execute(visit_stmt)).scalars().all()
-    clinical_visits = [
-        {
-            "anon_visit_id": v.anon_visit_id,
-            "center_code": v.center_code,
-            "visit_ordinal": v.visit_ordinal,
-            "created_at": v.created_at.isoformat() if v.created_at else None,
-        }
-        for v in visit_rows
-    ]
-
-    # 3) 手术（clinical 模态的另部分）
-    surgery_stmt = (
-        select(AnonSurgeryModel)
-        .where(AnonSurgeryModel.patient_id == patient_id)
-        .order_by(AnonSurgeryModel.surgery_date.desc().nullslast())
-    )
-    surgery_rows = (await db.execute(surgery_stmt)).scalars().all()
-    clinical_surgeries = [
-        {
-            "surgery_id": s.surgery_id,
-            "anon_visit_id": s.anon_visit_id,
-            "center_code": s.center_code,
-            "surgery_date": s.surgery_date.isoformat() if s.surgery_date else None,
-            "procedure_name": s.procedure_name,
-            "resection_scope": s.resection_scope,
-            "surgical_approach": s.surgical_approach,
-            "procedure_detail": s.procedure_detail,
-        }
-        for s in surgery_rows
-    ]
-
-    # 4) 检查 + 报告 + 详情（按 exam_type 分模态）
-    exam_stmt = (
-        select(AnonExamModel, AnonReportTextModel, AnonExamDetailModel)
-        .outerjoin(AnonReportTextModel, AnonReportTextModel.anon_exam_id == AnonExamModel.anon_exam_id)
-        .outerjoin(AnonExamDetailModel, AnonExamDetailModel.anon_exam_id == AnonExamModel.anon_exam_id)
-        .where(AnonExamModel.patient_id == patient_id)
-        .order_by(AnonExamModel.exam_date.desc())
-    )
-    exam_rows = (await db.execute(exam_stmt)).all()
 
     modalities: dict[str, list[dict[str, Any]]] = {m: [] for m in MODALITIES}
 
-    for exam, report, detail in exam_rows:
-        modality = EXAM_TYPE_TO_MODALITY.get(exam.exam_type or "", "clinical")
-        # 临床模态的 exam 也归 clinical
+    # 2) 就诊（JOIN visit_detail 富信息；visit_detail_json 顶层展开，
+    #    不 select ORM 列 visit_category/admission_time 等避免与 JSONB 子键冲突）
+    try:
+        visit_stmt = (
+            select(
+                AnonVisitModel.anon_visit_id,
+                AnonVisitModel.visit_ordinal,
+                AnonVisitModel.center_code,
+                AnonVisitModel.created_at,
+                AnonVisitDetailModel.visit_detail_json,
+            )
+            .outerjoin(
+                AnonVisitDetailModel,
+                AnonVisitDetailModel.anon_visit_id == AnonVisitModel.anon_visit_id,
+            )
+            .where(AnonVisitModel.patient_id == patient_id)
+            .order_by(AnonVisitModel.created_at.desc())
+        )
+        for row in (await db.execute(visit_stmt)).mappings():
+            d = _flatten_jsonb(dict(row), "visit_detail_json")
+            for k in ("created_at", "admission_time", "discharge_date"):
+                if hasattr(d.get(k), "isoformat"):
+                    d[k] = d[k].isoformat()
+            modalities["clinical"].append(_tag_row(d, "就诊", "clinical"))
+    except Exception:
+        # 缺表（省医 schema 未建）时跳过
+        log.warning("就诊查询失败（可能 AnonVisitDetailModel 未建表）", exc_info=True)
+
+    # 3) 手术
+    surgery_stmt = (
+        select(
+            AnonSurgeryModel.surgery_id,
+            AnonSurgeryModel.anon_visit_id,
+            AnonSurgeryModel.center_code,
+            AnonSurgeryModel.surgery_date,
+            AnonSurgeryModel.procedure_name,
+            AnonSurgeryModel.resection_scope,
+            AnonSurgeryModel.surgical_approach,
+            AnonSurgeryModel.procedure_detail,
+        )
+        .where(AnonSurgeryModel.patient_id == patient_id)
+        .order_by(AnonSurgeryModel.surgery_date.desc().nullslast())
+    )
+    for row in (await db.execute(surgery_stmt)).mappings():
+        d = dict(row)
+        if hasattr(d.get("surgery_date"), "isoformat"):
+            d["surgery_date"] = d["surgery_date"].isoformat()
+        modalities["clinical"].append(_tag_row(d, "手术", "clinical"))
+
+    # 4) 检验结果（省医扩展表，可缺）
+    try:
+        lab_stmt = (
+            select(
+                AnonLabResultModel.lab_result_id,
+                AnonLabResultModel.anon_visit_id,
+                AnonLabResultModel.center_code,
+                AnonLabResultModel.report_id,
+                AnonLabResultModel.test_name,
+                AnonLabResultModel.item_name,
+                AnonLabResultModel.item_result,
+                AnonLabResultModel.item_result_value,
+                AnonLabResultModel.item_unit,
+                AnonLabResultModel.collection_time,
+                AnonLabResultModel.lab_detail_json,
+            )
+            .where(AnonLabResultModel.patient_id == patient_id)
+            .order_by(AnonLabResultModel.collection_time.desc().nullslast())
+        )
+        for row in (await db.execute(lab_stmt)).mappings():
+            d = _flatten_jsonb(dict(row), "lab_detail_json")
+            if hasattr(d.get("collection_time"), "isoformat"):
+                d["collection_time"] = d["collection_time"].isoformat()
+            modalities["clinical"].append(_tag_row(d, "检验结果", "clinical"))
+    except Exception:
+        log.warning("检验查询失败（可能 AnonLabResultModel 未建表）", exc_info=True)
+
+    # 5) 医嘱（省医扩展表，可缺）
+    try:
+        order_stmt = (
+            select(
+                AnonOrderModel.order_id,
+                AnonOrderModel.anon_visit_id,
+                AnonOrderModel.center_code,
+                AnonOrderModel.order_type,
+                AnonOrderModel.order_name,
+                AnonOrderModel.order_time,
+                AnonOrderModel.order_source,
+                AnonOrderModel.order_detail_json,
+            )
+            .where(AnonOrderModel.patient_id == patient_id)
+            .order_by(AnonOrderModel.order_time.desc().nullslast())
+        )
+        for row in (await db.execute(order_stmt)).mappings():
+            d = _flatten_jsonb(dict(row), "order_detail_json")
+            if hasattr(d.get("order_time"), "isoformat"):
+                d["order_time"] = d["order_time"].isoformat()
+            modalities["clinical"].append(_tag_row(d, "医嘱", "clinical"))
+    except Exception:
+        log.warning("医嘱查询失败（可能 AnonOrderModel 未建表）", exc_info=True)
+
+    # 6) 检查 + 报告 + 详情（按 exam_type 分模态）
+    exam_stmt = (
+        select(
+            AnonExamModel.anon_exam_id,
+            AnonExamModel.center_code,
+            AnonExamModel.exam_type,
+            AnonExamModel.exam_date,
+            AnonExamModel.anon_visit_id,
+            AnonReportTextModel.body_clean,
+            AnonReportTextModel.pii_replaced_count,
+            AnonReportTextModel.review_status,
+        )
+        .outerjoin(
+            AnonReportTextModel,
+            AnonReportTextModel.anon_exam_id == AnonExamModel.anon_exam_id,
+        )
+        .where(AnonExamModel.patient_id == patient_id)
+        .order_by(AnonExamModel.exam_date.desc())
+    )
+    exam_rows = (await db.execute(exam_stmt)).mappings().all()
+
+    # 6.1) exam_detail 多行子查询（避免笛卡尔积把 report_text 重复）
+    exam_ids = [r["anon_exam_id"] for r in exam_rows]
+    detail_by_exam: dict[str, list[AnonExamDetailModel]] = {eid: [] for eid in exam_ids}
+    if exam_ids:
+        detail_stmt = (
+            select(AnonExamDetailModel)
+            .where(AnonExamDetailModel.anon_exam_id.in_(exam_ids))
+            .order_by(
+                AnonExamDetailModel.anon_exam_id,
+                AnonExamDetailModel.detail_type,
+                AnonExamDetailModel.detail_ordinal,
+            )
+        )
+        for d_obj in (await db.execute(detail_stmt)).scalars().all():
+            detail_by_exam.setdefault(d_obj.anon_exam_id, []).append(d_obj)
+
+    for row in exam_rows:
+        modality = EXAM_TYPE_TO_MODALITY.get(row["exam_type"] or "", "clinical")
         if modality not in modalities:
             modality = "clinical"
-        modalities[modality].append(
-            {
-                "anon_exam_id": exam.anon_exam_id,
-                "exam_type": exam.exam_type,
-                "exam_date": exam.exam_date.isoformat() if exam.exam_date else None,
-                "anon_visit_id": exam.anon_visit_id,
-                "report_text": {
-                    "body_clean": report.body_clean if report else None,
-                    "pii_replaced_count": report.pii_replaced_count if report else 0,
-                    "review_status": report.review_status if report else None,
-                } if report else None,
-                "detail_json": detail.detail_json if detail else None,
-            }
-        )
-
-    # clinical 模态 = visits + surgeries
-    modalities["clinical"] = clinical_visits + clinical_surgeries + modalities["clinical"]
+        exam_date = row["exam_date"]
+        base = {
+            "anon_exam_id": row["anon_exam_id"],
+            "center_code": row["center_code"],
+            "exam_type": row["exam_type"],
+            "exam_date": exam_date.isoformat() if hasattr(exam_date, "isoformat") else exam_date,
+            "anon_visit_id": row["anon_visit_id"],
+            "report_text": {
+                "body_clean": row["body_clean"],
+                "pii_replaced_count": row["pii_replaced_count"] or 0,
+                "review_status": row["review_status"],
+            },
+        }
+        details = detail_by_exam.get(row["anon_exam_id"], [])
+        if not details:
+            modalities[modality].append(
+                _tag_row(base, f"{row['exam_type'] or '检查'} 检查", modality)
+            )
+        else:
+            # 每个 detail 行各出一行；多结节场景 detail_type='结节'，每行 n1/n2/n3
+            for det in details:
+                merged = {
+                    **base,
+                    "detail_type": det.detail_type,
+                    "detail_ordinal": det.detail_ordinal,
+                    "detail_json": det.detail_json,
+                }
+                merged = _flatten_jsonb(merged, "detail_json")
+                tbl = (
+                    f"{det.detail_type} #{det.detail_ordinal}"
+                    if det.detail_ordinal and det.detail_ordinal > 1
+                    else det.detail_type
+                )
+                modalities[modality].append(_tag_row(merged, tbl, modality))
 
     return {
         "patient": patient,

@@ -24,6 +24,7 @@ from app.core.dependencies import AuthPermission, redis_getter
 from app.core.router_class import OperationLogRoute
 
 from .anon_etl_http_service import AnonEtlService
+from .patient_controller import PatientRouter
 from .service import HospitalService
 from .schema import (
     HospitalCreate,
@@ -39,6 +40,7 @@ HospitalRouter = APIRouter(route_class=OperationLogRoute, tags=["医院管理"])
 
 # 将统计数据路由挂载到医院路由上（共享 /medical 前缀）
 HospitalRouter.include_router(StatsRouter)
+HospitalRouter.include_router(PatientRouter)
 
 
 @HospitalRouter.post(

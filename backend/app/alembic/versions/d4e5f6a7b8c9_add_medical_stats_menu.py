@@ -73,6 +73,11 @@ def upgrade() -> None:
         return
 
     # 插入仪表板菜单项
+    # 注意：route_name 必须与静态路由 `Dashboard`(`Dashboard` 在
+    # `frontend/web/src/router/staticRoutes.ts` 中作为 RootLayout 子路由)
+    # 区分；Vue Router 4 的 addRoute + hasRoute 按 name 判定冲突，
+    # 一旦同名整个「医学数据」顶级 addRoute 在守卫中提前 return，整棵树不注册。
+    # 改成唯一名 MedicalDashboard，与 `medical_menu.sql` 保持一致。
     conn.execute(
         menu_table.insert().values(
             parent_id=parent_id,
@@ -81,8 +86,8 @@ def upgrade() -> None:
             icon="ri:dashboard-line",
             order=0,  # 排在最前
             permission="module_medical:stats:query",
-            route_name="Dashboard",
-            route_path="dashboard",
+            route_name="MedicalDashboard",
+            route_path="/medical/dashboard",
             component_path="module_medical/dashboard/index",
             status="0",
             keep_alive=True,
@@ -99,5 +104,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     conn.execute(
-        sa.text("DELETE FROM sys_menu WHERE route_path = 'dashboard' AND component_path = 'module_medical/dashboard/index'")
+        sa.text(
+            "DELETE FROM sys_menu "
+            "WHERE route_path IN ('dashboard', '/medical/dashboard') "
+            "  AND component_path = 'module_medical/dashboard/index'"
+        )
     )

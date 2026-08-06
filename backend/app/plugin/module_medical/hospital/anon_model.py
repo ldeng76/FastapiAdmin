@@ -487,6 +487,153 @@ class AnonExamDetailModel(MappedBase):
     )
 
 
+class AnonVisitDetailModel(MappedBase):
+    """visit 1:1 富信息 — 省医 visit_record 的病案首页/病史/诊断/临床文档。
+
+    与 lnrs_anon_visit 轻量桥表 1:1：visit 桥只存关联键，visit_detail 存富信息。
+    visit_detail_json 忠实保留原始嵌套结构（inpatient_front_page/medical_history/
+    diagnoses[]/clinical_documents[]），不做语义对齐。
+    前置: lnrs_anon_visit 桥行由 ETL _import_visit_detail_table 自建（不依赖 surgery 反推）。
+    """
+
+    __tablename__ = "lnrs_anon_visit_detail"
+    __table_args__ = (
+        UniqueConstraint("anon_visit_id", name="lnrs_anon_uq_visit_detail"),
+        {"schema": "lnrs", "comment": "脱敏就诊富信息（visit 1:1，省医扩展）"},
+    )
+
+    visit_detail_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    anon_visit_id: Mapped[str] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_visit.anon_visit_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    visit_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    admission_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    discharge_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    admission_dept: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    discharge_dept: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    length_of_stay: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    visit_age: Mapped[float | None] = mapped_column(Numeric(5, 1), nullable=True)
+    visit_detail_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    source_visit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonLabResultModel(MappedBase):
+    """visit 级检验结果 — 省医 lab_result。
+
+    提取关键标量列（report_id/test_name/item_name/item_result/item_result_value/
+    item_unit/collection_time），test_detail 等剩余结构落 lab_detail_json。
+    anon_visit_id 可空: visit_id 缺失时退化为只挂 patient。
+    """
+
+    __tablename__ = "lnrs_anon_lab_result"
+    __table_args__ = (
+        UniqueConstraint("source_lab_hash", name="lnrs_anon_uq_lab_result"),
+        {"schema": "lnrs", "comment": "脱敏检验结果（visit 级，省医扩展）"},
+    )
+
+    lab_result_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    anon_visit_id: Mapped[str | None] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_visit.anon_visit_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    report_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    test_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    item_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    item_result: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_result_value: Mapped[float | None] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
+    item_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    collection_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    lab_detail_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_lab_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonOrderModel(MappedBase):
+    """visit 级医嘱 — 省医 drug_order + no_drug_order 合并，order_type 区分。
+
+    提取 order_name/order_time/order_source，order_detail struct 落 order_detail_json。
+    anon_visit_id 可空: visit_id 缺失时退化为只挂 patient。
+    """
+
+    __tablename__ = "lnrs_anon_order"
+    __table_args__ = (
+        UniqueConstraint("source_order_hash", name="lnrs_anon_uq_order"),
+        {"schema": "lnrs", "comment": "脱敏医嘱（visit 级，drug+non_drug 合并，省医扩展）"},
+    )
+
+    order_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    anon_visit_id: Mapped[str | None] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_visit.anon_visit_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    order_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    order_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    order_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    order_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    order_detail_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_order_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
 ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_ingest_batch": AnonIngestBatchModel,
     "lnrs_anon_patient": AnonPatientModel,
@@ -497,4 +644,7 @@ ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_visit": AnonVisitModel,
     "lnrs_anon_surgery": AnonSurgeryModel,
     "lnrs_anon_exam_detail": AnonExamDetailModel,
+    "lnrs_anon_visit_detail": AnonVisitDetailModel,
+    "lnrs_anon_lab_result": AnonLabResultModel,
+    "lnrs_anon_order": AnonOrderModel,
 }

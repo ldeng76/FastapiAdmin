@@ -20,5 +20,33 @@
 参考珠江新桥核心字段数据。
 
 
+--------------------
+2026-08-03 10:13:25
+https://cloud.tencent.com/developer/article/2592750  : TCGA数据平台介绍
+
+docs\demodata\TCGA样例数据-临床+基因.zip ：以上是TCGA开源数据集样本，平台建设效果参考TCGA网站： https://portal.gdc.cancer.gov/analysis_page?app= ，
+请调研一下这个SVS显示，我们中期考核前只实现基本功能，后面需要尽可能对标这个网站
+
+
+@dzy @陈耀煌 @陈磊 目前有301交割来的病理WSI图像（样例地址 /data/wlx/DATABASE/0605_small/301/WSI_sample），共约12000张，svs 格式，需用专业软件读取（data/20260727/01/SVS看图软件) 。
+1. 请调研一下WSI 如何在平台显示，如有困难，可直接开通数据使用页面，python openslide 或 pyvips 读取。 
+2. 省医近期有较大规模基因数据入库，FASTQ文本格式，也可biopython 读取。
+
+
+
+====
+2026-08-04 16:31:08
+增加一个字段存储原始的大文本内容
+
+Ultrasound ， Radiology 不考虑
+
+
+改为患者档案
+患者所有模态的数据 ：点击详情时显示 ， 多个选项卡可选择，以显示不同模态的详情数据。
+分模态来检索患者
+
+做数据表+图像数据的关联
+
+高效动态加载病理图
 
 

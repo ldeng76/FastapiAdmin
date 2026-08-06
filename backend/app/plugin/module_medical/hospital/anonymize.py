@@ -154,6 +154,28 @@ def source_surgery_hash(center_code: str, visit_id: str, procedure_name: str) ->
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def source_lab_hash(center_code: str, report_id: str, item_name: str) -> str:
+    """检验级源哈希，用于 anon_lab_result.source_lab_hash 幂等去重。
+
+    用 (center, report_id, item_name) 三元组裸 SHA256 —— 同一检验报告(report_id)
+    含多个单项(item_name)，需用 item_name 区分。
+    """
+    raw = f"{center_code}:{report_id}:{item_name}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def source_order_hash(
+    center_code: str, order_time: str, order_name: str, order_type: str
+) -> str:
+    """医嘱级源哈希，用于 anon_order.source_order_hash 幂等去重。
+
+    用 (center, order_time, order_name, order_type) 四元组裸 SHA256 —— 同一 visit
+    可有多条同名医嘱（如长期医嘱反复开立），用 order_time + order_type 区分。
+    """
+    raw = f"{center_code}:{order_time}:{order_name}:{order_type}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 # --------------------------------------------------------------------------- #
 # 密钥指纹 / Schema 指纹（写入 ingest_batch 便于审计回溯）
 # --------------------------------------------------------------------------- #

@@ -38,10 +38,13 @@ from app.core.logger import log
 from .anon_model import (
     AnonExamDetailModel,
     AnonExamModel,
+    AnonLabResultModel,
+    AnonOrderModel,
     AnonPatientModel,
     AnonPhiAuditModel,
     AnonReportTextModel,
     AnonSurgeryModel,
+    AnonVisitDetailModel,
     AnonVisitModel,
 )
 from .anonymize import (
@@ -52,6 +55,8 @@ from .anonymize import (
     compute_anon_visit_id,
     hash_for_audit,
     source_exam_hash,
+    source_lab_hash,
+    source_order_hash,
     source_surgery_hash,
     source_visit_hash,
     truncate_body,
@@ -106,6 +111,26 @@ def _row_to_dict(cols: list[str], row: tuple) -> dict[str, Any]:
     return {col: val for col, val in zip(cols, row)}
 
 
+def _get_nested(rd: dict[str, Any], path: str) -> Any:
+    """按点号路径取嵌套值（如 'exam_detail.findings'）。
+
+    支持省医 imaging_report 等表的正文/详情列在 struct 子字段的情况：
+    body_fields=["exam_detail.findings"] 时取 rd['exam_detail']['findings']。
+    无点号时退化为普通 rd.get(path)。
+    """
+    if "." not in path:
+        return rd.get(path)
+    cur: Any = rd
+    for seg in path.split("."):
+        if isinstance(cur, dict):
+            cur = cur.get(seg)
+        else:
+            return None
+        if cur is None:
+            return None
+    return cur
+
+
 def _clean_str(val: Any) -> str | None:
     """清洗字符串列：None/空串 → None，其余 strip。供 patient 稳定属性提取用。"""
     if val is None:
@@ -150,7 +175,8 @@ def _build_detail_json(rd: dict[str, Any], detail_fields: list[str]) -> dict[str
         v = rd.get(f)
         if v is not None:
             detail[f] = v
-    return detail
+    # date/datetime 转 ISO 字符串，使 JSONB 可序列化（省医 detail struct 含日期字段）
+    return _json_safe(detail)
 
 
 # 从 nodule_no 等字段解析数字序号：'n1'→1, 'n2'→2, '3'→3, None/无数字→1
@@ -171,6 +197,42 @@ def _parse_ordinal(val: Any) -> int:
         return 1
     m = _ORDINAL_DIGIT_RE.search(s)
     return int(m.group(1)) if m else 1
+
+
+# 省医数据用 1900-01-01 作为时间占位哨兵（lab.collection_time / order.order_stop_time）
+# 导入时需视为 NULL
+_SENTINEL_DATES = {date(1900, 1, 1)}
+
+
+def _clean_date(raw: Any) -> date | None:
+    """清洗日期列：解析 + 剔除省医 1900-01-01 占位哨兵。
+
+    复用 birth_date_from 的多格式解析能力，额外把 1900-01-01 当 NULL 处理。
+    """
+    if raw is None:
+        return None
+    d = birth_date_from(raw)
+    if d is None:
+        return None
+    return None if d in _SENTINEL_DATES else d
+
+
+def _json_safe(obj: Any) -> Any:
+    """递归把 dict/list 中的 date/datetime 转 ISO 字符串，使其可 JSON 序列化入 JSONB。
+
+    parquet 读出的 struct 含 date 类型（如 admission_time），直接塞 JSONB 会抛
+    "date is not JSON serializable"。本函数在构造 *_detail_json 时统一过一遍。
+    """
+    from datetime import date as _date, datetime as _dt
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, _dt):
+        return obj.isoformat()
+    if isinstance(obj, _date):
+        return obj.isoformat()
+    return obj
 
 
 # --------------------------------------------------------------------------- #
@@ -497,6 +559,94 @@ async def _batch_upsert_surgeries(
         await db.execute(stmt)
 
 
+async def _batch_upsert_visit_details(
+    db: AsyncSession,
+    *,
+    visit_detail_rows: list[dict[str, Any]],
+) -> None:
+    """批量 upsert visit_detail 行（省医扩展）。
+
+    冲突键：(anon_visit_id)（DDL UNIQUE lnrs_anon_uq_visit_detail，visit 1:1）。
+    """
+    if not visit_detail_rows:
+        return
+    for i in range(0, len(visit_detail_rows), BATCH_SIZE):
+        batch = visit_detail_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonVisitDetailModel.__table__).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_visit_detail",
+            set_={
+                "visit_category": stmt.excluded.visit_category,
+                "admission_time": stmt.excluded.admission_time,
+                "discharge_date": stmt.excluded.discharge_date,
+                "admission_dept": stmt.excluded.admission_dept,
+                "discharge_dept": stmt.excluded.discharge_dept,
+                "length_of_stay": stmt.excluded.length_of_stay,
+                "payment_method": stmt.excluded.payment_method,
+                "visit_age": stmt.excluded.visit_age,
+                "visit_detail_json": stmt.excluded.visit_detail_json,
+            },
+        )
+        await db.execute(stmt)
+
+
+async def _batch_upsert_lab_results(
+    db: AsyncSession,
+    *,
+    lab_rows: list[dict[str, Any]],
+) -> None:
+    """批量 upsert lab_result 行（省医扩展）。
+
+    冲突键：(anon_visit_id, source_lab_hash)（DDL UNIQUE lnrs_anon_uq_lab_result）。
+    anon_visit_id 可空：NULL 不参与 UNIQUE 冲突，visit 缺失的行各自独立插入。
+    """
+    if not lab_rows:
+        return
+    for i in range(0, len(lab_rows), BATCH_SIZE):
+        batch = lab_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonLabResultModel.__table__).values(batch)
+        # NULL anon_visit_id 的行无冲突键，用 (anon_visit_id, source_lab_hash) 仅命中非空 visit 行
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_lab_result",
+            set_={
+                "test_name": stmt.excluded.test_name,
+                "item_name": stmt.excluded.item_name,
+                "item_result": stmt.excluded.item_result,
+                "item_result_value": stmt.excluded.item_result_value,
+                "item_unit": stmt.excluded.item_unit,
+                "collection_time": stmt.excluded.collection_time,
+                "lab_detail_json": stmt.excluded.lab_detail_json,
+            },
+        )
+        await db.execute(stmt)
+
+
+async def _batch_upsert_orders(
+    db: AsyncSession,
+    *,
+    order_rows: list[dict[str, Any]],
+) -> None:
+    """批量 upsert order 行（省医扩展，drug + non_drug 合并）。
+
+    冲突键：(anon_visit_id, source_order_hash)（DDL UNIQUE lnrs_anon_uq_order）。
+    anon_visit_id 可空：NULL 不参与 UNIQUE 冲突。
+    """
+    if not order_rows:
+        return
+    for i in range(0, len(order_rows), BATCH_SIZE):
+        batch = order_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonOrderModel.__table__).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_order",
+            set_={
+                "order_time": stmt.excluded.order_time,
+                "order_source": stmt.excluded.order_source,
+                "order_detail_json": stmt.excluded.order_detail_json,
+            },
+        )
+        await db.execute(stmt)
+
+
 async def _write_phi_audit_batch(
     db: AsyncSession,
     *,
@@ -772,6 +922,7 @@ async def _import_exam_text_table(
     detail_fields: list[str] | None = None,
     date_field: str = "exam_date",
     ordinal_field: str | None = None,
+    date_lookup_field: str | None = None,
 ) -> int:
     """通用：把 nodule_imaging / pathology_specimen 批量落 exam + report_text。
 
@@ -779,6 +930,11 @@ async def _import_exam_text_table(
     （如 nodule_imaging 的 nodule_no）。设置后，每行 parquet 都生成
     一条 exam_detail（1:N），detail_ordinal 从 ordinal_field 值解析。
     不设置时沿用旧行为：同 anon_exam_id 只生成一条 detail（detail_ordinal=1）。
+
+    date_lookup_field（省医扩展）：date_field="" 时的反查来源。
+    - 未设：反查同 id_field 已入库 exam 的日期（ihc 复用 pathology specimen_id 日期）。
+    - "visit_id"：按 visit_id 反查 lnrs_anon_visit_detail.admission_time
+      （省医 pathology 所有日期列空，反查 visit 兜底）。
     """
     cols, rows = await _read_parquet_async(parquet_path)
     if not rows:
@@ -793,29 +949,55 @@ async def _import_exam_text_table(
     seen_exam_anon: set[str] = set()  # 同源重复 exam_id 去重（zhujiang path 12 个重复）
     detail_rows: list[dict[str, Any]] = []
     seen_detail_keys: set[tuple[str, str, int]] = set()  # (anon_exam_id, detail_type, ordinal) 去重
-    # ihc 等无日期列的表：预加载同 id_field 已入库 exam 的日期，供反查
+    # date_field="" 时预加载反查表：exam_date_lookup（同 id_field exam 日期）
+    # 或 visit_date_lookup（date_lookup_field="visit_id" 时按 visit_id 反查 visit_detail 日期）
     exam_date_lookup: dict[str, date] = {}
+    visit_date_lookup: dict[str, date] = {}
     if not date_field:
-        anon_exam_ids_for_lookup = [
-            compute_anon_exam_id(center_code, str(_row_to_dict(cols, row).get(id_field)))
-            for row in rows
-            if _row_to_dict(cols, row).get(id_field)
-        ]
-        if anon_exam_ids_for_lookup:
-            stmt = select(AnonExamModel.anon_exam_id, AnonExamModel.exam_date).where(
-                AnonExamModel.anon_exam_id.in_(anon_exam_ids_for_lookup)
-            )
-            for row in (await db.execute(stmt)).fetchall():
-                exam_date_lookup[row.anon_exam_id] = row.exam_date
+        if date_lookup_field == "visit_id":
+            # 省医 pathology：按 visit_id 反查 visit_detail.admission_time
+            visit_ids = [
+                str(v) for v in (
+                    _row_to_dict(cols, row).get(date_lookup_field) for row in rows
+                ) if v
+            ]
+            if visit_ids:
+                anon_visit_ids = {
+                    compute_anon_visit_id(center_code, v): v for v in set(visit_ids)
+                }
+                stmt = select(
+                    AnonVisitDetailModel.anon_visit_id,
+                    AnonVisitDetailModel.admission_time,
+                ).where(AnonVisitDetailModel.anon_visit_id.in_(list(anon_visit_ids.keys())))
+                for r in (await db.execute(stmt)).fetchall():
+                    if r.admission_time:
+                        visit_date_lookup[anon_visit_ids[r.anon_visit_id]] = r.admission_time
+        else:
+            # ihc 等无日期列的表：预加载同 id_field 已入库 exam 的日期，供反查
+            anon_exam_ids_for_lookup = [
+                compute_anon_exam_id(center_code, str(_row_to_dict(cols, row).get(id_field)))
+                for row in rows
+                if _row_to_dict(cols, row).get(id_field)
+            ]
+            if anon_exam_ids_for_lookup:
+                stmt = select(AnonExamModel.anon_exam_id, AnonExamModel.exam_date).where(
+                    AnonExamModel.anon_exam_id.in_(anon_exam_ids_for_lookup)
+                )
+                for row in (await db.execute(stmt)).fetchall():
+                    exam_date_lookup[row.anon_exam_id] = row.exam_date
     imported = 0
 
     for row in rows:
         rd = _row_to_dict(cols, row)
         local_pid = rd.get("patient_id")
         local_exam = rd.get(id_field)
-        # 取检查日期：优先 date_field 指定列，无 date_field 时反查已入库 exam
+        # 取检查日期：优先 date_field 指定列，无 date_field 时反查
         if date_field:
             exam_date = birth_date_from(rd.get(date_field))
+        elif date_lookup_field == "visit_id":
+            # 省医 pathology：按本行 visit_id 反查 visit admission_time
+            vid = rd.get(date_lookup_field)
+            exam_date = visit_date_lookup.get(str(vid)) if vid else None
         else:
             try:
                 aeid = compute_anon_exam_id(center_code, str(local_exam)) if local_exam else None
@@ -888,10 +1070,10 @@ async def _import_exam_text_table(
             }
         )
 
-        # 拼接正文
+        # 拼接正文（支持点号路径访问嵌套 struct，如 exam_detail.findings）
         parts: list[str] = []
         for f in body_fields:
-            v = rd.get(f)
+            v = _get_nested(rd, f)
             if v:
                 parts.append(str(v))
         body = truncate_body("\n\n".join(parts))
@@ -918,12 +1100,13 @@ async def _import_exam_text_table(
             }
         )
         for f in body_fields:
-            if rd.get(f):
+            v = _get_nested(rd, f)
+            if v:
                 audit_records.append(
                     {
                         "source_table": src_table,
                         "source_field": f,
-                        "source_hash": hash_for_audit(rd.get(f)),
+                        "source_hash": hash_for_audit(v),
                         "strategy": "llm_replace",
                         "confidence": 0.0,
                     }
@@ -1077,32 +1260,455 @@ async def _import_surgery_table(
 
 
 # --------------------------------------------------------------------------- #
+# 省医扩展导入函数：visit_detail / lab / order
+# 珠江无需这些表，函数独立于 zhujiang 链路，不影响既有逻辑。
+# --------------------------------------------------------------------------- #
+
+
+async def _import_visit_detail_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    id_field: str,
+    date_field: str,
+    batch_id: str,
+) -> int:
+    """导入 visit_record.parquet → lnrs_anon_visit(桥) + lnrs_anon_visit_detail(富信息)。
+
+    省医特有：visit_record 含病案首页/病史/诊断数组/临床文档等富信息。
+    本函数**自建 visit 桥**（照抄 surgery 三步范式），不依赖 surgery 反推——
+    因为 visit_record 的 visit 集合 ⊋ surgery 涉及的 visit，且 visit_record 历史上
+    被引擎显式跳过（ADR-0006 visit 桥未启用）。visit_detail 与 visit 桥 1:1。
+
+    visit_detail_json 忠实保留原始嵌套结构（inpatient_front_page/medical_history/
+    diagnoses[]/clinical_documents[]），不做语义对齐。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    visit_patient_records: list[dict[str, Any]] = []
+    visit_records: list[dict[str, Any]] = []
+    detail_rows: list[dict[str, Any]] = []
+    seen_visit_hash: set[str] = set()  # 同源 visit 去重
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        visit_id = rd.get(id_field) or rd.get("visit_id")
+
+        if not local_pid or not visit_id:
+            continue
+
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+            anon_visit_id = compute_anon_visit_id(center_code, str(visit_id))
+        except ValueError as e:
+            log.warning(
+                f"ETL2: 跳过非法 ID center={center_code} pid={local_pid!r} "
+                f"visit={visit_id!r}: {e}"
+            )
+            continue
+
+        src_v_hash = source_visit_hash(center_code, str(visit_id))
+        if src_v_hash in seen_visit_hash:
+            continue
+        seen_visit_hash.add(src_v_hash)
+
+        visit_patient_records.append(
+            {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+        )
+        visit_records.append(
+            {
+                "visit_id": str(visit_id),
+                "anon_visit_id": anon_visit_id,
+                "source_visit_hash": src_v_hash,
+                "_anon_id": anon_id,
+            }
+        )
+
+        # 富信息列：提取标量，剩余整体序列化进 visit_detail_json
+        visit_detail_json: dict[str, Any] = {}
+        # 不放入提取列的键集合，剩余全进 JSONB
+        extracted_keys = {"patient_id", id_field, "visit_id"}
+        for k, v in rd.items():
+            if k not in extracted_keys and v is not None:
+                visit_detail_json[k] = v
+        # date/datetime 转 ISO 字符串，使 JSONB 可序列化
+        visit_detail_json = _json_safe(visit_detail_json)
+
+        detail_rows.append(
+            {
+                "anon_visit_id": anon_visit_id,
+                "patient_id": None,  # 占位，回填
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "visit_category": _clean_str(rd.get("visit_category")),
+                "admission_time": _clean_date(rd.get(date_field) or rd.get("admission_time")),
+                "discharge_date": _clean_date(rd.get("discharge_date")),
+                "admission_dept": _clean_str(rd.get("admission_dept")),
+                "discharge_dept": _clean_str(rd.get("discharge_dept")),
+                "length_of_stay": int(rd["length_of_stay"])
+                if rd.get("length_of_stay") is not None
+                else None,
+                "payment_method": _clean_str(rd.get("payment_method")),
+                "visit_age": float(rd["visit_age"])
+                if rd.get("visit_age") is not None
+                else None,
+                "visit_detail_json": visit_detail_json,
+                "source_visit_hash": src_v_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    # 1. 占位 patient（确保 FK）
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=visit_patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    # 2. 回填 patient_id + 建 visit 桥
+    for vr in visit_records:
+        vr["patient_id"] = pid_map[vr["_anon_id"]]
+        del vr["_anon_id"]
+    for dr in detail_rows:
+        dr["patient_id"] = pid_map[dr["_anon_id"]]
+        del dr["_anon_id"]
+    await _batch_upsert_visits(
+        db, center_code=center_code, visit_records=visit_records, batch_id=batch_id
+    )
+    # 3. 写 visit_detail
+    await _batch_upsert_visit_details(db, visit_detail_rows=detail_rows)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 visit_detail")
+    return imported
+
+
+async def _import_lab_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    id_field: str,
+    batch_id: str,
+) -> int:
+    """导入 lab_result.parquet → lnrs_anon_lab_result（省医扩展）。
+
+    挂在 visit 下（anon_visit_id 可空，visit_id 缺失时退化为只挂 patient）。
+    守卫顺序：先无条件收集 patient 占位，再按 visit_id 决定是否建桥——
+    避免照抄 surgery 三连守卫导致 visit_id 为空时连 patient 占位也建不了。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    # 预读已入库 visit 桥：visit_id → anon_visit_id（本批及历史）
+    visit_id_set = set()
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        vid = rd.get("visit_id")
+        if vid:
+            visit_id_set.add(str(vid))
+    visit_lookup: dict[str, str] = {}
+    if visit_id_set:
+        anon_visit_ids = {
+            compute_anon_visit_id(center_code, v): v for v in visit_id_set
+        }
+        stmt = select(AnonVisitModel.anon_visit_id).where(
+            AnonVisitModel.anon_visit_id.in_(list(anon_visit_ids.keys()))
+        )
+        for (aevid,) in (await db.execute(stmt)).fetchall():
+            visit_lookup[anon_visit_ids[aevid]] = aevid
+
+    patient_records: list[dict[str, Any]] = []
+    lab_rows: list[dict[str, Any]] = []
+    seen_lab_hash: set[tuple] = set()  # (anon_visit_id, source_lab_hash) 去重
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        report_id = rd.get(id_field) or rd.get("report_id")
+        item_name = rd.get("item_name")
+
+        if not local_pid or not report_id:
+            continue
+
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+        except ValueError as e:
+            log.warning(f"ETL2: 跳过非法 pid center={center_code} pid={local_pid!r}: {e}")
+            continue
+
+        # 无条件收集 patient（即使无 visit_id 也要建 patient 占位）
+        patient_records.append(
+            {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+        )
+
+        vid = rd.get("visit_id")
+        anon_visit_id = visit_lookup.get(str(vid)) if vid else None
+
+        src_hash = source_lab_hash(
+            center_code, str(report_id), str(item_name) if item_name else ""
+        )
+        dedup_key = (anon_visit_id, src_hash)
+        if dedup_key in seen_lab_hash:
+            continue
+        seen_lab_hash.add(dedup_key)
+
+        # 数值结果：非数值时保留 None
+        num_val = None
+        raw_val = rd.get("item_result_value")
+        if raw_val is not None:
+            try:
+                num_val = float(raw_val)
+            except (TypeError, ValueError):
+                num_val = None
+
+        # lab_detail_json：剩余结构（test_detail 等）忠实保留
+        extracted_keys = {"patient_id", id_field, "report_id", "visit_id", "test_name",
+                          "item_name", "item_result", "item_result_value", "item_unit",
+                          "collection_time"}
+        lab_detail_json: dict[str, Any] = {}
+        for k, v in rd.items():
+            if k not in extracted_keys and v is not None:
+                lab_detail_json[k] = v
+        # date/datetime 转 ISO 字符串，使 JSONB 可序列化
+        lab_detail_json = _json_safe(lab_detail_json) or None
+
+        lab_rows.append(
+            {
+                "anon_visit_id": anon_visit_id,
+                "patient_id": None,  # 占位，回填
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "report_id": _clean_str(str(report_id)),
+                "test_name": _clean_str(rd.get("test_name")),
+                "item_name": _clean_str(item_name),
+                "item_result": _clean_str(rd.get("item_result")),
+                "item_result_value": num_val,
+                "item_unit": _clean_str(rd.get("item_unit")),
+                "collection_time": _clean_date(rd.get("collection_time")),
+                "lab_detail_json": lab_detail_json or None,
+                "source_lab_hash": src_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    for lr in lab_rows:
+        lr["patient_id"] = pid_map[lr["_anon_id"]]
+        del lr["_anon_id"]
+    await _batch_upsert_lab_results(db, lab_rows=lab_rows)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 lab_result")
+    return imported
+
+
+async def _import_order_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    order_type: str,
+    order_name_field: str,
+    batch_id: str,
+) -> int:
+    """导入 drug_order / no_drug_order.parquet → lnrs_anon_order（省医扩展）。
+
+    drug + non_drug 合并一表，order_type 区分。
+    挂在 visit 下（anon_visit_id 可空，visit_id 缺失时退化为只挂 patient）。
+    守卫顺序：先收集 patient，再按 visit_id 决定是否建桥（同 lab）。
+    order_name_field 参数化：drug_order 用 drug_generic_name，no_drug_order 用 order_name。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    # 预读 visit 桥
+    visit_id_set = set()
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        vid = rd.get("visit_id")
+        if vid:
+            visit_id_set.add(str(vid))
+    visit_lookup: dict[str, str] = {}
+    if visit_id_set:
+        anon_visit_ids = {
+            compute_anon_visit_id(center_code, v): v for v in visit_id_set
+        }
+        stmt = select(AnonVisitModel.anon_visit_id).where(
+            AnonVisitModel.anon_visit_id.in_(list(anon_visit_ids.keys()))
+        )
+        for (aevid,) in (await db.execute(stmt)).fetchall():
+            visit_lookup[anon_visit_ids[aevid]] = aevid
+
+    patient_records: list[dict[str, Any]] = []
+    order_rows: list[dict[str, Any]] = []
+    seen_order_hash: set[tuple] = set()
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        order_name = rd.get(order_name_field)
+
+        if not local_pid or not order_name:
+            continue
+
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+        except ValueError as e:
+            log.warning(f"ETL2: 跳过非法 pid center={center_code} pid={local_pid!r}: {e}")
+            continue
+
+        patient_records.append(
+            {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+        )
+
+        vid = rd.get("visit_id")
+        anon_visit_id = visit_lookup.get(str(vid)) if vid else None
+
+        order_time = rd.get("order_time") or rd.get("order_start_time")
+        order_time_str = str(order_time) if order_time else ""
+
+        src_hash = source_order_hash(
+            center_code, order_time_str, str(order_name), order_type
+        )
+        dedup_key = (anon_visit_id, src_hash)
+        if dedup_key in seen_order_hash:
+            continue
+        seen_order_hash.add(dedup_key)
+
+        # order_detail struct 忠实保留
+        order_detail = rd.get("order_detail")
+        order_detail_json = (
+            _json_safe(order_detail) if isinstance(order_detail, dict) else None
+        )
+
+        order_rows.append(
+            {
+                "anon_visit_id": anon_visit_id,
+                "patient_id": None,
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "order_type": order_type,
+                "order_name": str(order_name)[:200],
+                "order_time": _clean_date(order_time),
+                "order_source": _clean_str(rd.get("order_source")),
+                "order_detail_json": order_detail_json,
+                "source_order_hash": src_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    for od in order_rows:
+        od["patient_id"] = pid_map[od["_anon_id"]]
+        del od["_anon_id"]
+    await _batch_upsert_orders(db, order_rows=order_rows)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 order({order_type})")
+    return imported
+
+
+# --------------------------------------------------------------------------- #
 # 中心级主入口
 # --------------------------------------------------------------------------- #
 
-# 每中心的数据处理规则（visit_record 不在内：本轮跳过）。
+# 每中心的数据处理规则。
 #
 # 多中心扩展（ADR-0009）：新医院接入只需在下方添加一项，配置项含义：
 #   - src_table:    parquet 文件名（不含 .parquet 后缀）
-#   - kind:         patient / exam_text / surgery
-#   - exam_type:    exam_text 的检查类型（CT/Pathology/Genetic/IHC/PETCT，
-#                   必须是 med_exam_type 字典中的 dict_value）
-#   - id_field:     exam_text 的主键列名（parquet 中的 exam_id/specimen_id/test_id）
+#   - kind:         patient / exam_text / surgery / visit_detail / lab / order
+#   - exam_type:    exam_text 的检查类型（CT/Pathology/Genetic/IHC/PETCT/Radiology/
+#                   Ultrasound，必须是 med_exam_type 字典中的 dict_value）
+#   - id_field:     exam_text 的主键列名（parquet 中的 exam_id/specimen_id/test_id/report_id）
 #   - body_fields:  拼接进 report_text.body_clean 的正文列（无则 []）
 #   - detail_type:  exam_detail.detail_type（如 pathology/genetic/ihc/nodule_imaging）
 #   - detail_fields:落进 exam_detail.detail_json 的结构化列名（无则不写 detail）
-#   - date_field:   exam_date 来源列；空串 "" 表示反查同 id_field 的已入库 exam 日期
-#                   （如 ihc 无日期列，复用 pathology 的 specimen_id 日期）
+#   - date_field:   exam_date 来源列；空串 "" 表示反查日期：
+#                     * date_lookup_field 未设 → 反查同 id_field 的已入库 exam 日期
+#                       （如 ihc 无日期列，复用 pathology 的 specimen_id 日期）
+#                     * date_lookup_field="visit_id" → 按 visit_id 反查 visit_detail 的
+#                       admission_time（省医 pathology 所有日期列空，反查 visit 兜底）
 #   - ordinal_field:标识"同 exam 多实例展开"的列名（如 nodule_imaging 的 nodule_no）。
 #                   设置后每行 parquet 生成一条 exam_detail（1:N），detail_ordinal
 #                   从该字段值解析数字（'n1'→1, 'n2'→2）。不设置则同 anon_exam_id
 #                   只生成一条 detail（detail_ordinal=1）。
+#   - order_type / order_name_field: kind=order 时必填，区分 drug/non_drug 及名称列
+#   - visit_detail / lab / order 为省医(shengyi)扩展，珠江(zhujiang)不用
 #
-# 前置条件：center_code 必须先在 med_hospital 注册（见 0008-zhujiang-dict-seed.sql），
+# 前置条件：center_code 必须先在 med_hospital 注册（见 0008/0009 种子 SQL），
 # 且该 hospital_id 下 med_dict_mapping 已灌入对应 raw_label → dict_value 映射规则。
 _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
     "shengyi": [
+        # 1. patient 先导（后续表依赖 patient FK）
         {"src_table": "patient", "kind": "patient"},
+        # 2. visit_detail 建立 visit 桥 + 富信息（pathology 依赖它反查日期）
+        {
+            "src_table": "visit_record", "kind": "visit_detail",
+            "id_field": "visit_id", "date_field": "admission_time",
+        },
+        # 3. 病理：所有日期列空，date_field="" + date_lookup_field 反查 visit admission_time
+        {
+            "src_table": "pahology_specimen", "kind": "exam_text",
+            "exam_type": "Pathology", "id_field": "specimen_id",
+            "body_fields": ["pathology_diagnosis"],
+            "detail_type": "pathology",
+            "detail_fields": [
+                "specimen_name", "exam_type", "exam_detail",
+                "pathology_diagnosis", "tumor_total_size_mm",
+            ],
+            "date_field": "", "date_lookup_field": "visit_id",
+        },
+        # 4. 影像报告：自带 exam_date（文本报告，非结节结构化表）
+        {
+            "src_table": "imaging_report", "kind": "exam_text",
+            "exam_type": "Radiology", "id_field": "report_id",
+            "body_fields": ["exam_detail.findings", "exam_detail.impression"],
+            "detail_type": "imaging_report",
+            "detail_fields": ["exam_type", "exam_body_part", "exam_item", "exam_detail"],
+            "date_field": "exam_date",
+        },
+        # 5. 超声：自带 exam_date
+        {
+            "src_table": "ultrasound_report", "kind": "exam_text",
+            "exam_type": "Ultrasound", "id_field": "report_id",
+            "body_fields": ["ultrasound_finding"],
+            "detail_type": "ultrasound",
+            "detail_fields": ["exam_name", "body_part", "exam_detail"],
+            "date_field": "exam_date",
+        },
+        # 6. 手术（3/5 空脏数据会被守卫跳过，visit_id 缺失的行静默丢弃）
+        {"src_table": "surgery_record", "kind": "surgery"},
+        # 7. 检验（visit_id 全非空，100% join visit 桥）
+        {"src_table": "lab_result", "kind": "lab", "id_field": "report_id"},
+        # 8-9. 医嘱（drug + non_drug 合并，visit_id 缺失时退化为只挂 patient）
+        {
+            "src_table": "drug_order", "kind": "order",
+            "order_type": "drug", "order_name_field": "drug_generic_name",
+        },
+        {
+            "src_table": "no_drug_order", "kind": "order",
+            "order_type": "non_drug", "order_name_field": "order_name",
+        },
     ],
     "xinqiao": [
         {"src_table": "patient", "kind": "patient"},
@@ -1203,8 +1809,9 @@ async def import_center(
 ) -> dict[str, int]:
     """导入单中心全部 parquet → lnrs_anon_*，返回 {src_table: rows}。
 
-    顺序：先 patient，再 exam_text（依赖 patient）。
-    visit_record 存在则显式跳过。
+    顺序：先 patient，再 exam_text/visit_detail（依赖 patient）。
+    visit_record：若该中心配置了 kind=visit_detail 的 spec 则正常处理（省医），
+    否则显式跳过（珠江，ADR-0006 visit 桥未启用）。
     """
     if not data_dir.exists():
         raise FileNotFoundError(f"中心数据目录不存在: {data_dir}")
@@ -1221,12 +1828,18 @@ async def import_center(
         log.warning(f"ETL2: 未知中心 {center_code}，无处理规则")
         return result
 
-    visit_pq = data_dir / "visit_record.parquet"
-    if visit_pq.exists():
-        log.info(
-            f"ETL2: {center_code}/visit_record.parquet 存在（{visit_pq.stat().st_size} 字节）"
-            f"，本轮跳过——ADR-0006 visit 桥未启用"
-        )
+    # 是否有中心主动处理 visit_record（省医扩展）。若无，则对 visit_record 显式跳过。
+    visit_detail_enabled = any(
+        s.get("src_table") == "visit_record" and s.get("kind") == "visit_detail"
+        for s in specs
+    )
+    if not visit_detail_enabled:
+        visit_pq = data_dir / "visit_record.parquet"
+        if visit_pq.exists():
+            log.info(
+                f"ETL2: {center_code}/visit_record.parquet 存在（{visit_pq.stat().st_size} 字节）"
+                f"，本轮跳过——ADR-0006 visit 桥未启用"
+            )
 
     for spec in specs:
         src_table = spec["src_table"]
@@ -1260,6 +1873,7 @@ async def import_center(
                     detail_fields=spec.get("detail_fields"),
                     date_field=spec.get("date_field", "exam_date"),
                     ordinal_field=spec.get("ordinal_field"),
+                    date_lookup_field=spec.get("date_lookup_field"),
                 )
             elif spec["kind"] == "surgery":
                 n = await _import_surgery_table(
@@ -1267,6 +1881,35 @@ async def import_center(
                     center_code=center_code,
                     parquet_path=parquet_path,
                     src_table=src_table,
+                    batch_id=batch_id,
+                )
+            elif spec["kind"] == "visit_detail":
+                n = await _import_visit_detail_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    id_field=spec.get("id_field", "visit_id"),
+                    date_field=spec.get("date_field", "admission_time"),
+                    batch_id=batch_id,
+                )
+            elif spec["kind"] == "lab":
+                n = await _import_lab_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    id_field=spec.get("id_field", "report_id"),
+                    batch_id=batch_id,
+                )
+            elif spec["kind"] == "order":
+                n = await _import_order_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    order_type=spec["order_type"],
+                    order_name_field=spec["order_name_field"],
                     batch_id=batch_id,
                 )
             else:

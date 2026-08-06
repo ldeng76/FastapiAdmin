@@ -91,6 +91,7 @@ docs/zhujiang_xinqiao_parq/_preflight/
 docs/zhujiang_xinqiao_parq/_logs/
 # 后端运行时产物
 backend/.run/
+*.pdump
 /docs/demodata/CT与病理数据.csv
 /docs/demodata/01_disk_zhujiang_dicom_yd20230826_ct.txt
 /docs/demodata/01_disk_zhujiang_dicom_all.txt
@@ -100,6 +101,8 @@ workspace
 # 本地 POC/调试脚本与产物
 *_poc.py
 backend/data/
+# 仓库根 data/：本地样本/调试数据（parquet / dicom / 中间产物，约 50MB+），不入库
+/data/
 *.png
 ui_*.png
 login.png
@@ -108,6 +111,8 @@ login.png
 
 # 本地真实病例样本数据（DICOM 解压目录，约 200MB+，不入库）
 docs/demodata/朱龙/
+docs/demodata/TCGA样本数据-临床+基管.zip
+docs/demodata/TCGA样本数据-临床-基管/
 shengyi_valid_dicom_and_record
 珠江的CT与病理数据
 shengyi
@@ -120,7 +125,7 @@ docs/zhujiang_xinqiao_parq/*.parquet
 xinqiao
 .understand-anything
 .codegraph
-# AI���߻Ự�ƻ� / IDE��������
+# AI���߻Ự�ƻ� / IDE��������
 .zcode
 opencode.jsonc
 docs/codegraph-install-guide.md
@@ -130,3 +135,4 @@ docs/codegraph-install-guide.md
 0723_sample
 .qoder
 0729_shengyi_sample
+gdc_docs

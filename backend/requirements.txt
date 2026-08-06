@@ -48,3 +48,5 @@ typer==0.19.0                          # 命令行工具
 user-agents==2.2.0                     # 获取用户UA
 uvicorn==0.30.6                        # uvicorn web 框架
 websockets>=15.0.1,<16.0               # websocket（prefect>=3.5 需 >=15.0.1；与部署 requirements.txt 一致）
+openslide-python>=1.4.6                # SVS 切片文件读取（WSI 全切片成像）
+openslide-bin>=4.0.1.2                 # OpenSlide DLL（Windows 二进制依赖）

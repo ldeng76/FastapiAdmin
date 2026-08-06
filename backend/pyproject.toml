@@ -55,6 +55,8 @@ dependencies = [
     "tomli>=2.0.1 ; python_full_version < '3.15'",
     "duckdb>=1.5.4",
     "pydicom>=3.0.2",
+    "openslide-python>=1.4.6",
+    "openslide-bin>=4.0.1.2",
     "starlette>=0.40.0",
 ]
 

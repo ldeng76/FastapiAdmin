@@ -9,7 +9,10 @@ class EnvironmentEnum(str, Enum):
     PROD = "prod"
     H125 = "h125"
     H42 = "h42"
+    H196_3 = "h196_3"
 
+
+@unique
 
 @unique
 class BusinessType(Enum):

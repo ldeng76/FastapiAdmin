@@ -13,8 +13,26 @@ import "@utils/ui";
  * - 兼容 Electron 等非 HTTP 协议环境
  * - 开发环境 HMR 不受影响
  */
+
+/**
+ * 解析 hash 路由的 base：从 `VITE_BASE_URL` 读取（与 Vite 构建/部署子路径对齐），
+ * 缺省 `/`。注意 vue-router 4 的 `createWebHashHistory(base)` 期望 base 以 `/` 结尾，
+ * 因此对原始 `'/web'` 之类补正为 `'/web/'`，避免 `to.path` 被意外加上 `/web` 前缀。
+ *
+ * 历史背景：路由引入时未传 base，部署在子路径 `/web` 下访问 `#/medical/patient`
+ * 时 vue-router 内部仍能正确解析，但首屏守卫走到的 "兜底 `CatchAll404`" 路径
+ * 会被 `to.matched.length > 0` 命中（pathMatch 通配），导致 404 页面闪现。
+ * 显式传 base 后，子路由注册时序与 base 一致，守卫判定稳定。
+ */
+function resolveHashHistoryBase(): string {
+  const raw = ((import.meta.env.VITE_BASE_URL as string | undefined) || "/").trim();
+  // 兜底确保以 `/` 起始与 `/` 结尾（vue-router 内部要求）
+  if (!raw.startsWith("/")) return "/";
+  return raw.endsWith("/") ? raw : `${raw}/`;
+}
+
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHashHistory(resolveHashHistoryBase()),
   routes: staticRoutes,
   scrollBehavior: () => ({ left: 0, top: 0 }),
 });

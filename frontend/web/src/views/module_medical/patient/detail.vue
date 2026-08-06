@@ -30,10 +30,12 @@
 
       <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
       <div v-if="extRows.length" class="ext-block">
-        <div v-for="r in extRows" :key="r.label" class="ext-item">
-          <span class="ext-label">{{ r.label }}：</span>
-          <span class="ext-value">{{ r.text }}</span>
-        </div>
+        <FieldRenderer
+          v-for="r in extRows"
+          :key="r.key"
+          :key-name="r.key"
+          :value="r.value"
+        />
       </div>
     </ElCard>
 
@@ -45,6 +47,7 @@
         </ElTabPane>
         <ElTabPane label="基因" name="genetic">
           <ModalityGroup :rows="detail.genetic" empty-text="暂无基因检测数据" />
+          <FastqSection />
         </ElTabPane>
         <ElTabPane label="病理" name="pathology">
           <ModalityGroup :rows="detail.pathology" empty-text="暂无病理数据" />
@@ -90,6 +93,9 @@ import { ElMessage } from "element-plus";
 import PatientAPI, { type ModalityRow, type PatientDetail } from "@/api/module_medical/patient";
 import DicomAPI from "@/api/module_medical/dicom";
 import DicomViewerDialog from "./components/DicomViewerDialog.vue";
+import FastqSection from "./components/FastqSection.vue";
+import FieldRenderer from "@/components/medical/field-renderer";
+import { getFieldLabel } from "@/components/medical/field-renderer/field-labels";
 
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
 
@@ -136,14 +142,47 @@ async function openDicomViewer() {
   dicomViewerVisible.value = true;
 }
 
-// 基本信息 JSON 扩展列（珠江-新桥数据含 demographics / medical_history）
+// 基本信息 JSON 扩展列。
+//   - 优先渲染 demographics / medical_history（高频语义字段）
+//   - 自动枚举 patient dict 里其它未在固定 ElDescriptionsItem 中展示的 key
+//   - 全部走 FieldRenderer：命中 schema → 业务卡片；未命中 → FaJsonPretty 折叠 JSON 树
+// 固定的 10 项基本信息已显式列在 ElDescriptionsItem 里，这里跳过避免重复。
+const FIXED_BASIC_KEYS = new Set([
+  "patient_id",
+  "center_code",
+  "sex",
+  "birth_date",
+  "ethnicity",
+  "native_place",
+  "abo_blood_type",
+  "rh_blood_type",
+  "smoking_status",
+  "first_nodule_date",
+]);
+const PRIORITY_EXT_KEYS = ["demographics", "medical_history"];
+
 const extRows = computed(() => {
   const p = detail.value.patient || {};
-  const rows: { label: string; text: string }[] = [];
-  if (p.demographics) rows.push({ label: "人口学", text: JSON.stringify(p.demographics) });
-  if (p.medical_history) rows.push({ label: "既往病史", text: JSON.stringify(p.medical_history) });
+  const rows: { key: string; value: unknown }[] = [];
+  // 优先项
+  for (const k of PRIORITY_EXT_KEYS) {
+    if (p[k] && !isEmpty(p[k])) rows.push({ key: k, value: p[k] });
+  }
+  // 自动枚举其余非空、非固定的 key
+  for (const [k, v] of Object.entries(p)) {
+    if (PRIORITY_EXT_KEYS.includes(k)) continue;
+    if (FIXED_BASIC_KEYS.has(k)) continue;
+    if (isEmpty(v)) continue;
+    rows.push({ key: k, value: v });
+  }
   return rows;
 });
+
+function isEmpty(v: unknown): boolean {
+  if (v === null || v === undefined || v === "") return true;
+  if (typeof v === "object" && Object.keys(v).length === 0) return true;
+  return false;
+}
 
 function fmtDate(v?: string): string {
   if (!v) return "-";
@@ -183,6 +222,14 @@ async function fetchDetail() {
   try {
     const res = await PatientAPI.detailPatient(patientId.value, center.value);
     detail.value = res.data?.data ?? ({} as PatientDetail);
+  } catch (err: any) {
+    // 404 / 网络错误等都提示出来，避免静默"暂无数据"
+    const msg =
+      err?.response?.data?.msg ||
+      err?.message ||
+      "获取患者详情失败，请稍后重试";
+    ElMessage.error(msg);
+    detail.value = {} as PatientDetail;
   } finally {
     loading.value = false;
   }
@@ -198,6 +245,8 @@ const ModalityGroup = defineComponent({
   props: {
     rows: { type: Array as () => ModalityRow[], default: () => [] },
     emptyText: { type: String, default: "暂无数据" },
+    /** ElDescriptions 列数；同时用作"独占整行 item 的 span"基数 */
+    column: { type: Number, default: 3 },
   },
   setup(props) {
     // 按 _table 分组
@@ -227,8 +276,13 @@ const ModalityGroup = defineComponent({
                       [
                         h(
                           ElDescriptions,
-                          { column: 3, border: true, size: "small", title: `记录 ${ri + 1}` },
-                          () => renderRowFields(row),
+                          {
+                            column: props.column,
+                            border: true,
+                            size: "small",
+                            title: `记录 ${ri + 1}`,
+                          },
+                          () => renderRowFields(row, props.column),
                         ),
                       ],
                     ),
@@ -239,99 +293,43 @@ const ModalityGroup = defineComponent({
   },
 });
 
-// 把一行记录的字段平铺为 DescriptionsItem（跳过 _table，JSON 对象递归展示）
-function renderRowFields(row: ModalityRow) {
+// 把一行记录的字段平铺为 DescriptionsItem。
+//  - 标量：span=1（默认），与同行其他字段平铺
+//  - object/array（FieldRenderer）：span=column，独占整行，避免挤压旁列
+//    show-title=false：DescriptionsItem label 已提供语义，避免与卡片标题重复
+function renderRowFields(row: ModalityRow, column: number) {
   const items: any[] = [];
   for (const [k, v] of Object.entries(row)) {
-    if (k === "_table") continue;
-    items.push(
-      h(ElDescriptionsItem, { label: fieldLabel(k) }, () => formatValue(v)),
-    );
+    if (k === "_table" || k === "_modality") continue;
+    if (v === null || v === undefined) continue;
+    if (typeof v === "object") {
+      items.push(
+        h(ElDescriptionsItem,
+          { label: fieldLabel(k), span: column },
+          () => h(FieldRenderer, { keyName: k, value: v, showTitle: false })),
+      );
+    } else {
+      items.push(
+        h(ElDescriptionsItem, { label: fieldLabel(k) },
+          () => formatScalar(v)),
+      );
+    }
   }
   return items;
 }
 
-function formatValue(v: any): string {
+/** 标量格式化（与原 formatValue 标量分支一致，长文本 >200 字折叠 + 字数提示） */
+function formatScalar(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
-  if (typeof v === "object") return JSON.stringify(v);
   if (typeof v === "boolean") return v ? "是" : "否";
-  return String(v);
+  const s = String(v);
+  return s.length > 200 ? `${s.slice(0, 200)}…（共 ${s.length} 字）` : s;
 }
 
-// 字段名中文映射（覆盖常见字段，未命中原样返回）
-// 2026-07-24 改：data source 切到 anon_* 体系，source_center→center_code、gender→sex
-const FIELD_LABELS: Record<string, string> = {
-  patient_id: "患者编号",
-  center_code: "中心编码",
-  visit_id: "就诊编号",
-  specimen_id: "标本号",
-  test_id: "检测号",
-  surgery_date: "手术日期",
-  procedure_name: "术式",
-  resection_scope: "切除范围",
-  surgical_approach: "手术入路",
-  procedure_detail: "手术详情",
-  exam_date: "检查日期",
-  exam_type: "检查类型",
-  nodule_no: "结节编号",
-  nodule_location: "结节位置",
-  long_diameter: "长径(mm)",
-  density_type: "密度类型",
-  nodule_morphology: "形态征象",
-  nodule_quantitative: "定量参数",
-  follow_up_comparison: "对比变化",
-  exam_meta: "检查元数据",
-  ki67_pct: "Ki-67(%)",
-  markers: "标志物",
-  last_followup_date: "末次随访",
-  recurrence: "复发",
-  survival_status: "生存状态",
-  treatment_detail: "治疗详情",
-  recurrence_detail: "复发详情",
-  test_method: "检测方法",
-  variant_type: "变异类型",
-  test_meta: "检测元数据",
-  variant_result: "变异结果",
-  driver_mutations: "驱动基因",
-  immune_markers: "免疫标志物",
-  histology_class: "组织学分类",
-  pathology_diagnosis: "病理诊断",
-  tumor_total_size_mm: "肿瘤大小(mm)",
-  specimen_type: "标本类型",
-  sampling_site: "取材部位",
-  adenocarcinoma_subtypes: "腺癌亚型",
-  tumor_measurement: "肿瘤测量",
-  high_risk_factors: "高危因素",
-  staging: "分期",
-  specimen_meta: "标本元数据",
-  exam_detail: "检查详情",
-  order_time: "医嘱时间",
-  drug_generic_name: "药物",
-  order_detail: "医嘱详情",
-  order_source: "医嘱来源",
-  item_name: "检验项",
-  item_result: "结果",
-  item_unit: "单位",
-  ref_lower: "参考下限",
-  ref_upper: "参考上限",
-  collection_time: "采集时间",
-  test_name: "检验项目",
-  report_id: "报告号",
-  visit_category: "就诊类别",
-  admission_time: "入院时间",
-  discharge_date: "出院日期",
-  admission_dept: "入院科室",
-  length_of_stay: "住院天数",
-  visit_age: "就诊年龄",
-  diagnoses: "诊断",
-  exam_body_part: "检查部位",
-  exam_item: "检查项目",
-  gender: "性别",
-  birth_date: "出生日期",
-};
-
+// 字段名 → 中文 label（已迁出至 @/components/medical/field-renderer/field-labels）。
+// 保留 FIELD_LABELS 引用以兼容旧调用；新增字段请直接改那边。
 function fieldLabel(k: string): string {
-  return FIELD_LABELS[k] || k;
+  return getFieldLabel(k);
 }
 </script>
 

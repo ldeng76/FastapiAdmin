@@ -44,7 +44,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElTag, ElButton } from "element-plus";
+import { ElButton } from "element-plus";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
 import { useTable } from "@/hooks/core/useTable";
@@ -107,34 +107,47 @@ const {
     apiFn: PatientAPI.listPatient,
     apiParams: { page_no: 1, page_size: 10 },
     columnsFactory: (): ColumnOption<PatientTable>[] => [
-      { type: "globalIndex", width: 56, label: "序号" },
-      { prop: "patient_id", label: "患者编号", minWidth: 120, showOverflowTooltip: true },
+      { type: "globalIndex", width: 60, label: "序号" },
       {
-        prop: "center_code",
-        label: "中心编码",
-        width: 100,
-        formatter: (row) =>
-          h(ElTag, { type: "info", effect: "plain" }, () => row.center_code || "-"),
+        prop: "patient_id",
+        label: "患者编号",
+        minWidth: 140,
+        showOverflowTooltip: true,
       },
-      { prop: "sex", label: "性别", width: 70, formatter: (row) => sexLabel(row.sex) },
-      { prop: "birth_date", label: "出生日期", width: 120, formatter: (row) => fmtDate(row.birth_date) },
-      { prop: "ethnicity", label: "民族", width: 80, formatter: (row) => ethnicityLabel(row.ethnicity) },
+      {
+        prop: "sex",
+        label: "性别",
+        minWidth: 80,
+        formatter: (row) => sexLabel(row.sex),
+      },
+      {
+        prop: "birth_date",
+        label: "年龄（出生日期）",
+        minWidth: 150,
+        formatter: (row) => fmtAgeBirthday(row.birth_date),
+      },
+      {
+        prop: "abo_blood_type",
+        label: "血型",
+        minWidth: 110,
+        formatter: (row) => bloodTypeLabel(row),
+      },
       {
         prop: "smoking_status",
         label: "吸烟状态",
-        width: 100,
+        minWidth: 110,
         formatter: (row) => smokingLabel(row.smoking_status),
       },
       {
         prop: "first_nodule_date",
         label: "首结节日期",
-        width: 120,
+        minWidth: 130,
         formatter: (row) => fmtDate(row.first_nodule_date),
       },
       {
         prop: "operation",
         label: "操作",
-        width: 100,
+        width: 120,
         fixed: "right",
         formatter: (row) =>
           h(
@@ -197,17 +210,6 @@ function sexLabel(code?: string) {
   return SEX_LABEL[code] || code;
 }
 
-// GB/T 3304 民族：01=汉族, 02=蒙古族, ..., 56=基诺族, 99=其他
-// 简版：只标汉族/其他，其他返回国标码
-const ETHNICITY_LABEL: Record<string, string> = {
-  "01": "汉族",
-  "99": "其他",
-};
-function ethnicityLabel(code?: string) {
-  if (!code) return "-";
-  return ETHNICITY_LABEL[code] || code;
-}
-
 // 1=从不, 2=既往, 3=现在, 9=未知
 const SMOKING_LABEL: Record<string, string> = {
   "1": "从不",
@@ -218,5 +220,51 @@ const SMOKING_LABEL: Record<string, string> = {
 function smokingLabel(code?: string) {
   if (!code) return "-";
   return SMOKING_LABEL[code] || code;
+}
+
+// 年龄（出生日期）合并显示：如 "62（1963-05）"
+function calcAge(birthIso?: string): number | null {
+  if (!birthIso) return null;
+  const b = new Date(birthIso.slice(0, 10));
+  if (isNaN(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--;
+  return age >= 0 && age < 150 ? age : null;
+}
+function fmtAgeBirthday(v?: string): string {
+  if (!v) return "-";
+  const age = calcAge(v);
+  const ym = v.length >= 7 ? v.slice(0, 7) : v;
+  return age !== null ? `${age}（${ym}）` : ym;
+}
+
+// HQMS RC030 ABO 血型：1=A型 2=B型 3=O型 4=AB型 5=不详 6=未查
+const ABO_LABEL: Record<string, string> = {
+  "1": "A型",
+  "2": "B型",
+  "3": "O型",
+  "4": "AB型",
+  "5": "不详",
+  "6": "未查",
+};
+// HQMS RC031 Rh 血型：1=阴性 2=阳性 3=不详 4=未查
+const RH_LABEL: Record<string, string> = {
+  "1": "阴性",
+  "2": "阳性",
+  "3": "不详",
+  "4": "未查",
+};
+// 血型合并显示：ABO/Rh，如 "A型/阳性"；缺失则单独显示已有项；都无则 "-"
+function bloodTypeLabel(row: PatientTable): string {
+  const a = row.abo_blood_type
+    ? ABO_LABEL[row.abo_blood_type] || row.abo_blood_type
+    : null;
+  const r = row.rh_blood_type
+    ? RH_LABEL[row.rh_blood_type] || row.rh_blood_type
+    : null;
+  if (a && r) return `${a}/${r}`;
+  return a || r || "-";
 }
 </script>

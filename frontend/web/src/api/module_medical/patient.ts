@@ -68,16 +68,21 @@ export interface PatientTable {
   first_nodule_date?: string;
 }
 
-/** 多模态详情中任一模态的一行（字段因表而异，含 JSON 扩展列）
+/** 多模态详情中任一模态的一行（字段因表而异，JSONB 已顶层展开）
  *
- * 2026-07-24 改：data source 切换到 anon_* 体系
- * - 字段名从原 med_* 子表名（_table）切换到 anon 表名（report_text/detail_json 字段）
- * - clinical: visit + surgery + 其它 exam_type
- * - genetic/pathology/imaging: 按 exam_type 区分
+ * 2026-08-05 改：data source 切到 anon_* PG 体系，JSONB 字段在后端就地顶层展开
+ * - _table: 前端折叠面板分组标题（如 "就诊" / "手术" / "检验结果" / "医嘱" /
+ *   "CT 检查" / "结节 #2"）
+ * - _modality: 模态名（"clinical" / "genetic" / "pathology" / "imaging"）
+ * - clinical 行包含 visit/surgery/lab/order/未映射 exam 共 5 种异构行
+ * - genetic/pathology/imaging 行共享同一 shape:
+ *   {anon_exam_id, exam_type, exam_date, anon_visit_id, report_text, detail_type, ...detail_json 顶层展开}
  */
 export interface ModalityRow {
-  /** 数据来源（anon_exam_id / surgery_id / visit_id 等） */
+  /** 数据来源中文标签（折叠面板标题） */
   _table?: string;
+  /** 模态名(临床/基因/病理/影像) */
+  _modality?: "clinical" | "genetic" | "pathology" | "imaging";
   [key: string]: any;
 }
 

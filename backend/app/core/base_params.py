@@ -40,6 +40,16 @@ class PaginationQueryParam:
         else:
             self.order_by = [{"updated_time": "desc"}]
 
+    @property
+    def offset(self) -> int:
+        """当前页起始偏移量（page_no 从 1 起算）。"""
+        return (self.page_no - 1) * self.page_size
+
+    @property
+    def limit(self) -> int:
+        """当前页大小。"""
+        return self.page_size
+
 
 class BaseQueryParam:
     """公共查询参数"""

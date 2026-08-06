@@ -16,6 +16,19 @@ from pydantic import BaseModel, Field
 ChartType = Literal["bar", "pie", "h-bar", "line"]
 
 
+# ── 查询参数 ──────────────────────────────────
+
+class StatsFiltersIn(BaseModel):
+    """仪表板查询筛选参数（封装所有 Query 参数）。"""
+
+    center: str | None = Field(None, description="中心编码筛选")
+    gender: str | None = Field(None, description="性别筛选（0=未知, 1=男, 2=女, 9=其他）")
+    modality: str | None = Field(None, description="模态筛选（如 CT/MR/US 等）")
+    age_bucket: str | None = Field(None, description="年龄段筛选（0-17/18-29/30-39/40-49/50-59/60-69/70-79/80+）")
+    abo_blood_type: str | None = Field(None, description="ABO血型筛选（1=A型, 2=B型, 3=O型, 4=AB型, 5=不详, 6=未查）")
+    smoking_status: str | None = Field(None, description="吸烟状态筛选（1=从不, 2=既往, 3=现在, 9=未知）")
+
+
 # ── 筛选条件 ──────────────────────────────────
 
 

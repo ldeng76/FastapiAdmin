@@ -15,6 +15,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .anon_model import AnonExamModel, AnonPatientModel
+from .stats_schema import StatsFiltersIn
 
 # ── 常量 ──────────────────────────────────────
 
@@ -81,20 +82,15 @@ class StatsQuery:
     def __init__(
         self,
         db: AsyncSession,
-        center: str | None = None,
-        gender: str | None = None,
-        modality: str | None = None,
-        age_bucket: str | None = None,
-        abo_blood_type: str | None = None,
-        smoking_status: str | None = None,
+        filters: StatsFiltersIn | None = None,
     ) -> None:
         self.db = db
-        self.center = center
-        self.gender = gender
-        self.modality = modality
-        self.age_bucket = age_bucket
-        self.abo_blood_type = abo_blood_type
-        self.smoking_status = smoking_status
+        self.center = filters.center if filters else None
+        self.gender = filters.gender if filters else None
+        self.modality = filters.modality if filters else None
+        self.age_bucket = filters.age_bucket if filters else None
+        self.abo_blood_type = filters.abo_blood_type if filters else None
+        self.smoking_status = filters.smoking_status if filters else None
         self._ref_date = date.today()
 
     # ── 过滤条件构建 ──────────────────────────
@@ -350,21 +346,8 @@ class StatsQuery:
 
 async def get_dashboard_overview(
     db: AsyncSession,
-    center: str | None = None,
-    gender: str | None = None,
-    modality: str | None = None,
-    age_bucket: str | None = None,
-    abo_blood_type: str | None = None,
-    smoking_status: str | None = None,
+    filters: StatsFiltersIn | None = None,
 ) -> dict:
     """仪表板全量概览 — 委托给 StatsQuery。"""
-    query = StatsQuery(
-        db,
-        center=center,
-        gender=gender,
-        modality=modality,
-        age_bucket=age_bucket,
-        abo_blood_type=abo_blood_type,
-        smoking_status=smoking_status,
-    )
+    query = StatsQuery(db, filters=filters)
     return await query.get_overview()

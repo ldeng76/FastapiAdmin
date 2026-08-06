@@ -673,5 +673,66 @@
     "pageError": "抱歉，您访问的页面不存在。",
     "networkError": "抱歉，服务器报告错误。",
     "returnToHome": "返回首页"
+  },
+  "fastq": {
+    "section": {
+      "title": "测序 reads（FASTQ 结构化展示）",
+      "desc": "粘贴本患者的 FASTQ 测序文本（.fq / .fastq），或拖拽文件至下方面板，即可在前端解析为结构化 Reads 并按双端/质量/序列片段检索；仅在本浏览器内存中处理，不上传服务器。"
+    },
+    "upload": {
+      "btn": "选择 .fq / .fastq 文件",
+      "dragHint": "支持拖拽；单文件不超过 50 MB",
+      "pasteHint": "粘贴 FASTQ 文本，或拖拽/选择 .fq / .fastq 文件，或点击「载入示例」",
+      "fileTypeError": "仅支持 .fq / .fastq 文本文件",
+      "tooLarge": "文件超过 {size} MB，建议先拆分或压缩",
+      "loadError": "读取文件失败：{msg}"
+    },
+    "parse": {
+      "start": "开始解析…",
+      "done": "解析完成：{ok} 条成功 / {err} 错误 / {ms}ms",
+      "errorSome": "解析完成，{ok} 条成功，{err} 条因格式错误已跳过"
+    },
+    "toolbar": {
+      "search": "搜索 Read ID / pairKey / 序列子串",
+      "viewStructured": "结构化",
+      "viewRaw": "原始",
+      "sortBy": "排序",
+      "sortId": "按 ID",
+      "sortLength": "按长度",
+      "sortAvg": "按平均质量",
+      "sortPair": "按 pairKey",
+      "pairFilter": "配对过滤",
+      "pairAll": "全部",
+      "pairSingle": "单端",
+      "pairR1": "R1",
+      "pairR2": "R2",
+      "minQuality": "最小平均质量",
+      "stats": "统计"
+    },
+    "table": {
+      "colIdx": "#",
+      "colReadId": "Read ID",
+      "colLength": "长度",
+      "colAvgQ": "Q30 / 平均",
+      "colPair": "双端",
+      "colSeq": "序列预览",
+      "colQual": "质量"
+    },
+    "pair": {
+      "R1": "R1",
+      "R2": "R2",
+      "singleton": "单端"
+    },
+    "raw": {
+      "title": "原始文本",
+      "empty": "暂无原始文本"
+    },
+    "empty": {
+      "noData": "请上传或粘贴 FASTQ 文本以开始解析",
+      "noMatch": "未找到匹配的 FASTQ 记录"
+    },
+    "perf": {
+      "tooLargeWarn": "输入包含 {n} 行，可能影响解析与渲染性能"
+    }
   }
 }

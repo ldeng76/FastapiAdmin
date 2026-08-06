@@ -673,5 +673,66 @@
     "pageError": "Sorry, the page you visited does not exist.",
     "networkError": "Sorry, the server reported an error.",
     "returnToHome": "Return to home"
+  },
+  "fastq": {
+    "section": {
+      "title": "Sequencing Reads (FASTQ structured view)",
+      "desc": "Paste the patient's FASTQ text (.fq / .fastq) or drop a file into the panel below; reads will be parsed in the browser and made searchable by pair, quality, and sequence substring. Nothing is uploaded to the server."
+    },
+    "upload": {
+      "btn": "Choose .fq / .fastq file",
+      "dragHint": "Drag & drop supported; max 50 MB per file",
+      "pasteHint": "Paste FASTQ text, drop a .fq / .fastq file, or click 'Load sample'",
+      "fileTypeError": "Only .fq / .fastq text files are supported",
+      "tooLarge": "File exceeds {size} MB; consider splitting or compressing first",
+      "loadError": "Failed to read file: {msg}"
+    },
+    "parse": {
+      "start": "Parsing…",
+      "done": "Done: {ok} ok / {err} errors / {ms}ms",
+      "errorSome": "Parsed with {err} format errors skipped ({ok} ok)"
+    },
+    "toolbar": {
+      "search": "Search Read ID / pairKey / sequence substring",
+      "viewStructured": "Structured",
+      "viewRaw": "Raw",
+      "sortBy": "Sort",
+      "sortId": "By ID",
+      "sortLength": "By length",
+      "sortAvg": "By avg quality",
+      "sortPair": "By pairKey",
+      "pairFilter": "Pair filter",
+      "pairAll": "All",
+      "pairSingle": "Singleton",
+      "pairR1": "R1",
+      "pairR2": "R2",
+      "minQuality": "Min avg quality",
+      "stats": "Stats"
+    },
+    "table": {
+      "colIdx": "#",
+      "colReadId": "Read ID",
+      "colLength": "Length",
+      "colAvgQ": "Q30 / Avg",
+      "colPair": "Pair",
+      "colSeq": "Sequence preview",
+      "colQual": "Quality"
+    },
+    "pair": {
+      "R1": "R1",
+      "R2": "R2",
+      "singleton": "Singleton"
+    },
+    "raw": {
+      "title": "Raw text",
+      "empty": "No raw text yet"
+    },
+    "empty": {
+      "noData": "Upload or paste FASTQ text to start parsing",
+      "noMatch": "No matching FASTQ records"
+    },
+    "perf": {
+      "tooLargeWarn": "Input has {n} lines; performance may degrade"
+    }
   }
 }

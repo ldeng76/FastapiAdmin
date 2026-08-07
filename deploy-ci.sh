@@ -15,8 +15,8 @@ BACKEND_DIR="${DEPLOY_DIR}/backend"
 FRONTEND_DIR="${DEPLOY_DIR}/frontend/web"
 ENVIRONMENT="${ENVIRONMENT:-h196_3}"
 BACKEND_PORT="${BACKEND_PORT:-8610}"
+BACKEND_HEALTH_URL="${BACKEND_HEALTH_URL:-http://127.0.0.1:${BACKEND_PORT}/api/v1/docs}"
 BACKEND_LOG="${DEPLOY_DIR}/backend/.run/${ENVIRONMENT}.log"
-BRANCH="main"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 cd "${DEPLOY_DIR}"
 log ">>> 开始部署 lnrs (profile=${ENVIRONMENT})"
@@ -61,30 +61,34 @@ pnpm install --frozen-lockfile || pnpm install
 pnpm vite build
 
 log ">>> 重启后端服务 (profile=${ENVIRONMENT})"
-# 停掉旧进程（匹配 main.py run 或 uvicorn 监听 BACKEND_PORT）
-pkill -f "main.py run" 2>/dev/null || true
-pkill -f "uvicorn.*:${BACKEND_PORT}" 2>/dev/null || true
-sleep 2
+BACKEND_SERVICE="${BACKEND_SERVICE:-lnrs-backend}"
+# 用 systemd 拉起后端, 失败自动重启由 systemd 兜底
+if ! sudo systemctl restart "${BACKEND_SERVICE}"; then
+    log ">>> 部署失败: sudo systemctl restart ${BACKEND_SERVICE} 失败" >&2
+    exit 1
+fi
 
-mkdir -p "$(dirname "${BACKEND_LOG}")"
-cd "${BACKEND_DIR}"
-ENVIRONMENT="${ENVIRONMENT}" \
-    nohup uv run main.py run --env="${ENVIRONMENT}" \
-    >>"${BACKEND_LOG}" 2>&1 &
-BACKEND_PID=$!
-disown "${BACKEND_PID}" 2>/dev/null || true
-log ">>> 后端进程已启动: pid=${BACKEND_PID}, 日志=${BACKEND_LOG}"
-
-# 等待端口就绪（最多 30s）
+# 等待端口监听（最多 30s; systemd 启动 + uv sync 较慢）
 for i in $(seq 1 30); do
-    if ss -tln 2>/dev/null | grep -q ":${BACKEND_PORT}\b"; then
-        log ">>> 部署成功: 端口 ${BACKEND_PORT} 已监听"
+    ss -tln 2>/dev/null | grep -q ":${BACKEND_PORT}\b" && break
+    sleep 1
+done
+
+# 端口监听后, HTTP 200 探活（最多再等 60s; 后端初始化慢）
+for i in $(seq 1 60); do
+    code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 "${BACKEND_HEALTH_URL}" 2>/dev/null || echo "000")
+    if [ "$code" = "200" ]; then
+        log ">>> 部署成功: HTTP 200 @ ${BACKEND_HEALTH_URL}"
         exit 0
     fi
     sleep 1
 done
 
-log ">>> 部署失败: 端口 ${BACKEND_PORT} 在 30s 内未监听" >&2
+log ">>> 部署失败: ${BACKEND_HEALTH_URL} 在 60s 内未返回 200" >&2
+log ">>> service 状态:" >&2
+sudo systemctl status "${BACKEND_SERVICE}" --no-pager 2>&1 | tail -30 >&2 || true
 log ">>> 最近日志:" >&2
 tail -50 "${BACKEND_LOG}" >&2 || true
+# 端口在但 HTTP 不通 — 让 systemd 看着重启
+sudo systemctl restart "${BACKEND_SERVICE}" 2>/dev/null || true
 exit 1

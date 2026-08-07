@@ -88,3 +88,5 @@ log ">>> 部署失败: 端口 ${BACKEND_PORT} 在 30s 内未监听" >&2
 log ">>> 最近日志:" >&2
 tail -50 "${BACKEND_LOG}" >&2 || true
 exit 1
+
+# 触发完整 deploy 验证 (1786072765)

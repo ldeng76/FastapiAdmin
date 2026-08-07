@@ -17,6 +17,7 @@ FRONTEND_DIR="${DEPLOY_DIR}/frontend/web"
 ENVIRONMENT="${ENVIRONMENT:-h196_3}"
 BACKEND_PORT="${BACKEND_PORT:-8610}"
 BACKEND_LOG="${DEPLOY_DIR}/backend/.run/${ENVIRONMENT}.log"
+BRANCH="main"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 

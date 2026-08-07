@@ -3,7 +3,7 @@ set -euo pipefail
 
 export HOME="/home/dzy"
 export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
-export UV_CACHE_DIR="/data/uvcache"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/home/dzy/.cache/uv}"
 export PATH="/home/dzy/pg18/bin:$PATH"
 eval "$(fnm env)" 2>/dev/null || true
 # 避免 pnpm 检测到 node_modules 与 lockfile 不一致时交互式询问"是否整体重装"

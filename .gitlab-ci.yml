@@ -3,8 +3,8 @@ stages:
 
 deploy_production:
   stage: deploy
-  only:
-    - main
+  when: manual
+  allow_failure: false
   script:
     - bash /home/dzy/wk/lnrs/deploy-ci.sh
   variables:

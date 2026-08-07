@@ -56,11 +56,9 @@ dependencies = [
     "duckdb>=1.5.4",
     "pydicom>=3.0.2",
     "openslide-bin>=4.0.1.2 ; sys_platform == 'win32'",
+    "openslide-python>=1.4.6",
     "large-image>=1.35.0",
-    # Windows 用 openslide source（功能完整，支持 label/macro）
-    "large-image-source-openslide>=1.35.0 ; sys_platform == 'win32'",
-    # Linux 用 tiff source（SVS 本质是 TIFF，避免 openslide-bin 编译失败）
-    "large-image-source-tiff>=1.35.0 ; sys_platform != 'win32'",
+    "large-image-source-openslide>=1.35.0",
     "starlette>=0.40.0",
 ]
 
@@ -73,11 +71,13 @@ dev = [
 
 [tool.uv]
 default-groups = ["dev"]     # 本地 uv sync 含 dev；生产 pip -r requirements.txt 不含 pytest/ruff/fakeredis
-# 覆盖 large-image-source-openslide 的传递依赖：openslide-bin 仅 Windows 需要
-# Linux 通过 apt install openslide-tools 提供系统库
-override-dependencies = [
-    "openslide-bin>=4.0.1.2 ; sys_platform == 'win32'",
-]
+
+# 覆盖 large-image-source-openslide 的依赖声明，移除 openslide-bin（仅 Windows 手动声明）
+# Linux 通过 yum/apt 安装系统 OpenSlide 库
+[[tool.uv.dependency-metadata]]
+name = "large-image-source-openslide"
+version = "1.35.1"
+requires_dist = ["large-image>=1.35.0", "openslide-python>=1.4.0"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"

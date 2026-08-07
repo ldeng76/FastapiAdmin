@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+DIAG=/tmp/deploy-ci.diag
+exec > >(tee -a "$DIAG") 2>&1
 
 export HOME="/home/dzy"
 export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"

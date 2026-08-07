@@ -19,3 +19,4 @@ StandardError=append:/home/dzy/wk/lnrs/backend/.run/h196_3.log
 
 [Install]
 WantedBy=multi-user.target
+# 1786076353 验证 systemd + HTTP 探活

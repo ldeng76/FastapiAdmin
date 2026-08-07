@@ -48,7 +48,3 @@ typer==0.19.0                          # 命令行工具
 user-agents==2.2.0                     # 获取用户UA
 uvicorn==0.30.6                        # uvicorn web 框架
 websockets>=15.0.1,<16.0               # websocket（prefect>=3.5 需 >=15.0.1；与部署 requirements.txt 一致）
-openslide-bin>=4.0.1.2 ; sys_platform == 'win32'  # OpenSlide DLL（仅 Windows）
-openslide-python>=1.4.6                # OpenSlide Python 绑定（Linux 需 yum/apt 安装系统 OpenSlide 库）
-large-image>=1.35.0                    # 大图瓦片服务 SDK（Kitware）
-large-image-source-openslide>=1.35.0   # large_image 的 OpenSlide 数据源

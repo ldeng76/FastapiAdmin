@@ -2,8 +2,6 @@
 set -euo pipefail
 DIAG=/tmp/deploy-ci.diag
 exec > >(tee -a "$DIAG") 2>&1
-echo "===== env dump (pid=$$) ====="; env | grep -iE 'gitlab|ci|token' | sed 's/=.*/=<redacted>/' || true
-echo "===== end env dump ====="
 export HOME="/home/dzy"
 export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/home/dzy/.cache/uv}"
@@ -19,11 +17,8 @@ ENVIRONMENT="${ENVIRONMENT:-h196_3}"
 BACKEND_PORT="${BACKEND_PORT:-8610}"
 BACKEND_LOG="${DEPLOY_DIR}/backend/.run/${ENVIRONMENT}.log"
 BRANCH="main"
-
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
-
 cd "${DEPLOY_DIR}"
-
 log ">>> 开始部署 lnrs (profile=${ENVIRONMENT})"
 
 OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -35,9 +30,9 @@ git -c http.extraHeader="PRIVATE-TOKEN: ${GITLAB_FETCH_TOKEN}" fetch origin
 git checkout "${BRANCH}"
 git reset --hard "origin/${BRANCH}"
 NEW_HEAD=$(git rev-parse HEAD)
-
 if [ "$OLD_HEAD" = "$NEW_HEAD" ]; then
     log "代码无变化，检查前端构建产物新鲜度..."
+
     # 上次部署若前端构建中断/失败，src 会比 dist 新，需要重建前端
     if [ -f "${FRONTEND_DIR}/dist/index.html" ] && \
        [ -z "$(find "${FRONTEND_DIR}/src" -type f \( -name '*.vue' -o -name '*.ts' \) \
@@ -93,5 +88,3 @@ log ">>> 部署失败: 端口 ${BACKEND_PORT} 在 30s 内未监听" >&2
 log ">>> 最近日志:" >&2
 tail -50 "${BACKEND_LOG}" >&2 || true
 exit 1
-
-# 触发完整 deploy 验证 (1786072765)

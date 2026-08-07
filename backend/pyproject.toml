@@ -57,7 +57,10 @@ dependencies = [
     "pydicom>=3.0.2",
     "openslide-bin>=4.0.1.2 ; sys_platform == 'win32'",
     "large-image>=1.35.0",
-    "large-image-source-openslide>=1.35.0",
+    # Windows 用 openslide source（功能完整，支持 label/macro）
+    "large-image-source-openslide>=1.35.0 ; sys_platform == 'win32'",
+    # Linux 用 tiff source（SVS 本质是 TIFF，避免 openslide-bin 编译失败）
+    "large-image-source-tiff>=1.35.0 ; sys_platform != 'win32'",
     "starlette>=0.40.0",
 ]
 
@@ -70,6 +73,11 @@ dev = [
 
 [tool.uv]
 default-groups = ["dev"]     # 本地 uv sync 含 dev；生产 pip -r requirements.txt 不含 pytest/ruff/fakeredis
+# 覆盖 large-image-source-openslide 的传递依赖：openslide-bin 仅 Windows 需要
+# Linux 通过 apt install openslide-tools 提供系统库
+override-dependencies = [
+    "openslide-bin>=4.0.1.2 ; sys_platform == 'win32'",
+]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"

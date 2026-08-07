@@ -89,10 +89,19 @@ def get_dynamic_router() -> APIRouter:
         # 容器路由映射 {prefix: container_router}
         container_routers: dict[str, APIRouter] = {}
 
+        # 需要跳过自动注册的模块（单独注册以使用不同限流策略）
+        skip_modules = {"module_medical/svs"}
+
         for file in controller_files:
             # 解析文件路径
             rel_path = file.relative_to(base_dir)
             path_parts = rel_path.parts
+
+            # 跳过指定模块（单独注册以使用不同限流策略）
+            rel_path_str = str(rel_path).replace("\\", "/").replace("/controller.py", "")
+            if rel_path_str in skip_modules:
+                log.debug(f"  ⏭️ 跳过自动注册（将单独注册）: {rel_path}")
+                continue
 
             # 获取顶级模块名
             top_module = path_parts[0]

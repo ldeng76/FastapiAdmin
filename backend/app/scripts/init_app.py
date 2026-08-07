@@ -190,6 +190,15 @@ def register_routers(app: FastAPI) -> None:
         dependencies=[Depends(RateLimiter(times=60, seconds=10))],
     )
 
+    # SVS 切片路由单独注册（高限流，因为瓦片请求量大）
+    from app.plugin.module_medical.svs.controller import SVSRouter
+
+    app.include_router(
+        router=SVSRouter,
+        prefix="/medical",
+        dependencies=[Depends(RateLimiter(times=500, seconds=10))],
+    )
+
     # Prometheus Metrics 端点
     from app.api.v1.module_common.monitoring.metrics import setup_metrics
 

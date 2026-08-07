@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title></title>
+  <style>
+    html,
+    #svs-viewer {
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      margin: 0;
+    }
+  </style>
+  <!-- OpenSeadragon 本地静态资源 -->
+  <script src="/api/v1/static/openslide/openseadragon.js"></script>
+</head>
+<body id="svs-viewer">
+<script>
+  async function initViewer() {
+    // 1. 调用后端接口打开 SVS 文件
+    const filePath = '';
+    const response = await fetch(`/api/v1/medical/svs/slides/open?file_id=${filePath}`);
+    const info = await response.json();
+
+    // 2. 使用 OpenSeadragon 显示
+    const viewer = OpenSeadragon({
+      id: 'svs-viewer',
+      prefixUrl: '/api/v1/static/openslide/images/',
+      showFullPageControl:false,
+      tileSources: {
+        width: info.width,
+        height: info.height,
+        tileWidth: info.tile_width,
+        tileHeight: info.tile_height,
+        minLevel: 0,
+        maxLevel: info.level_count - 1,
+        // 指定每个 level 的实际尺寸（关键！防止请求超出边界的瓦片）
+        getLevelDimensions: function (level) {
+          return info.level_dimensions[level];
+        },
+        // 关键：调用我们的后端瓦片接口
+        getTileUrl: function (level, x, y) {
+          return `/api/v1/medical/svs/slides/${info.slide_id}/tile?level=${level}&x=${x}&y=${y}`;
+        }
+      }
+    });
+
+  }
+
+  initViewer().catch(console.error);
+</script>
+</body>
+</html>

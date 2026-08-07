@@ -228,6 +228,7 @@ export interface PatientListItem{
     center_code: string
     birth_date: Date | null
     sex: string
+    age: number
     ethnicity: string | null
     smoking_status: string | null
     abo_blood_type: string | null

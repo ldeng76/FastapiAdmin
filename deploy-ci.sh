@@ -23,7 +23,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 cd "${DEPLOY_DIR}"
 
-log ">>> 开始部署 lnrs"
+log ">>> 开始部署 lnrs (profile=${ENVIRONMENT})"
 
 OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
 git -c http.extraHeader="PRIVATE-TOKEN: glpat-U4_Phcn8ruP819zB-EIdrm86MQp1OjEH.01.0w1y85m2b" fetch origin

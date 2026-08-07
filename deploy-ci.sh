@@ -2,7 +2,8 @@
 set -euo pipefail
 DIAG=/tmp/deploy-ci.diag
 exec > >(tee -a "$DIAG") 2>&1
-
+echo "===== env dump (pid=$$) ====="; env | grep -iE 'gitlab|ci|token' | sed 's/=.*/=<redacted>/' || true
+echo "===== end env dump ====="
 export HOME="/home/dzy"
 export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/home/dzy/.cache/uv}"

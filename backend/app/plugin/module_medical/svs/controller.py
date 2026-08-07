@@ -20,11 +20,9 @@ SVSRouter = APIRouter(tags=["SVS"])
     summary="打开 SVS 文件",
     description="打开指定路径的 SVS/SLD/NDPI 文件，返回切片元信息",
 )
-async def open_slide(
-    file_path: Annotated[str, Query(description="切片文件的绝对路径")],
-) -> JSONResponse:
+async def open_slide() -> JSONResponse:
     """打开 SVS 文件并返回元信息。"""
-    result = SVSService.open_slide(file_path)
+    result = SVSService.open_slide("D:/home/svs/WSI_sample/B1229048-2.svs")
     return JSONResponse(content=result)
 
 
@@ -37,31 +35,20 @@ async def get_slide_info(
     slide_id: Annotated[str, Path(description="切片 ID")],
 ) -> JSONResponse:
     """获取切片元信息。"""
-    slides = SVSService.list_available_slides()
-    if slide_id not in slides:
-        return JSONResponse(
-            content={"detail": f"Slide 未找到: {slide_id}"},
-            status_code=404,
-        )
-    # 重新打开以获取最新信息
-    # 注：这里简化处理，实际项目中应该存储 file_path
-    return JSONResponse(
-        content={"detail": "请使用 /svs/slides/open 接口打开文件后获取信息"},
-        status_code=400,
-    )
+    result = SVSService.get_slide_info(slide_id)
+    return JSONResponse(content=result)
 
 
 @SVSRouter.get(
     "/svs/slides/{slide_id}/tile",
     summary="获取切片瓦片",
-    description="获取指定层级和坐标的瓦片图像（JPEG 格式）",
+    description="获取指定层级和坐标的瓦片图像（JPEG 格式）。瓦片大小由切片文件决定（通常为 256 或 512 像素）。",
 )
 async def get_tile(
     slide_id: Annotated[str, Path(description="切片 ID")],
     level: Annotated[int, Query(description="层级（0 为最高分辨率）", ge=0)],
     x: Annotated[int, Query(description="瓦片 X 坐标", ge=0)],
     y: Annotated[int, Query(description="瓦片 Y 坐标", ge=0)],
-    tile_size: Annotated[int, Query(description="瓦片大小（像素）", ge=64, le=1024)] = 256,
 ) -> Response:
     """获取切片瓦片。"""
     tile_data = SVSService.get_tile(
@@ -69,7 +56,6 @@ async def get_tile(
         level=level,
         x=x,
         y=y,
-        tile_size=tile_size,
     )
     return Response(content=tile_data, media_type="image/jpeg")
 
@@ -91,17 +77,19 @@ async def get_thumbnail(
     return Response(content=thumb_data, media_type="image/png")
 
 
-@SVSRouter.post(
-    "/svs/slides/{slide_id}/close",
-    summary="关闭切片",
-    description="关闭指定切片并释放资源",
+@SVSRouter.get(
+    "/svs/slides/{slide_id}/associated/{image_name}",
+    summary="获取关联图像",
+    description="获取切片的关联图像（label 标签图、macro 宏观图等，JPEG 格式）",
 )
-async def close_slide(
+async def get_associated_image(
     slide_id: Annotated[str, Path(description="切片 ID")],
-) -> JSONResponse:
-    """关闭切片。"""
-    SVSService.close_slide(slide_id)
-    return JSONResponse(content={"message": f"切片 {slide_id} 已关闭"})
+    image_name: Annotated[str, Path(description="图像名称（label/macro）")],
+) -> Response:
+    """获取关联图像。"""
+    img_data, mime = SVSService.get_associated_image(slide_id, image_name)
+    media_type = mime if mime else "image/jpeg"
+    return Response(content=img_data, media_type=media_type)
 
 
 @SVSRouter.get(

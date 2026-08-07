@@ -1,12 +1,13 @@
-"""SVS 切片服务层（基于 OpenSlide）。
+"""SVS 切片服务层（基于 large_image）。
 
-提供 SVS/SLD/NDPI 等切片文件的读取和瓦片服务，
-供 OpenSeadragon 等前端查看器使用。
+使用 Kitware large_image 库提供 SVS/SLD/NDPI/TIFF 等切片文件的
+读取和瓦片服务，供 OpenSeadragon 等前端查看器使用。
+
+large_image 内置缓存和边界处理，无需手动管理 slide 对象。
 """
 
 from __future__ import annotations
 
-import io
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -15,28 +16,29 @@ from fastapi import HTTPException, status
 
 from app.core.logger import log
 
-# 可选依赖：OpenSlide
+# 可选依赖：large_image
 try:
-    import openslide
-    HAS_OPenslide = True
+    import large_image
+    from large_image.exceptions import TileSourceXYZRangeError, TileSourceError
+    HAS_LARGE_IMAGE = True
 except ImportError:
-    HAS_OPenslide = False
-    log.warning("openslide-python 未安装，SVS 功能不可用。请执行: pip install openslide-python")
+    HAS_LARGE_IMAGE = False
+    log.warning("large-image 未安装，SVS 功能不可用。请执行: pip install large-image[openslide]")
 
 
 class SVSService:
-    """SVS 切片服务。"""
+    """SVS 切片服务（基于 large_image）。"""
 
-    # Slide 缓存（key: slide_id, value: openslide.OpenSlide）
-    _slides: dict[str, Any] = {}
+    # slide_id -> file_path 映射（large_image 自带 tile source 缓存）
+    _slide_paths: dict[str, str] = {}
 
     @classmethod
     def _check_dependency(cls) -> None:
-        """检查 OpenSlide 依赖是否可用。"""
-        if not HAS_OPenslide:
+        """检查 large_image 依赖是否可用。"""
+        if not HAS_LARGE_IMAGE:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="服务器缺少 openslide-python 依赖，请执行: pip install openslide-python",
+                detail="服务器缺少 large-image 依赖，请执行: pip install large-image[openslide]",
             )
 
     @classmethod
@@ -61,6 +63,23 @@ class SVSService:
         return hashlib.md5(file_path.encode()).hexdigest()[:16]
 
     @classmethod
+    def _get_tile_source(cls, slide_id: str) -> Any:
+        """获取已打开的 tile source。"""
+        file_path = cls._slide_paths.get(slide_id)
+        if file_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Slide 未找到: {slide_id}，请先调用 open 接口",
+            )
+        try:
+            return large_image.getTileSource(file_path)
+        except TileSourceError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"无法打开切片文件: {str(e)}",
+            )
+
+    @classmethod
     def open_slide(cls, file_path: str) -> dict[str, Any]:
         """打开 SVS 文件并返回元信息。
 
@@ -74,63 +93,76 @@ class SVSService:
         path = cls._path_safety_check(file_path)
         slide_id = cls._get_slide_id(file_path)
 
-        # 如果已缓存，直接返回
-        if slide_id in cls._slides:
-            return cls._get_slide_info(slide_id, path)
+        # 记录 slide_id -> file_path 映射
+        cls._slide_paths[slide_id] = str(path)
 
         try:
-            slide = openslide.open_slide(str(path))
-            cls._slides[slide_id] = slide
+            ts = large_image.getTileSource(str(path))
+            meta = ts.getMetadata()
             log.info(f"打开 SVS 文件: {path}, ID: {slide_id}")
-        except Exception as e:
+            return cls._build_slide_info(slide_id, str(path), meta)
+        except TileSourceError as e:
             log.error(f"打开 SVS 文件失败: {path}, 错误: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"无法打开切片文件: {str(e)}",
             )
-
-        return cls._get_slide_info(slide_id, path)
-
-    @classmethod
-    def _get_slide_info(cls, slide_id: str, path: Path) -> dict[str, Any]:
-        """获取切片元信息。"""
-        slide = cls._slides.get(slide_id)
-        if slide is None:
+        except Exception as e:
+            log.error(f"打开 SVS 文件失败: {path}, 错误: {e}")
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Slide 未打开",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"打开切片文件失败: {str(e)}",
             )
 
+    @classmethod
+    def _build_slide_info(cls, slide_id: str, file_path: str, meta: dict) -> dict[str, Any]:
+        """从 large_image metadata 构建前端所需的切片信息。"""
+        levels = meta["levels"]
+        size_x = meta["sizeX"]
+        size_y = meta["sizeY"]
+        tile_width = meta["tileWidth"]
+        tile_height = meta["tileHeight"]
+
+        # 计算各层级尺寸和下采样系数
+        level_dimensions = []
+        level_downsamples = []
+        for level in range(levels):
+            downsample = 2 ** level
+            level_downsamples.append(float(downsample))
+            level_dimensions.append([
+                max(1, size_x // downsample),
+                max(1, size_y // downsample),
+            ])
+
+        return {
+            "slide_id": slide_id,
+            "file_path": file_path,
+            "width": size_x,
+            "height": size_y,
+            "tile_width": tile_width,
+            "tile_height": tile_height,
+            "level_count": levels,
+            "level_downsamples": level_downsamples,
+            "level_dimensions": level_dimensions,
+            "mm_x": meta.get("mm_x"),
+            "mm_y": meta.get("mm_y"),
+            "magnification": meta.get("magnification"),
+        }
+
+    @classmethod
+    def get_slide_info(cls, slide_id: str) -> dict[str, Any]:
+        """获取切片元信息。"""
+        cls._check_dependency()
+        file_path = cls._slide_paths.get(slide_id)
+        if file_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Slide 未找到: {slide_id}",
+            )
         try:
-            width, height = slide.dimensions
-            level_count = slide.level_count
-            level_downsamples = list(slide.level_downsamples)
-
-            # 获取关键属性
-            props = slide.properties
-            properties = {
-                "mpp_x": float(props.get("openslide.mpp-x", 0)) if props.get("openslide.mpp-x") else None,
-                "mpp_y": float(props.get("openslide.mpp-y", 0)) if props.get("openslide.mpp-y") else None,
-                "vendor": props.get("openslide.vendor"),
-                "quickhash": props.get("openslide.quickhash-1"),
-                "hash": props.get("openslide.hash"),
-                "comment": props.get("openslide.comment"),
-                "objective": props.get("openslide.objective-power"),
-                "source_md5": props.get("openslide.source-md5"),
-            }
-
-            return {
-                "slide_id": slide_id,
-                "file_path": str(path),
-                "width": width,
-                "height": height,
-                "level_count": level_count,
-                "level_downsamples": level_downsamples,
-                "level_dimensions": [
-                    list(slide.level_dimensions[i]) for i in range(level_count)
-                ],
-                "properties": properties,
-            }
+            ts = large_image.getTileSource(file_path)
+            meta = ts.getMetadata()
+            return cls._build_slide_info(slide_id, file_path, meta)
         except Exception as e:
             log.error(f"获取切片信息失败: {slide_id}, 错误: {e}")
             raise HTTPException(
@@ -145,51 +177,34 @@ class SVSService:
         level: int,
         x: int,
         y: int,
-        tile_size: int = 256,
     ) -> bytes:
         """获取指定瓦片。
+
+        large_image 自动处理边界，超出范围会抛出 TileSourceXYZRangeError。
 
         Args:
             slide_id: 切片 ID
             level: 层级（0 为最高分辨率）
             x: 瓦片 X 坐标
             y: 瓦片 Y 坐标
-            tile_size: 瓦片大小（像素）
 
         Returns:
             JPEG 格式的瓦片数据
         """
         cls._check_dependency()
-        slide = cls._slides.get(slide_id)
-        if slide is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Slide 未找到: {slide_id}",
-            )
+        ts = cls._get_tile_source(slide_id)
 
         try:
-            # 计算实际的图像坐标
-            downsample = slide.level_downsamples[level]
-            x_abs = int(x * tile_size * downsample)
-            y_abs = int(y * tile_size * downsample)
-
-            # 读取瓦片
-            region = slide.read_region(
-                (x_abs, y_abs),
-                level,
-                (tile_size, tile_size),
+            tile_data = ts.getTile(
+                x, y, level,
+                format=large_image.tilesource.TILE_FORMAT_IMAGE,
+                encoding="JPEG",
             )
-
-            # 转为 JPEG
-            img = region.convert("RGB")
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=85)
-            return buffer.getvalue()
-
-        except IndexError:
+            return bytes(tile_data)
+        except TileSourceXYZRangeError:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Level {level} 不存在",
+                detail=f"瓦片超出范围: level={level}, x={x}, y={y}",
             )
         except Exception as e:
             log.error(f"获取瓦片失败: slide={slide_id}, level={level}, x={x}, y={y}, 错误: {e}")
@@ -214,19 +229,15 @@ class SVSService:
             PNG 格式的缩略图数据
         """
         cls._check_dependency()
-        slide = cls._slides.get(slide_id)
-        if slide is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Slide 未找到: {slide_id}",
-            )
+        ts = cls._get_tile_source(slide_id)
 
         try:
-            # 使用 OpenSlide 内置的缩略图方法
-            thumb = slide.get_thumbnail((max_size, max_size))
-            buffer = io.BytesIO()
-            thumb.save(buffer, format="PNG")
-            return buffer.getvalue()
+            thumb_data, _mime = ts.getThumbnail(
+                width=max_size,
+                height=max_size,
+                encoding="PNG",
+            )
+            return bytes(thumb_data)
         except Exception as e:
             log.error(f"获取缩略图失败: slide={slide_id}, 错误: {e}")
             raise HTTPException(
@@ -235,24 +246,44 @@ class SVSService:
             )
 
     @classmethod
-    def close_slide(cls, slide_id: str) -> None:
-        """关闭切片并释放资源。"""
-        slide = cls._slides.pop(slide_id, None)
-        if slide is not None:
-            try:
-                slide.close()
-                log.info(f"关闭 SVS 文件: {slide_id}")
-            except Exception as e:
-                log.warning(f"关闭切片失败: {slide_id}, 错误: {e}")
+    def get_associated_image(
+        cls,
+        slide_id: str,
+        image_name: str,
+    ) -> tuple[bytes, str]:
+        """获取关联图像（label/macro 等）。
+
+        Args:
+            slide_id: 切片 ID
+            image_name: 图像名称（label、macro）
+
+        Returns:
+            (图像数据, mime_type)
+        """
+        cls._check_dependency()
+        ts = cls._get_tile_source(slide_id)
+
+        try:
+            img_data, mime = ts.getAssociatedImage(image_name, encoding="JPEG")
+            return bytes(img_data), mime
+        except Exception as e:
+            log.error(f"获取关联图像失败: slide={slide_id}, name={image_name}, 错误: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"关联图像 '{image_name}' 不可用: {str(e)}",
+            )
 
     @classmethod
     def list_available_slides(cls) -> list[str]:
         """列出已缓存的切片 ID。"""
-        return list(cls._slides.keys())
+        return list(cls._slide_paths.keys())
 
     @classmethod
     def clear_cache(cls) -> None:
         """清理所有缓存。"""
-        for slide_id in list(cls._slides.keys()):
-            cls.close_slide(slide_id)
+        cls._slide_paths.clear()
+        try:
+            large_image.tilesource.utilities.CacheCache.caches = {}
+        except Exception:
+            pass
         log.info("SVS 缓存已清理")

@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response
 from fastapi.responses import JSONResponse
-
+from app.config.setting import settings
 from .service import SVSService
 
 # SVS 专用路由
@@ -22,7 +22,7 @@ SVSRouter = APIRouter(tags=["SVS"])
 )
 async def open_slide() -> JSONResponse:
     """打开 SVS 文件并返回元信息。"""
-    result = SVSService.open_slide("D:/home/svs/WSI_sample/B1229048-2.svs")
+    result = SVSService.open_slide(f"{settings.SVS_DATA_DIR}/WSI_sample/B1229048-2.svs")
     return JSONResponse(content=result)
 
 

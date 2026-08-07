@@ -99,7 +99,6 @@ class SVSService:
         try:
             ts = large_image.getTileSource(str(path))
             meta = ts.getMetadata()
-            log.info(f"打开 SVS 文件: {path}, ID: {slide_id}")
             return cls._build_slide_info(slide_id, str(path), meta)
         except TileSourceError as e:
             log.error(f"打开 SVS 文件失败: {path}, 错误: {e}")

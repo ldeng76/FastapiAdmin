@@ -236,6 +236,7 @@ class Settings(BaseSettings):
     # dev 默认指向示例数据；生产通过 .env 覆盖。
     DICOM_DATA_DIR: Path = BASE_DIR.parent / "docs" / "dicom_demo"
     DICOM_STATIC_DIR:  Path = BASE_DIR.parent / "docs" / "dicom_static"
+    SVS_DATA_DIR: Path = BASE_DIR.parent / "docs" / "svs_demo"
     # ================================================= #
     # ************** ETL-2 脱敏落库配置 (ADR-0001/0006) *** #
     # ================================================= #

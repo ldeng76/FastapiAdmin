@@ -12,8 +12,9 @@ export PNPM_CONFIG_CONFIRM_MODULES_PURGE=false
 DEPLOY_DIR="/home/dzy/wk/lnrs"
 BACKEND_DIR="${DEPLOY_DIR}/backend"
 FRONTEND_DIR="${DEPLOY_DIR}/frontend/web"
-SERVICE_NAME="lnrs-backend"
-BRANCH="main"
+ENVIRONMENT="${ENVIRONMENT:-h196_3}"
+BACKEND_PORT="${BACKEND_PORT:-8610}"
+BACKEND_LOG="${DEPLOY_DIR}/backend/.run/${ENVIRONMENT}.log"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -56,13 +57,31 @@ cd "${FRONTEND_DIR}"
 pnpm install --frozen-lockfile || pnpm install
 pnpm vite build
 
-log ">>> 重启后端服务"
-sudo systemctl restart "${SERVICE_NAME}"
-sleep 3
+log ">>> 重启后端服务 (profile=${ENVIRONMENT})"
+# 停掉旧进程（匹配 main.py run 或 uvicorn 监听 BACKEND_PORT）
+pkill -f "main.py run" 2>/dev/null || true
+pkill -f "uvicorn.*:${BACKEND_PORT}" 2>/dev/null || true
+sleep 2
 
-if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
-    log ">>> 部署成功: ${SERVICE_NAME} is active"
-else
-    log ">>> 部署失败: ${SERVICE_NAME} is not active" >&2
-    exit 1
-fi
+mkdir -p "$(dirname "${BACKEND_LOG}")"
+cd "${BACKEND_DIR}"
+ENVIRONMENT="${ENVIRONMENT}" \
+    nohup uv run main.py run --env="${ENVIRONMENT}" \
+    >>"${BACKEND_LOG}" 2>&1 &
+BACKEND_PID=$!
+disown "${BACKEND_PID}" 2>/dev/null || true
+log ">>> 后端进程已启动: pid=${BACKEND_PID}, 日志=${BACKEND_LOG}"
+
+# 等待端口就绪（最多 30s）
+for i in $(seq 1 30); do
+    if ss -tln 2>/dev/null | grep -q ":${BACKEND_PORT}\b"; then
+        log ">>> 部署成功: 端口 ${BACKEND_PORT} 已监听"
+        exit 0
+    fi
+    sleep 1
+done
+
+log ">>> 部署失败: 端口 ${BACKEND_PORT} 在 30s 内未监听" >&2
+log ">>> 最近日志:" >&2
+tail -50 "${BACKEND_LOG}" >&2 || true
+exit 1

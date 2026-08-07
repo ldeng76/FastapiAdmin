@@ -9,7 +9,7 @@ eval "$(fnm env)" 2>/dev/null || true
 # 避免 pnpm 检测到 node_modules 与 lockfile 不一致时交互式询问"是否整体重装"
 export PNPM_CONFIG_CONFIRM_MODULES_PURGE=false
 
-DEPLOY_DIR="/home/dzy/wk/lnrs_web"
+DEPLOY_DIR="/home/dzy/wk/lnrs"
 BACKEND_DIR="${DEPLOY_DIR}/backend"
 FRONTEND_DIR="${DEPLOY_DIR}/frontend/web"
 SERVICE_NAME="lnrs-backend"
@@ -19,7 +19,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 cd "${DEPLOY_DIR}"
 
-log ">>> 开始部署 lnrs_web"
+log ">>> 开始部署 lnrs"
 
 OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
 git -c http.extraHeader="PRIVATE-TOKEN: glpat-U4_Phcn8ruP819zB-EIdrm86MQp1OjEH.01.0w1y85m2b" fetch origin

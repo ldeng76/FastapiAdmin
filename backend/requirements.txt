@@ -48,7 +48,6 @@ typer==0.19.0                          # 命令行工具
 user-agents==2.2.0                     # 获取用户UA
 uvicorn==0.30.6                        # uvicorn web 框架
 websockets>=15.0.1,<16.0               # websocket（prefect>=3.5 需 >=15.0.1；与部署 requirements.txt 一致）
-openslide-python>=1.4.6                # SVS 切片文件读取（WSI 全切片成像）
-openslide-bin>=4.0.1.2                 # OpenSlide DLL（Windows 二进制依赖）
+openslide-bin>=4.0.1.2 ; sys_platform == 'win32'  # OpenSlide DLL（仅 Windows；Linux 用 apt install openslide-tools）
 large-image>=1.35.0                    # 大图瓦片服务 SDK（Kitware）
-large-image-source-openslide>=1.35.0   # large_image 的 OpenSlide 数据源
+large-image-source-openslide>=1.35.0   # large_image 的 OpenSlide 数据源（自动依赖 openslide-python）

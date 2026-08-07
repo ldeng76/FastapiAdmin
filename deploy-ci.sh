@@ -6,7 +6,7 @@ exec > >(tee -a "$DIAG") 2>&1
 export HOME="/home/dzy"
 export PATH="/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/home/dzy/.cache/uv}"
-export PATH="/home/dzy/pg18/bin:$PATH"
+export PATH="/home/dzy/pg18/bin:/opt/node24/bin:$PATH"
 eval "$(fnm env)" 2>/dev/null || true
 # 避免 pnpm 检测到 node_modules 与 lockfile 不一致时交互式询问"是否整体重装"
 export PNPM_CONFIG_CONFIRM_MODULES_PURGE=false

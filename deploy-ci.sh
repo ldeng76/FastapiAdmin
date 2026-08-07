@@ -17,7 +17,7 @@ ENVIRONMENT="${ENVIRONMENT:-h196_3}"
 BACKEND_PORT="${BACKEND_PORT:-8610}"
 BACKEND_HEALTH_URL="${BACKEND_HEALTH_URL:-http://127.0.0.1:${BACKEND_PORT}/api/v1/docs}"
 BACKEND_LOG="${DEPLOY_DIR}/backend/.run/${ENVIRONMENT}.log"
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+BRANCH="main"
 cd "${DEPLOY_DIR}"
 log ">>> 开始部署 lnrs (profile=${ENVIRONMENT})"
 

@@ -12,7 +12,7 @@ click==8.1.7                           # 命令行参数解析
 croniter>=1.0.12,<5.0.0                # cron（与 prefect 约束一致；部署 requirements.txt 同源）
 cryptography==45.0.2                   # mysql8 密码加密
 dependency-injector==4.49.0              # 依赖注入容器
-duckdb>=1.5.4                           # Parquet 列式查询引擎（医学数据浏览）
+duckdb==1.2.2                             # Parquet 列式查询引擎（医学数据浏览）
 fastapi==0.115.2                       # fastapi 框架
 fastapi-limiter==0.1.6                 # 接口限流
 greenlet==3.1.1                        # 协程框架

@@ -53,7 +53,7 @@ dependencies = [
     "uvicorn==0.30.6",                          # uvicorn web 框架
     "websockets>=15.0.1,<16.0",                 # websocket（prefect>=3.5 需 >=15.0.1；与部署 requirements.txt 一致）
     "tomli>=2.0.1 ; python_full_version < '3.15'",
-    "duckdb>=1.5.4",
+    "duckdb==1.2.2",
     "pydicom>=3.0.2",
     "starlette>=0.40.0",
 ]

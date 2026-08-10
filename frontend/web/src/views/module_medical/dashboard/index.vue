@@ -174,6 +174,11 @@
   </el-container>
   <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showPatientDetail" fullscreen>
     <PatientDetail v-if="showPatientDetail" :data="showPatientDetailData" :getDictLabel="getDictLabel" />
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="showPatientDetail = false" type="primary"  plain>关闭</el-button>
+      </div>
+    </template>
   </el-dialog>
 </template>
 

@@ -3,10 +3,13 @@
     <el-col :span="4" class="overflow-y-auto">
       <el-collapse expand-icon-position="left" v-model="activeNames" style="border: 1px solid var(--el-collapse-border-color);">
         <el-collapse-item title="CT" name="ct" class="pl-2 pr-2">
-          <el-table :data="[{fileName:'0100_000001_1.3.46.670589.33.1.63896480002311796600001.5635762842026550517'}]" stripe>
+          <el-table :data="[
+              {fileName:'0100_000001_1.3.46.670589.33.1.63896480002311796600001.5635762842026550517',type:'dicom'},
+              {fileName:'case_5.nii',type:'nii'},
+            ]" stripe>
             <el-table-column prop="fileName">
               <template #default="{ row: row }">
-                <span style="cursor: pointer"  @click="seeImage(row,'ct')">{{ row.fileName }}</span>
+                <div style="cursor: pointer"  @click="seeImage(row,row.type)">{{ row.fileName }}</div>
               </template>
             </el-table-column>
           </el-table>
@@ -15,7 +18,7 @@
           <el-table :data="[{fileName:'B1229048-2.svs'}]" stripe>
             <el-table-column prop="fileName">
               <template #default="{ row: row }">
-                <span style="cursor: pointer" @click="seeImage(row,'svs')">{{ row.fileName }}</span>
+                <div style="cursor: pointer" @click="seeImage(row,'svs')">{{ row.fileName }}</div>
               </template>
             </el-table-column>
           </el-table>
@@ -38,7 +41,8 @@
           <ElDescriptionsItem label="首次发现结节日期">{{ data?.first_nodule_date }}</ElDescriptionsItem>
         </ElDescriptions>
         <div class="flex-1">
-          <iframe v-if="currImageType == 'ct'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.2.826.0.1.3680043.8.498.36146698500196822387015259187735900057"></iframe>
+          <iframe v-if="currImageType == 'dicom'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.2.826.0.1.3680043.8.498.36146698500196822387015259187735900057"></iframe>
+          <iframe v-if="currImageType == 'nii'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/niftiViewer.html"></iframe>
           <iframe v-if="currImageType == 'svs'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/svsViewer.html"></iframe>
         </div>
       </div>
@@ -59,8 +63,11 @@ defineProps<{
 const activeNames = ref(['ct','svs'])
 const currImageType = ref()
 function seeImage(row : any,type : string){
-  loadingInstance.value = ElLoading.service()
-  currImageType.value = type
+  if(type !== currImageType.value){
+    loadingInstance.value = ElLoading.service()
+    currImageType.value = type
+  }
+
 }
 function closeLoading(){
   if(loadingInstance.value != null){
@@ -68,6 +75,6 @@ function closeLoading(){
   }
 }
 onMounted(function (){
-  seeImage({},'ct')
+  seeImage({},'dicom')
 })
 </script>

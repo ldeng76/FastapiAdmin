@@ -1,0 +1,22 @@
+[Unit]
+Description=lnrs backend (FastAPI)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=dzy
+WorkingDirectory=/home/dzy/wk/lnrs/backend
+Environment="HOME=/home/dzy"
+Environment="PATH=/home/dzy/.local/bin:/usr/local/bin:/usr/bin:/home/dzy/pg18/bin:/opt/node24/bin"
+Environment="UV_CACHE_DIR=/home/dzy/.cache/uv"
+Environment="ENVIRONMENT=h196_3"
+ExecStart=/usr/local/bin/uv run main.py run --env=h196_3
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/dzy/wk/lnrs/backend/.run/h196_3.log
+StandardError=append:/home/dzy/wk/lnrs/backend/.run/h196_3.log
+
+[Install]
+WantedBy=multi-user.target
+# 1786076353 验证 systemd + HTTP 探活

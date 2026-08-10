@@ -172,10 +172,15 @@
       </el-main>
     </el-container>
   </el-container>
+  <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showPatientDetail" fullscreen>
+    <PatientDetail v-if="showPatientDetail" :data="showPatientDetailData" :getDictLabel="getDictLabel" />
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { CirclePlus, CircleCheckFilled } from "@element-plus/icons-vue";
+import PatientDetail from "./PatientDetail.vue"
+
 import filterConfig, {
   addConfigKey,
   FilterDictDataTable,
@@ -224,7 +229,8 @@ const patientData = ref<{
   },
   data:[]
 })
-
+const showPatientDetail = ref(false)
+const showPatientDetailData = ref<PatientListItem>()
 const patientList = {
   handlePatientSizeChange(newSize: number){
     patientList.upData(1,newSize)
@@ -233,7 +239,8 @@ const patientList = {
     patientList.upData(newCurrent,patientData.value.pagination.size)
   },
   showDicom(row:PatientListItem){
-    window.open('/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.2.826.0.1.3680043.8.498.86447994753366476735459521217412772967',"_blank")
+    showPatientDetailData.value = row
+    showPatientDetail.value = true;
   },
   upData(current:number,size:number){
     let params = getSearchParams();
@@ -435,7 +442,11 @@ onMounted(async function () {
   await searchCall();
 });
 </script>
-
+<style>
+.patientDetailBody{
+  flex: 1;
+}
+</style>
 <style scoped>
 .top-header{
   background-color: #fff;
@@ -464,4 +475,5 @@ onMounted(async function () {
 .echarts-card{
   --el-card-border-radius : 20px !important;
 }
+
 </style>

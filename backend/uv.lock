@@ -2,10 +2,31 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
-    "python_full_version >= '3.13'",
-    "python_full_version == '3.12.*'",
-    "python_full_version < '3.12'",
+    "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version >= '3.13' and platform_machine == 'AMD64' and sys_platform == 'win32'",
+    "python_full_version >= '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "(python_full_version >= '3.13' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and platform_machine == 'AMD64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.12.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and platform_machine == 'AMD64' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "(python_full_version < '3.12' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
+
+[manifest]
+
+[[manifest.dependency-metadata]]
+name = "large-image-source-openslide"
+version = "1.35.1"
 
 [[package]]
 name = "agno"
@@ -247,10 +268,14 @@ dependencies = [
     { name = "httpx" },
     { name = "itsdangerous" },
     { name = "jinja2" },
+    { name = "large-image" },
+    { name = "large-image-source-openslide" },
     { name = "loguru" },
     { name = "numpy" },
     { name = "openai" },
     { name = "openpyxl" },
+    { name = "openslide-bin", marker = "sys_platform == 'win32'" },
+    { name = "openslide-python" },
     { name = "pandas" },
     { name = "passlib" },
     { name = "pillow" },
@@ -308,10 +333,14 @@ requires-dist = [
     { name = "httpx", specifier = "==0.27.2" },
     { name = "itsdangerous", specifier = "==2.2.0" },
     { name = "jinja2", specifier = "==3.1.6" },
+    { name = "large-image", specifier = ">=1.35.0" },
+    { name = "large-image-source-openslide", specifier = ">=1.35.0" },
     { name = "loguru", specifier = "==0.7.3" },
     { name = "numpy", specifier = ">=2.0,<2.1" },
     { name = "openai", specifier = "==2.28.0" },
     { name = "openpyxl", specifier = "==3.1.5" },
+    { name = "openslide-bin", marker = "sys_platform == 'win32'", specifier = ">=4.0.1.2" },
+    { name = "openslide-python", specifier = ">=1.4.6" },
     { name = "pandas", specifier = "==2.2.3" },
     { name = "passlib", specifier = "==1.7.4" },
     { name = "pillow", specifier = "==11.0.0" },
@@ -1278,6 +1307,37 @@ wheels = [
 ]
 
 [[package]]
+name = "large-image"
+version = "1.35.2"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "cachetools" },
+    { name = "numpy" },
+    { name = "palettable" },
+    { name = "pillow" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/0b/86/caa89b5a061d8e58aceea48ed490a45ab257a1fb72a00f9b86c23575da05/large_image-1.35.2.tar.gz", hash = "sha256:548240e1215d20b640a8c5a6a756cf8915a247a6cf906377aeb8d462d44e0a5f", size = 899922, upload-time = "2026-08-06T19:21:36.665Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ce/83/46bfbea5e0cc8822628cd834252d4153ce2d531cc26283a39527beabb1e0/large_image-1.35.2-py3-none-any.whl", hash = "sha256:7ddd110146dadd54a976734973d56ce6e828a32b518fe1e25328072ec9d5433e", size = 151415, upload-time = "2026-08-06T19:21:34.522Z" },
+]
+
+[[package]]
+name = "large-image-source-openslide"
+version = "1.35.2"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "large-image" },
+    { name = "openslide-bin", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "openslide-python" },
+    { name = "tifftools" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b3/95/42a3b79a721d3522151a96be5a5c1717a1bce9b481ebbb68817cac54c04b/large_image_source_openslide-1.35.2.tar.gz", hash = "sha256:c0e633337131429a39ec20d89e0b16332661221cb4f9263b228844e778defcb6", size = 15504, upload-time = "2026-08-06T19:23:02.051Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fa/45/a589582c4da71259b9a41e5808c0e5911ba00b74f56daf5f4ffc3bd54b74/large_image_source_openslide-1.35.2-py3-none-any.whl", hash = "sha256:fb93ca402ec54bb11d48e95ca3ff9fd734ad14830dea74caf59fd66c39b5d318", size = 13188, upload-time = "2026-08-06T19:23:00.691Z" },
+]
+
+[[package]]
 name = "loguru"
 version = "0.7.3"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -1538,6 +1598,41 @@ wheels = [
 ]
 
 [[package]]
+name = "openslide-bin"
+version = "4.0.1.2"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/59/8b/1bf9f45af355b2679444b3452e034f133b36af69c3aa710ff5f56b440345/openslide_bin-4.0.1.2.tar.gz", hash = "sha256:83c9a4a598f3a5fe1dea83e123745e48b94ce7eab99833f04902bdf4fa0af1db", size = 18591480, upload-time = "2026-06-20T03:57:49.152Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/21/3d/2e34b800de81084dbdd5d00680d0640be2e52b6bfe309b9948e5ae75ec33/openslide_bin-4.0.1.2-py3-none-macosx_11_0_universal2.whl", hash = "sha256:230cdb1e2cfa88b9f28ca8f51a7b47065b20a855ad3e7ba141cd663e5a713e8c", size = 3208622, upload-time = "2026-06-20T03:57:42.206Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/d6/4d/757d272747f37bba14a1e9d02656faf8bab23271ccbdb7f1ab6cdc1d2ca1/openslide_bin-4.0.1.2-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:0dff14807e1b7ccfd476ca5b6945edf46908b76ec61777d35acb2a514e205c30", size = 2660275, upload-time = "2026-06-20T03:57:44.015Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/da/f0/f4d494e1df28594cff1ea0f3921665011ee3fc48a903653ce864cb27e180/openslide_bin-4.0.1.2-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:8ac4aa3a2277ed5e218ca0019db65bdd6e853f865eb4edd3da00e2f4acf0c923", size = 2758562, upload-time = "2026-06-20T03:57:45.571Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/45/c4/96d8b3b867ee2f304445076d700f6a1c9846614045cb299fc3f1d9bb5866/openslide_bin-4.0.1.2-py3-none-win_amd64.whl", hash = "sha256:0c882f0693e4b43e187a51469bff8057de381e865765ac5508a7e1feba319116", size = 3852125, upload-time = "2026-06-20T03:57:47.223Z" },
+]
+
+[[package]]
+name = "openslide-python"
+version = "1.4.6"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "pillow" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/74/76/64718cf7c8e297db2c7e5e6a204795d74541f1ba9da7bf5be85155f20d81/openslide_python-1.4.6.tar.gz", hash = "sha256:5df25a68507c7574b219b548f814b088ade8e04c36990c1472813ee16797bfb1", size = 430943, upload-time = "2026-06-08T01:12:39.6Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/92/22/7b5609514102fb3e02e4f8b87a58c1ce2f2b5bb0734462728ffc473f1fa7/openslide_python-1.4.6-cp311-abi3-macosx_10_9_universal2.whl", hash = "sha256:6d58a97324b3c42ef65085329bffa346a30d5607359a82c983faebc54750fc43", size = 33102, upload-time = "2026-06-08T01:12:26.467Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/89/be/7abab64f5dc53af384614f43ee2e5fab2b505cbb6d4c561172457d624eab/openslide_python-1.4.6-cp311-abi3-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:59caee04d657cccc88457148a34a507d492fd4ce9c7bcc16fca7d3bbd0a77fa0", size = 36748, upload-time = "2026-06-08T01:12:27.494Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/49/f2/fb9c87f34a740102ac18748bdc8908f29593878bf9eb5e4f76961f2d875a/openslide_python-1.4.6-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:dd637eccfc051da0b263a966ff8763f6791abb1c68ca08fc0b29062e91cbe6d1", size = 37306, upload-time = "2026-06-08T01:12:28.574Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/42/95/f49de157f4cf503a9bc2eafcf4a2351fffdeb95fee4c17caf63fb4cda7cf/openslide_python-1.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:0c2655e668e467c6fd8db0147924f9753f053586304f5b775e56019a02adee8f", size = 35278, upload-time = "2026-06-08T01:12:29.73Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9b/2c/f0c2fabad9355d31a44136b97cc7c0f0f831a55d9a0f5b15f93ade238aba/openslide_python-1.4.6-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:6445abdbd66b680deb98b723cada82535c872cde8941f59b0b341e36c0f406f8", size = 33142, upload-time = "2026-06-08T01:12:30.784Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/79/0d/76131ac22c15f0cd336aa24cd52190f7fd2ff0ee6be1ecf7b9edb085b0de/openslide_python-1.4.6-cp313-cp313t-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:2ea7dd69783651af4e1b2559abce24fc62743d403f9f99fcc4eb21b407f9f716", size = 40633, upload-time = "2026-06-08T01:12:32.002Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6b/05/e5b8a16aff510e73ca59f918aba38af71b029b1538704bd7690713ea2f22/openslide_python-1.4.6-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f038584c2a47be799782a1c13b9f50a7cdf20cdb0371cf9a5210314898e403cd", size = 41187, upload-time = "2026-06-08T01:12:32.953Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/88/06/9f565ffb5955398fb74c5dc9fb5d7654f39a86f681afb8901c2e262d555f/openslide_python-1.4.6-cp313-cp313t-win_amd64.whl", hash = "sha256:3401cc46dfa6b2cf729027d405d5bccbaf48e5ed2c42fccf6b375fc67f843aa5", size = 35348, upload-time = "2026-06-08T01:12:33.941Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c1/68/46b466e4dee72f35395db422aa84c2eaaef3d182ca4a58920bf3d530189a/openslide_python-1.4.6-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:443b30f28b81b8d08c3aecdf4024ff99c96fb7627f49f237db50f899c3967e20", size = 33157, upload-time = "2026-06-08T01:12:35.05Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/0d/6b/cb991a252b3b259e2cd80abbf2798917d10830aac8f02cf12fcabd97e852/openslide_python-1.4.6-cp314-cp314t-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:0641c621ef8d486ed6fa893eee787945729821b4007fbdaabb3eeec216fa6724", size = 40758, upload-time = "2026-06-08T01:12:36.144Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b2/57/871fd206790fd350038625cafe38960bfbbb79d1ce9d05b73fd299ca8af7/openslide_python-1.4.6-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:41bd70bd3c0850cbd0dc2598c9fcac2e9657724ee860048950d5f147ac4eff2a", size = 41318, upload-time = "2026-06-08T01:12:37.452Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b9/0f/8229aeff5b69cbd343b716399301083d78162fe34e6faaad339e11cd4500/openslide_python-1.4.6-cp314-cp314t-win_amd64.whl", hash = "sha256:9b45a70ae300b70a0aa7e8c438f16cdb899a720f09729fb8cc1e4df0321f88de", size = 35586, upload-time = "2026-06-08T01:12:38.544Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.39.1"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -1625,6 +1720,15 @@ source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a1/d4/1fc4078c65507b51b96ca8f8c3ba19e6a61c8253c72794544580a7b6c24d/packaging-25.0.tar.gz", hash = "sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f", size = 165727, upload-time = "2025-04-19T11:48:59.673Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469, upload-time = "2025-04-19T11:48:57.875Z" },
+]
+
+[[package]]
+name = "palettable"
+version = "3.3.3"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/dc/3d/a5854d60850485bff12f28abfe0e17f503e866763bed61aed4990b604530/palettable-3.3.3.tar.gz", hash = "sha256:094dd7d9a5fc1cca4854773e5c1fc6a315b33bd5b3a8f47064928facaf0490a8", size = 106639, upload-time = "2023-04-19T23:13:35.864Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/cf/f7/3367feadd4ab56783b0971c9b7edfbdd68e0c70ce877949a5dd2117ed4a0/palettable-3.3.3-py2.py3-none-any.whl", hash = "sha256:74e9e7d7fe5a9be065e02397558ed1777b2df0b793a6f4ce1a5ee74f74fb0caa", size = 332251, upload-time = "2023-04-19T23:13:33.996Z" },
 ]
 
 [[package]]
@@ -2940,6 +3044,15 @@ source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ab/e2/e9a00f0ccb71718418230718b3d900e71a5d16e701a3dae079a21e9cd8f8/text-unidecode-1.3.tar.gz", hash = "sha256:bad6603bb14d279193107714b288be206cac565dfa49aa5b105294dd5c4aab93", size = 76885, upload-time = "2019-08-30T21:36:45.405Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a6/a5/c0b6468d3824fe3fde30dbb5e1f687b291608f9473681bbf7dabbf5a87d7/text_unidecode-1.3-py2.py3-none-any.whl", hash = "sha256:1311f10e8b895935241623731c2ba64f4c455287888b18189350b67134a822e8", size = 78154, upload-time = "2019-08-30T21:37:03.543Z" },
+]
+
+[[package]]
+name = "tifftools"
+version = "1.7.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/72/17/c5d5a4120e51fe92489fe20630efd1eb81ebcbab87aa982a7170e34a22d0/tifftools-1.7.0.tar.gz", hash = "sha256:164226faf0c1264c390ccf93c38dbb50f6f5891c428479baf3291b39213563cc", size = 70730, upload-time = "2026-01-14T15:11:00.042Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a1/fb/42c99998e9fd92266b8d4b17ce6d0e8a609960ad0f6cfde800ab66850413/tifftools-1.7.0-py3-none-any.whl", hash = "sha256:f4caf35ea61efdd9181063abc8e551dbbc32e5a8d793aee482342f6f01666e41", size = 51202, upload-time = "2026-01-14T15:10:59.045Z" },
 ]
 
 [[package]]

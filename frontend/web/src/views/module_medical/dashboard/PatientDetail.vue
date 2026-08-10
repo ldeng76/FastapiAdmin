@@ -1,0 +1,73 @@
+<template>
+  <el-row :gutter="10" class="h-full">
+    <el-col :span="4" class="overflow-y-auto">
+      <el-collapse expand-icon-position="left" v-model="activeNames" style="border: 1px solid var(--el-collapse-border-color);">
+        <el-collapse-item title="CT" name="ct" class="pl-2 pr-2">
+          <el-table :data="[{fileName:'0100_000001_1.3.46.670589.33.1.63896480002311796600001.5635762842026550517'}]" stripe>
+            <el-table-column prop="fileName">
+              <template #default="{ row: row }">
+                <span style="cursor: pointer"  @click="seeImage(row,'ct')">{{ row.fileName }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+        <el-collapse-item title="病理" name="svs" class="pl-2 pr-2">
+          <el-table :data="[{fileName:'B1229048-2.svs'}]" stripe>
+            <el-table-column prop="fileName">
+              <template #default="{ row: row }">
+                <span style="cursor: pointer" @click="seeImage(row,'svs')">{{ row.fileName }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
+    </el-col>
+    <el-col :span="20">
+      <div class="flex flex-col h-full">
+        <ElDescriptions :column="6" border size="small">
+          <ElDescriptionsItem label="患者编号">{{ data?.patient_id }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="中心">{{ getDictLabel('med_center',data?.center_code )}}</ElDescriptionsItem>
+          <ElDescriptionsItem label="性别">{{ getDictLabel('med_sex',data?.sex ) }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="出生日期">{{ data?.birth_date }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="年龄">{{ data?.age }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="籍贯">{{ data?.native_place }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="吸烟情况">{{ getDictLabel('med_smoking_status', data?.smoking_status) }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="ABO血型">{{ getDictLabel('med_blood_type_abo', data?.abo_blood_type) }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="RH血型">{{ getDictLabel('med_blood_type_rh', data?.rh_blood_type)  }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="BMI">{{ data?.bmi }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="首次发现结节日期">{{ data?.first_nodule_date }}</ElDescriptionsItem>
+        </ElDescriptions>
+        <div class="flex-1">
+          <iframe v-if="currImageType == 'ct'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.2.826.0.1.3680043.8.498.36146698500196822387015259187735900057"></iframe>
+          <iframe v-if="currImageType == 'svs'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/svsViewer.html"></iframe>
+        </div>
+      </div>
+    </el-col>
+  </el-row>
+</template>
+<script setup lang="ts">
+import {ElDescriptions, ElDescriptionsItem} from "element-plus";
+import {ref ,onMounted} from 'vue';
+import { ElLoading } from 'element-plus'
+import {PatientListItem} from "@/types/module_medical/hospital.ts";
+const loadingInstance = ref()
+defineProps<{
+  data:PatientListItem | undefined,
+  getDictLabel:(key:string,value:any) => string
+}>()
+
+const activeNames = ref(['ct','svs'])
+const currImageType = ref()
+function seeImage(row : any,type : string){
+  loadingInstance.value = ElLoading.service()
+  currImageType.value = type
+}
+function closeLoading(){
+  if(loadingInstance.value != null){
+    loadingInstance.value.close()
+  }
+}
+onMounted(function (){
+  seeImage({},'ct')
+})
+</script>

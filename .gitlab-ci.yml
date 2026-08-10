@@ -3,9 +3,9 @@ stages:
 
 deploy_production:
   stage: deploy
-  only:
-    - main
+  when: manual
+  allow_failure: false
   script:
-    - su - dzy -c "bash /home/dzy/wk/lnrs_web/deploy-ci.sh"
+    - bash /home/dzy/wk/lnrs/deploy-ci.sh
   variables:
     GIT_STRATEGY: none

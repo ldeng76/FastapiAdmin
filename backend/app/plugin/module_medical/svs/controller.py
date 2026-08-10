@@ -20,12 +20,9 @@ SVSRouter = APIRouter(tags=["SVS"])
     summary="打开 SVS 文件",
     description="打开指定路径的 SVS/SLD/NDPI 文件，返回切片元信息",
 )
-async def open_slide(
-    file_path: Annotated[str | None, Query(description="切片文件路径，不传则使用默认路径")] = None,
-) -> JSONResponse:
+async def open_slide() -> JSONResponse:
     """打开 SVS 文件并返回元信息。"""
-    path = file_path or f"{settings.SVS_DATA_DIR}/WSI_sample/B1229048-2.svs"
-    result = SVSService.open_slide(path)
+    result = SVSService.open_slide(f"{settings.SVS_DATA_DIR}/WSI_sample/B1229048-2.svs")
     return JSONResponse(content=result)
 
 
@@ -45,7 +42,7 @@ async def get_slide_info(
 @SVSRouter.get(
     "/svs/slides/{slide_id}/tile",
     summary="获取切片瓦片",
-    description="获取指定层级和坐标的瓦片图像（JPEG 格式）",
+    description="获取指定层级和坐标的瓦片图像（JPEG 格式）。瓦片大小由切片文件决定（通常为 256 或 512 像素）。",
 )
 async def get_tile(
     slide_id: Annotated[str, Path(description="切片 ID")],

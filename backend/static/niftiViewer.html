@@ -657,19 +657,20 @@
 
           onWheel(e, view) {
             const delta = e.deltaY > 0 ? 1 : -1;
+            const newCrosshair = { ...this.crosshair, visible: true };
             if (view === 'axial') {
               this.axialSlice = Math.max(0, Math.min(this.dims[2] - 1, this.axialSlice + delta));
-              this._updateRangeValues();
-              this.renderAxial();
+              newCrosshair.z = this.axialSlice;
             } else if (view === 'coronal') {
               this.coronalSlice = Math.max(0, Math.min(this.dims[1] - 1, this.coronalSlice + delta));
-              this._updateRangeValues();
-              this.renderCoronal();
+              newCrosshair.y = this.coronalSlice;
             } else if (view === 'sagittal') {
               this.sagittalSlice = Math.max(0, Math.min(this.dims[0] - 1, this.sagittalSlice + delta));
-              this._updateRangeValues();
-              this.renderSagittal();
+              newCrosshair.x = this.sagittalSlice;
             }
+            this.crosshair = newCrosshair;
+            this._updateRangeValues();
+            this.renderAll();
           },
         },
       }).mount('#app');

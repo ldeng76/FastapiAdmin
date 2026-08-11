@@ -1,679 +1,893 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NIfTI MPR 查看器</title>
-    <script src="/api/v1/static/nifti/vue.global.prod.js"></script>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; }
-      #app { width: 100vw; height: 100vh; display: flex; flex-direction: column; }
-      .topbar { height: 44px; background: #111; display: flex; align-items: center; padding: 0 16px; gap: 12px; border-bottom: 1px solid #222; flex-shrink: 0; }
-      .topbar .title { font-size: 0.9rem; color: #6ea8fe; white-space: nowrap; }
-      .topbar .info { font-size: 0.78rem; color: #777; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .topbar .palette-sel { background: #1a1a2e; border: 1px solid #333; color: #ccc; padding: 4px 8px; border-radius: 4px; font-size: 0.78rem; }
-      .topbar .btn { background: #1a3a5c; border: none; color: #ccc; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 0.78rem; }
-      .topbar .btn:hover { background: #2a5a8c; }
-      .grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1px; background: #1a1a1a; min-height: 0; overflow: hidden; }
-      .panel { background: #000; display: flex; flex-direction: column; position: relative; overflow: hidden; }
-      .panel-header { position: absolute; top: 6px; left: 8px; z-index: 10; font-size: 0.75rem; color: rgba(180,200,255,0.7); text-shadow: 0 0 3px #000; pointer-events: none; }
-      .panel-info { position: absolute; top: 6px; right: 8px; z-index: 10; font-size: 0.7rem; color: rgba(180,200,255,0.6); text-shadow: 0 0 3px #000; pointer-events: none; }
-      .panel-wl { position: absolute; bottom: 32px; right: 8px; z-index: 10; font-size: 0.7rem; color: rgba(180,200,255,0.6); text-shadow: 0 0 3px #000; pointer-events: none; }
-      .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 4px; min-height: 0; }
-      canvas { cursor: grab; user-select: none; image-rendering: pixelated; }
-      canvas:active { cursor: grabbing; }
-      .slider-wrap { height: 28px; display: flex; align-items: center; padding: 0 10px; gap: 8px; background: #111; border-top: 1px solid #222; }
-      .slider-wrap label { font-size: 0.7rem; color: #666; white-space: nowrap; }
-      .slider-wrap input[type=range] { flex: 1; accent-color: #4a90d9; height: 4px; }
-      .slider-wrap .val { font-size: 0.7rem; color: #888; min-width: 50px; text-align: right; }
-      .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 100; }
-      .overlay .msg { color: #6ea8fe; font-size: 1rem; }
-      .overlay .err { color: #e74c3c; font-size: 0.9rem; margin-top: 12px; max-width: 500px; text-align: center; }
-    </style>
-  </head>
-  <body>
-    <div id="app">
-      <div class="topbar">
-        <span class="title">NIfTI MPR Viewer</span>
-        <span class="info" v-if="header">{{ dims[0] }}×{{ dims[1] }}×{{ dims[2] }} | {{ dataTypeName }}</span>
-        <span class="info" v-if="fileName">{{ fileName }}</span>
-        <div style="flex:1"></div>
-        <select class="palette-sel" v-model="palette" @change="renderAll">
-          <option value="gray">灰度</option>
-          <option value="hot">Hot Iron</option>
-          <option value="jet">Jet</option>
-          <option value="pet">PET</option>
-        </select>
-      </div>
+<head>
+  <meta charset="UTF-8" />
+  <title>NIfTI MPR 查看器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #1a1a2e; color: #eee; height: 100vh; overflow: hidden; }
+    .container { display: flex; height: 100vh; }
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .header { display: flex; align-items: center; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #333; }
+    .header h1 { font-size: 1rem; font-weight: 500; margin-right: auto; }
+    .header .info { font-size: 0.8rem; color: #888; }
+    .viewer { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; padding: 4px; min-height: 0; }
+    .panel { background: #0f0f1a; border: 1px solid #2a2a3e; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; position: relative; }
+    .panel-title { padding: 6px 10px; background: #16213e; font-size: 0.75rem; color: #aaa; display: flex; justify-content: space-between; z-index: 2; }
+    .panel-body { flex: 1; position: relative; min-height: 0; overflow: hidden; }
+    .panel-body-2d { display: flex; align-items: center; justify-content: center; }
+    .vtk-square { position: relative; }
+    .vtk-square canvas, .panel-body > canvas { width: 100% !important; height: 100% !important; display: block; }
+    .crosshair-h, .crosshair-v { position: absolute; background: rgba(100, 180, 255, 0.5); pointer-events: none; z-index: 1; }
+    .crosshair-h { left: 0; right: 0; height: 1px; }
+    .crosshair-v { top: 0; bottom: 0; width: 1px; }
+    .coord-display { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; color: #6ea8fe; font-family: monospace; z-index: 2; }
+    .sidebar { width: 240px; background: #16213e; border-left: 1px solid #333; padding: 16px; overflow-y: auto; flex-shrink: 0; }
+    .sidebar h3 { font-size: 0.75rem; color: #6ea8fe; margin: 0 0 12px; }
+    .sidebar h4 { font-size: 0.7rem; color: #aaa; margin: 16px 0 8px; }
+    .sidebar table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
+    .sidebar td { padding: 3px 6px; color: #ccc; }
+    .sidebar td:first-child { color: #888; }
+    .slider-group { margin: 10px 0; }
+    .slider-group label { display: block; font-size: 0.7rem; color: #aaa; margin-bottom: 4px; }
+    .slider-group input { width: 100%; }
+    .slider-group .val { font-size: 0.7rem; color: #ccc; text-align: right; }
+    .loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #6ea8fe; font-size: 1rem; z-index: 9999; }
+    .error { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #ff6b6b; color: white; padding: 12px 24px; border-radius: 4px; z-index: 1000; }
+    .help { font-size: 0.7rem; line-height: 1.8; color: #888; }
+    .btn-3d { width: 100%; padding: 8px; background: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem; margin-top: 6px; }
+    .btn-3d:hover { background: #0b5ed7; }
+    .btn-3d.active { background: #198754; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/api/v1/static/nifti/vue.global.prod.js"></script>
+  <script src="/api/v1/static/nifti/vtk.js"></script>
+  <script>
+    const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
 
-      <div class="grid">
-        <div class="panel">
-          <div class="panel-header">Axial (横断面)</div>
-          <div class="panel-info">Slice {{ axialSlice + 1 }} / {{ dims[2] }} | ({{ crosshair.x }}, {{ crosshair.y }}, {{ crosshair.z }})</div>
-          <div class="canvas-wrap">
-            <canvas ref="axialCanvas" @mousedown.prevent="onMouseDown" @mousemove="onCanvasMove('axial', $event)" @mouseup="onMouseUp($event)" @mouseleave="onCanvasLeave" @wheel.prevent="onWheel($event,'axial')"></canvas>
-          </div>
-          <div class="slider-wrap">
-            <label>Z</label>
-            <input ref="axialRange" type="range" min="0" :max="dims[2]-1" :value="axialSlice" />
-            <span class="val">{{ axialSlice + 1 }} / {{ dims[2] }}</span>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">Coronal (冠状面)</div>
-          <div class="panel-info">Slice {{ coronalSlice + 1 }} / {{ dims[1] }} | ({{ crosshair.x }}, {{ crosshair.y }}, {{ crosshair.z }})</div>
-          <div class="canvas-wrap">
-            <canvas ref="coronalCanvas" @mousedown.prevent="onMouseDown" @mousemove="onCanvasMove('coronal', $event)" @mouseup="onMouseUp($event)" @mouseleave="onCanvasLeave" @wheel.prevent="onWheel($event,'coronal')"></canvas>
-          </div>
-          <div class="slider-wrap">
-            <label>Y</label>
-            <input ref="coronalRange" type="range" min="0" :max="dims[1]-1" :value="coronalSlice" />
-            <span class="val">{{ coronalSlice + 1 }} / {{ dims[1] }}</span>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">Sagittal (矢状面)</div>
-          <div class="panel-info">Slice {{ sagittalSlice + 1 }} / {{ dims[0] }} | ({{ crosshair.x }}, {{ crosshair.y }}, {{ crosshair.z }})</div>
-          <div class="canvas-wrap">
-            <canvas ref="sagittalCanvas" @mousedown.prevent="onMouseDown" @mousemove="onCanvasMove('sagittal', $event)" @mouseup="onMouseUp($event)" @mouseleave="onCanvasLeave" @wheel.prevent="onWheel($event,'sagittal')"></canvas>
-          </div>
-          <div class="slider-wrap">
-            <label>X</label>
-            <input ref="sagittalRange" type="range" min="0" :max="dims[0]-1" :value="sagittalSlice" />
-            <span class="val">{{ sagittalSlice + 1 }} / {{ dims[0] }}</span>
-          </div>
-        </div>
-
-        <div class="panel" style="background:#111; min-height: 0;">
-          <div style="padding: 20px; overflow-y: auto; height: 100%; font-size: 0.8rem; color: #888;">
-            <div style="margin-bottom: 16px;">
-              <h3 style="color: #6ea8fe; font-size: 0.85rem; margin-bottom: 8px;">文件信息</h3>
-              <table style="width:100%; border-collapse: collapse;">
-                <tr><td style="color:#555; padding: 2px 8px;">文件名</td><td>{{ fileName || '-' }}</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">维度</td><td>{{ dims[0] }} × {{ dims[1] }} × {{ dims[2] }}</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">体素大小</td><td>{{ voxelSize[0].toFixed(3) }} × {{ voxelSize[1].toFixed(3) }} × {{ voxelSize[2].toFixed(3) }} mm</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">数据类型</td><td>{{ dataTypeName }}</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">体素总数</td><td>{{ totalVoxels.toLocaleString() }}</td></tr>
-              </table>
-            </div>
-            <div style="margin-bottom: 16px;">
-              <h3 style="color: #6ea8fe; font-size: 0.85rem; margin-bottom: 8px;">操作说明</h3>
-              <ul style="list-style: none; padding: 0; line-height: 1.8;">
-                <li>• 拖拽鼠标：3D联动切换切片</li>
-                <li>• 点击：跳转到指定位置</li>
-                <li>• 滚轮：切换切片</li>
-                <li>• 滑块：跳转指定切片</li>
-              </ul>
-            </div>
-            <div v-if="header">
-              <h3 style="color: #6ea8fe; font-size: 0.85rem; margin-bottom: 8px;">当前切片</h3>
-              <table style="width:100%; border-collapse: collapse;">
-                <tr><td style="color:#555; padding: 2px 8px;">Axial Z</td><td>{{ axialSlice + 1 }} / {{ dims[2] }}</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">Coronal Y</td><td>{{ coronalSlice + 1 }} / {{ dims[1] }}</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">Sagittal X</td><td>{{ sagittalSlice + 1 }} / {{ dims[0] }}</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">坐标</td><td>({{ crosshair.x }}, {{ crosshair.y }}, {{ crosshair.z }})</td></tr>
-                <tr><td style="color:#555; padding: 2px 8px;">强度值</td><td>{{ getVoxelValue() }}</td></tr>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="overlay" v-if="loading || errorMessage">
-        <div style="text-align:center;">
-          <div class="msg" v-if="loading">正在加载 NIfTI 文件...</div>
-          <div class="err" v-if="errorMessage">{{ errorMessage }}</div>
-        </div>
-      </div>
-    </div>
-
-    <script>
-      /**
-       * Minimal NIfTI-1 parser (zero dependency)
-       * Supports: gzip decompression (via DecompressionStream), NIfTI-1 header parsing, raw image data extraction
-       */
-      const NiftiParser = {
-        async parse(buf) {
-          // Check gzip magic bytes (1f 8b)
-          if (buf[0] === 0x1f && buf[1] === 0x8b) {
-            buf = await this.decompress(buf);
-          }
-          return this.parseHeader(buf);
-        },
-
-        async decompress(buf) {
-          const cs = new DecompressionStream('gzip');
-          const stream = new Blob([buf]).stream().pipeThrough(cs);
-          const decompressed = await new Response(stream).arrayBuffer();
-          return new Uint8Array(decompressed);
-        },
-
-        parseHeader(buf) {
-          const dv = new DataView(buf.buffer || buf);
-          // Check magic at offset 344
-          const magic = String.fromCharCode(dv.getUint8(344), dv.getUint8(345), dv.getUint8(346));
-          if (magic !== 'n+1' && magic !== 'ni1') {
-            throw new Error('Not a valid NIfTI-1 file (magic: ' + magic + ')');
-          }
-
-          // dim[1..7] at offset 40, int16, little-endian
-          const ndim = dv.getInt16(40, true);
-          const dims = [];
-          for (let i = 0; i <= 7; i++) {
-            dims[i] = dv.getInt16(40 + i * 2, true);
-          }
-
-          // datatype at offset 70, int16
-          const datatype = dv.getInt16(70, true);
-
-          // pixdim[1..7] at offset 76, float32
-          const pixDims = [];
-          for (let i = 0; i <= 7; i++) {
-            pixDims[i] = dv.getFloat32(76 + i * 4, true);
-          }
-
-          // vox_offset at offset 108, float32
-          let voxOffset = Math.round(dv.getFloat32(108, true));
-          if (voxOffset < 352) voxOffset = 352;
-
-          // scl_slope at 112, scl_inter at 116
-          const sclSlope = dv.getFloat32(112, true);
-          const sclInter = dv.getFloat32(116, true);
-
-          // bitpix at offset 72, int16
-          const nbits = dv.getInt16(72, true);
-          const bytesPerVoxel = nbits / 8;
-
-          // Determine typed array
-          let typedArr, dtName;
-          const totalVoxels = dims[1] * dims[2] * dims[3] * (dims[4] || 1);
-          const byteLen = totalVoxels * bytesPerVoxel;
-          // Handle ArrayBuffer offset
-          const srcBuf = buf.buffer || buf;
-          const offset = buf.byteOffset || 0;
-          const imgBytes = srcBuf.slice(offset + voxOffset, offset + voxOffset + byteLen);
-
-          switch (datatype) {
-            case 2:  typedArr = new Uint8Array(imgBytes);   dtName = 'UINT8'; break;
-            case 4:  typedArr = new Int16Array(imgBytes);   dtName = 'INT16'; break;
-            case 8:  typedArr = new Int32Array(imgBytes);   dtName = 'INT32'; break;
-            case 16: typedArr = new Float32Array(imgBytes); dtName = 'FLOAT32'; break;
-            case 64: typedArr = new Float64Array(imgBytes); dtName = 'FLOAT64'; break;
-            case 256: typedArr = new Int8Array(imgBytes);   dtName = 'INT8'; break;
-            case 512: typedArr = new Uint16Array(imgBytes); dtName = 'UINT16'; break;
-            case 768: typedArr = new Uint32Array(imgBytes); dtName = 'UINT32'; break;
-            default: typedArr = new Uint8Array(imgBytes);   dtName = 'UNKNOWN(' + datatype + ')';
-          }
-
-          return {
-            dims: [dims[1], dims[2], dims[3], dims[4] || 1],
-            pixDims: [pixDims[1], pixDims[2], pixDims[3]],
-            datatype,
-            dataTypeName: dtName,
-            data: typedArr,
-            sclSlope: sclSlope !== 0 ? sclSlope : 1,
-            sclInter: sclInter || 0,
-          };
+    // NIfTI-1 解析器
+    class NIfTIReader {
+      constructor(buffer) {
+        this.buffer = buffer;
+        this.dv = new DataView(buffer);
+      }
+      parse() {
+        const magic = new Uint8Array(this.buffer, 344, 4).reduce((s, b) => b ? s + String.fromCharCode(b) : s, '');
+        if (magic !== 'n+1' && magic !== 'ni1') throw new Error('不是有效的 NIfTI 文件');
+        const h = this.readHeader();
+        const data = this.readData(h);
+        return {
+          header: h,
+          data,
+          dims: [h.dim[1], h.dim[2], h.dim[3]],
+          spacing: [h.pixdim[1], h.pixdim[2], h.pixdim[3]]
+        };
+      }
+      readHeader() {
+        const dv = this.dv;
+        const h = {};
+        h.dim = [0,1,2,3].map(i => dv.getInt16(40 + i*2, true));
+        h.datatype = dv.getInt16(70, true);
+        h.bitpix = dv.getInt16(72, true);
+        h.pixdim = Array(8).fill(0).map((_, i) => dv.getFloat32(76 + i*4, true));
+        h.vox_offset = dv.getFloat32(108, true);
+        h.scl_slope = dv.getFloat32(112, true);
+        h.scl_inter = dv.getFloat32(116, true);
+        return h;
+      }
+      readData(h) {
+        const off = Math.round(h.vox_offset);
+        const cnt = h.dim[1] * h.dim[2] * h.dim[3];
+        const buf = this.buffer;
+        switch (h.datatype) {
+          case 2: return new Uint8Array(buf, off, cnt);
+          case 4: return new Int16Array(buf, off, cnt);
+          case 8: return new Int32Array(buf, off, cnt);
+          case 16: return new Float32Array(buf, off, cnt);
+          case 64: return new Float64Array(buf, off, cnt);
+          case 512: return new Uint16Array(buf, off, cnt);
+          default: throw new Error('不支持的数据类型: ' + h.datatype);
         }
-      };
+      }
+    }
 
-      const { createApp } = Vue;
+    // 解压 .nii.gz
+    async function maybeDecompress(buffer, fileName) {
+      if (!fileName.endsWith('.gz')) return buffer;
+      const ds = new DecompressionStream('gzip');
+      const stream = new Blob([buffer]).stream().pipeThrough(ds);
+      return new Uint8Array(await new Response(stream).arrayBuffer()).buffer;
+    }
 
-      createApp({
-        data() {
-          return {
-            header: null,
-            imageData: null,
-            dims: [0, 0, 0],
-            voxelSize: [1, 1, 1],
-            dataTypeName: '-',
-            fileName: '',
-            loading: false,
-            errorMessage: '',
-            palette: 'gray',
-            window: 256,
-            level: 128,
-            axialSlice: 0,
-            coronalSlice: 0,
-            sagittalSlice: 0,
-            crosshair: { x: 0, y: 0, z: 0, visible: false },
-            _dragStartX: 0,
-            _dragStartY: 0,
-            _isDragging: false,
-            _dragMoved: false,
-          };
-        },
+    const app = createApp({
+      template: `
+        <div class="container">
+          <div class="main">
+            <div class="viewer" :style="gridStyle">
+              <div class="panel" v-for="v in views" :key="v.name">
+                <div class="panel-title">
+                  <span>{{ v.label }}</span>
+                  <span>{{ v.axis }}: {{ currentSlice(v.name) + 1 }}/{{ dims[v.dimIdx] }}</span>
+                </div>
+                <div class="panel-body panel-body-2d">
+                  <div class="vtk-square" :ref="el => containers[v.name] = el">
+                    <div class="crosshair-h" v-if="crosshairVisible" :style="{ top: crosshairPos(v.name).y + '%' }"></div>
+                    <div class="crosshair-v" v-if="crosshairVisible" :style="{ left: crosshairPos(v.name).x + '%' }"></div>
+                    <div class="coord-display" v-if="crosshairVisible">({{ crosshair.x }}, {{ crosshair.y }}, {{ crosshair.z }})</div>
+                  </div>
+                </div>
+              </div>
+              <div class="panel" v-show="show3D">
+                <div class="panel-title">
+                  <span>3D View (体渲染)</span>
+                  <span>拖拽旋转 · 滚轮缩放</span>
+                </div>
+                <div class="panel-body" :ref="el => containers['3d'] = el"></div>
+              </div>
+            </div>
+          </div>
+          <div class="sidebar">
+            <h3>控制面板</h3>
+            <h4>切片导航</h4>
+            <div class="slider-group">
+              <label>Z (Axial)</label>
+              <input type="range" min="0" :max="dims[2]-1" v-model.number="axialSlice" @input="onSliceChange" />
+              <div class="val">{{ axialSlice + 1 }} / {{ dims[2] }}</div>
+            </div>
+            <div class="slider-group">
+              <label>Y (Coronal)</label>
+              <input type="range" min="0" :max="dims[1]-1" v-model.number="coronalSlice" @input="onSliceChange" />
+              <div class="val">{{ coronalSlice + 1 }} / {{ dims[1] }}</div>
+            </div>
+            <div class="slider-group">
+              <label>X (Sagittal)</label>
+              <input type="range" min="0" :max="dims[0]-1" v-model.number="sagittalSlice" @input="onSliceChange" />
+              <div class="val">{{ sagittalSlice + 1 }} / {{ dims[0] }}</div>
+            </div>
+            <h4>交叉点坐标</h4>
+            <table v-if="crosshairVisible">
+              <tr><td>X</td><td>{{ crosshair.x }}</td></tr>
+              <tr><td>Y</td><td>{{ crosshair.y }}</td></tr>
+              <tr><td>Z</td><td>{{ crosshair.z }}</td></tr>
+              <tr><td>强度值</td><td>{{ voxelValue }}</td></tr>
+            </table>
+            <h4>文件信息</h4>
+            <table v-if="header">
+              <tr><td>尺寸</td><td>{{ dims[0] }} × {{ dims[1] }} × {{ dims[2] }}</td></tr>
+              <tr><td>体素大小</td><td>{{ spacing[0].toFixed(3) }} × {{ spacing[1].toFixed(3) }} × {{ spacing[2].toFixed(3) }}</td></tr>
+              <tr><td>数据类型</td><td>{{ dataTypeName }}</td></tr>
+              <tr><td>值域</td><td>{{ stats.min.toFixed(1) }} - {{ stats.max.toFixed(1) }}</td></tr>
+            </table>
+            <h4 style="margin-top: 20px;">操作说明</h4>
+            <div class="help">
+              • 拖拽：3D 联动定位<br/>
+              • 滚轮：切换切片<br/>
+              • 点击：跳转到指定位置
+            </div>
+            <h4 style="margin-top: 20px;">3D 视图</h4>
+            <button class="btn-3d" :class="{ active: show3D }" @click="toggle3D">{{ show3D ? '隐藏 3D 视图' : '显示 3D 视图' }}</button>
+          </div>
+          <div class="loading" v-if="loading">加载中...</div>
+          <div class="error" v-if="errorMsg">{{ errorMsg }}</div>
+        </div>
+      `,
+      setup() {
+        const loading = ref(false);
+        const errorMsg = ref('');
+        const fileName = ref('');
+        const dims = reactive([1, 1, 1]);
+        const spacing = reactive([1, 1, 1]);
+        const dataTypeName = ref('');
+        const header = ref(null);
+        const axialSlice = ref(0);
+        const coronalSlice = ref(0);
+        const sagittalSlice = ref(0);
+        const crosshair = reactive({ x: 0, y: 0, z: 0 });
+        const crosshairVisible = ref(false);
+        const voxelValue = ref(0);
+        const stats = reactive({ min: 0, max: 0 });
+        const containers = reactive({});
+        const show3D = ref(true);
+        const gridStyle = computed(() => show3D.value
+          ? { gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr' }
+          : { gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: '1fr' }
+        );
 
-        computed: {
-          totalVoxels() {
-            return this.dims[0] * this.dims[1] * this.dims[2];
+        const views = [
+          { name: 'axial', label: 'Axial (横断面)', axis: 'Z', dimIdx: 2 },
+          { name: 'coronal', label: 'Coronal (冠状面)', axis: 'Y', dimIdx: 1 },
+          { name: 'sagittal', label: 'Sagittal (矢状面)', axis: 'X', dimIdx: 0 }
+        ];
+
+        const currentSlice = (name) => name === 'axial' ? axialSlice.value : name === 'coronal' ? coronalSlice.value : sagittalSlice.value;
+
+        const crosshairPos = (name) => {
+          const ren = renderers[name];
+          const glrw = glRenderWindows[name];
+          if (!ren || !glrw) return { x: 0, y: 0 };
+          const size = glrw.getSize();
+          const w = Math.max(1, size[0]);
+          const h = Math.max(1, size[1]);
+          const aspect = w / h;
+          // 世界坐标 = 体素坐标 * spacing
+          const wx = crosshair.x * spacing[0];
+          const wy = crosshair.y * spacing[1];
+          const wz = crosshair.z * spacing[2];
+          // 各视图使用当前切片对应的世界坐标
+          let worldPt;
+          if (name === 'axial') worldPt = [wx, wy, axialSlice.value * spacing[2]];
+          else if (name === 'coronal') worldPt = [wx, coronalSlice.value * spacing[1], wz];
+          else worldPt = [sagittalSlice.value * spacing[0], wy, wz];
+          const nd = ren.worldToNormalizedDisplay(worldPt[0], worldPt[1], worldPt[2], aspect);
+          // nd 的 y 轴 0 在底部、1 在顶部；CSS 的 top 0% 在顶部，需翻转
+          return { x: nd[0] * 100, y: (1 - nd[1]) * 100 };
+        };
+
+        // VTK objects
+        let vtkImageDataObj = null;
+        let renderers = {};
+        let renderWindows = {};
+        let glRenderWindows = {};
+        let mappers = {};
+        let actors = {};
+        // 3D 视图专用对象（体渲染）
+        let three3d = {
+          initialized: false,
+          volume: null,
+          mapper: null,
+          outlineActor: null,
+          outlineMapper: null,
+          axesActors: [],
+          axesPolyData: [],
+          dragState: { isDragging: false, lastX: 0, lastY: 0, theta: 0, phi: 45, radius: 1 }
+        };
+        let imageScalars = null;
+        let rawData = null;
+
+        // 动态设置 2D 视图正方形容器尺寸：取 panel-body 宽高较小者，保持图像不变形
+        const updateSquareSize = (name) => {
+          const container = containers[name];
+          if (!container) return;
+          const parent = container.parentElement;
+          if (!parent) return;
+          const w = parent.clientWidth;
+          const h = parent.clientHeight;
+          if (w === 0 || h === 0) return;
+          const side = Math.min(w, h);
+          container.style.width = side + 'px';
+          container.style.height = side + 'px';
+        };
+
+        const updateAllSquareSizes = () => {
+          views.forEach(v => updateSquareSize(v.name));
+        };
+
+        const initVTK = () => {
+          const vtk = window.vtk;
+          views.forEach(v => {
+            const container = containers[v.name];
+            if (!container) return;
+
+            const rw = vtk.Rendering.Core.vtkRenderWindow.newInstance();
+            const ren = vtk.Rendering.Core.vtkRenderer.newInstance();
+            ren.setBackground(0.06, 0.06, 0.1);
+            rw.addRenderer(ren);
+
+            const glrw = vtk.Rendering.OpenGL.vtkRenderWindow.newInstance();
+            glrw.setContainer(container);
+            glrw.setSize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight));
+            rw.addView(glrw);
+
+            renderWindows[v.name] = rw;
+            renderers[v.name] = ren;
+            glRenderWindows[v.name] = glrw;
+
+            // 使用原生 DOM 事件处理交互
+            const viewName = v.name;
+            container.addEventListener('wheel', (e) => {
+              e.preventDefault();
+              handleWheel(viewName, { wheelDelta: -e.deltaY });
+            });
+            container.addEventListener('mousedown', (e) => {
+              dragState.isDragging = true;
+              dragState.moved = false;
+              const rect = container.getBoundingClientRect();
+              dragState.startX = e.clientX - rect.left;
+              dragState.startY = e.clientY - rect.top;
+            });
+            container.addEventListener('mouseup', (e) => {
+              if (dragState.isDragging && !dragState.moved) {
+                const rect = container.getBoundingClientRect();
+                handleClick(viewName, { position: { x: e.clientX - rect.left, y: e.clientY - rect.top } });
+              }
+              dragState.isDragging = false;
+            });
+            container.addEventListener('mousemove', (e) => {
+              if (dragState.isDragging) {
+                const rect = container.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                if (Math.abs(x - dragState.startX) > 3 || Math.abs(y - dragState.startY) > 3) {
+                  dragState.moved = true;
+                  handleDrag(viewName, { position: { x, y } });
+                }
+              }
+            });
+          });
+        };
+
+        // 懒初始化 3D 视图：仅当用户点了按钮、容器真正挂载时才创建渲染器
+        const ensure3DView = () => {
+          if (three3d.initialized) return;
+          const container = containers['3d'];
+          if (!container) return;
+          const vtk = window.vtk;
+
+          const rw = vtk.Rendering.Core.vtkRenderWindow.newInstance();
+          const ren = vtk.Rendering.Core.vtkRenderer.newInstance();
+          ren.setBackground(0.06, 0.06, 0.1);
+          rw.addRenderer(ren);
+
+          const glrw = vtk.Rendering.OpenGL.vtkRenderWindow.newInstance();
+          glrw.setContainer(container);
+          const w = Math.max(1, container.clientWidth);
+          const h = Math.max(1, container.clientHeight);
+          glrw.setSize(w, h);
+          rw.addView(glrw);
+
+          // 创建 interactor 但不绑定事件（避免和手写事件冲突），
+          // 仅为了防止 render() 内部访问 null interactor 报错
+          try {
+            const interactor = vtk.Rendering.Core.vtkRenderWindowInteractor.newInstance();
+            interactor.setView(glrw);
+            interactor.initialize();
+            // 不调用 interactor.bindEvents(container)
+          } catch (e) {
+            console.warn('Interactor creation failed, continuing without:', e);
           }
-        },
 
-        mounted() {
-          // 使用原生事件监听 range input，避免 Vue 响应式干扰
-          this._setupRangeListeners();
-          
+          renderWindows['3d'] = rw;
+          renderers['3d'] = ren;
+          glRenderWindows['3d'] = glrw;
+
+          // 球坐标旋转：theta(水平角) 360°, phi(极角) 1°~179°, radius(距离)
+          container.addEventListener('mousedown', (e) => {
+            three3d.dragState.isDragging = true;
+            const rect = container.getBoundingClientRect();
+            three3d.dragState.lastX = e.clientX - rect.left;
+            three3d.dragState.lastY = e.clientY - rect.top;
+            // 从当前相机位置反算初始球坐标
+            const cam = ren.getActiveCamera();
+            const focal = cam.getFocalPoint();
+            const pos = cam.getPosition();
+            const fx = pos[0] - focal[0], fy = pos[1] - focal[1], fz = pos[2] - focal[2];
+            three3d.dragState.radius = Math.sqrt(fx*fx + fy*fy + fz*fz) || 1;
+            three3d.dragState.phi = Math.acos(fz / three3d.dragState.radius) * 180 / Math.PI;
+            three3d.dragState.theta = Math.atan2(fy, fx) * 180 / Math.PI;
+          });
+          window.addEventListener('mouseup', () => { three3d.dragState.isDragging = false; });
+          window.addEventListener('mousemove', (e) => {
+            if (!three3d.dragState.isDragging) return;
+            const rect = container.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const dx = x - three3d.dragState.lastX;
+            const dy = y - three3d.dragState.lastY;
+            three3d.dragState.lastX = x;
+            three3d.dragState.lastY = y;
+            const cam = ren.getActiveCamera();
+            const st = three3d.dragState;
+            // 球坐标：theta 水平角，phi 极角（0°=正上方，180°=正下方）
+            st.theta -= dx * 0.5;
+            st.phi = Math.max(1, Math.min(179, st.phi - dy * 0.5));
+            const rad = Math.PI / 180;
+            const r = st.radius;
+            const fx = Math.sin(st.phi * rad) * Math.cos(st.theta * rad);
+            const fy = Math.sin(st.phi * rad) * Math.sin(st.theta * rad);
+            const fz = Math.cos(st.phi * rad);
+            const focal = cam.getFocalPoint();
+            cam.setPosition(focal[0] + r * fx, focal[1] + r * fy, focal[2] + r * fz);
+            cam.setViewUp(0, 0, 1);
+            rw.render();
+          });
+          container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const cam = ren.getActiveCamera();
+            cam.dolly(e.deltaY > 0 ? 1.1 : 0.9);
+            ren.resetCameraClippingRange();
+            rw.render();
+          });
+
+          three3d.initialized = true;
+          console.log('3D view initialized, canvas size:', w, h);
+        };
+
+        const setupImage = (niftiResult) => {
+          const vtk = window.vtk;
+          // 拷贝数据，避免带偏移量的 typed array view 导致问题
+          const dataCopy = new niftiResult.data.constructor(niftiResult.data);
+          rawData = dataCopy;
+
+          vtkImageDataObj = vtk.Common.DataModel.vtkImageData.newInstance();
+          vtkImageDataObj.setDimensions(dims[0], dims[1], dims[2]);
+          vtkImageDataObj.setSpacing(spacing[0], spacing[1], spacing[2]);
+          vtkImageDataObj.setOrigin(0, 0, 0);
+
+          const dataArray = vtk.Common.Core.vtkDataArray.newInstance({
+            name: 'scalars',
+            numberOfComponents: 1,
+            values: dataCopy
+          });
+          vtkImageDataObj.getPointData().setScalars(dataArray);
+
+          console.log('ImageData dims:', vtkImageDataObj.getDimensions());
+          console.log('DataArray size:', dataArray.getNumberOfTuples());
+
+          views.forEach(v => {
+            const ren = renderers[v.name];
+            if (!ren) return;
+
+            if (actors[v.name]) ren.removeActor(actors[v.name]);
+
+            const mapper = vtk.Rendering.Core.vtkImageMapper.newInstance();
+            mapper.setInputData(vtkImageDataObj);
+            console.log(v.name, 'mapper methods:', typeof mapper.setKSlice, typeof mapper.setJSlice, typeof mapper.setISlice, typeof mapper.setSlice);
+
+            const actor = vtk.Rendering.Core.vtkImageSlice.newInstance();
+            actor.setMapper(mapper);
+            const prop = actor.getProperty();
+            prop.setColorWindow(stats.max - stats.min);
+            prop.setColorLevel((stats.min + stats.max) / 2);
+
+            ren.addActor(actor);
+            mappers[v.name] = mapper;
+            actors[v.name] = actor;
+          });
+
+          // 设置初始切片
+          updateSlices();
+
+          // 设置相机并渲染
+          views.forEach(v => {
+            const ren = renderers[v.name];
+            if (!ren) return;
+
+            // 先更新正方形容器尺寸，再设置 canvas 尺寸
+            updateSquareSize(v.name);
+            const container = containers[v.name];
+            const glrw = glRenderWindows[v.name];
+            if (glrw && container) {
+              const w = Math.max(1, container.clientWidth);
+              const h = Math.max(1, container.clientHeight);
+              glrw.setSize(w, h);
+            }
+
+            const cam = ren.getActiveCamera();
+            cam.setParallelProjection(true);
+
+            const cx = dims[0] / 2 * spacing[0];
+            const cy = dims[1] / 2 * spacing[1];
+            const cz = dims[2] / 2 * spacing[2];
+
+            if (v.name === 'axial') {
+              cam.setPosition(cx, cy, cz + 1000);
+              cam.setFocalPoint(cx, cy, cz);
+              cam.setViewUp(0, 1, 0);
+            } else if (v.name === 'coronal') {
+              cam.setPosition(cx, cy - 1000, cz);
+              cam.setFocalPoint(cx, cy, cz);
+              cam.setViewUp(0, 0, 1);
+            } else {
+              cam.setPosition(cx - 1000, cy, cz);
+              cam.setFocalPoint(cx, cy, cz);
+              cam.setViewUp(0, 0, 1);
+            }
+            ren.resetCamera();
+            ren.resetCameraClippingRange();
+          });
+
+          renderAll();
+          // 延迟再次渲染，确保布局完成后显示
+          setTimeout(() => { renderAll(); }, 100);
+          // 如果已经开着 3D 视图，立即构建 3D 场景
+          if (show3D.value) {
+            nextTick(() => {
+              ensure3DView();
+              if (three3d.initialized) setupImage3D();
+            });
+          }
+          console.log('VTK setup complete, dims:', [...dims], 'spacing:', [...spacing], 'stats:', stats.min, stats.max);
+        };
+
+        // 向 3D 渲染器中添加体渲染（vtkVolume）+ 体积包围盒线框
+        const setupImage3D = () => {
+          const vtk = window.vtk;
+          const ren = renderers['3d'];
+          if (!ren || !vtkImageDataObj) return;
+
+          // 检查 vtk.js 中体渲染相关类是否可用
+          console.log('vtkVolumeMapper available:', !!vtk.Rendering.Core.vtkVolumeMapper);
+
+          try {
+            // 清理旧的体渲染对象
+            if (three3d.volume) {
+              ren.removeVolume(three3d.volume);
+              three3d.volume = null;
+              three3d.mapper = null;
+            }
+            if (three3d.outlineActor) {
+              ren.removeActor(three3d.outlineActor);
+              three3d.outlineActor = null;
+              three3d.outlineMapper = null;
+            }
+            // 清理旧轴线
+            three3d.axesActors.forEach(a => ren.removeActor(a));
+            three3d.axesActors = [];
+
+            // 体渲染 Mapper
+            const mapper = vtk.Rendering.Core.vtkVolumeMapper.newInstance();
+            mapper.setInputData(vtkImageDataObj);
+            const sampleDist = Math.max(0.1, Math.min(spacing[0], spacing[1], spacing[2]));
+            mapper.setSampleDistance(sampleDist);
+            try { mapper.setMaximumSamplesPerRay(2000); } catch (e) { /* 旧版本无此 API */ }
+
+            // 体渲染 Actor
+            const volume = vtk.Rendering.Core.vtkVolume.newInstance();
+            volume.setMapper(mapper);
+
+            const prop = volume.getProperty();
+            const r0 = stats.min, r1 = stats.max, dr = (r1 - r0) || 1;
+
+            // 颜色映射：纯灰度 黑 -> 灰 -> 白
+            const colorFunc = vtk.Rendering.Core.vtkColorTransferFunction.newInstance();
+            colorFunc.addRGBPoint(r0, 0.0, 0.0, 0.0);
+            colorFunc.addRGBPoint(r0 + dr * 0.5, 0.5, 0.5, 0.5);
+            colorFunc.addRGBPoint(r1, 1.0, 1.0, 1.0);
+            prop.setRGBTransferFunction(0, colorFunc);
+
+            // 不透明度映射：低值透明、高值实
+            const opacFunc = vtk.Common.DataModel.vtkPiecewiseFunction.newInstance();
+            opacFunc.addPoint(r0, 0.0);
+            opacFunc.addPoint(r0 + dr * 0.25, 0.0);
+            opacFunc.addPoint(r0 + dr * 0.4, 0.1);
+            opacFunc.addPoint(r0 + dr * 0.55, 0.3);
+            opacFunc.addPoint(r0 + dr * 0.75, 0.6);
+            opacFunc.addPoint(r1, 0.85);
+            prop.setScalarOpacity(0, opacFunc);
+            prop.setScalarOpacityUnitDistance(0, sampleDist * 2);
+            prop.setInterpolationTypeToLinear();
+
+            try { mapper.setBlendModeToComposite(); } catch (e) {}
+
+            ren.addVolume(volume);
+            three3d.mapper = mapper;
+            three3d.volume = volume;
+
+            // 体积包围盒线框
+            try {
+              const x1 = (dims[0] - 1) * spacing[0];
+              const y1 = (dims[1] - 1) * spacing[1];
+              const z1 = (dims[2] - 1) * spacing[2];
+              const corners = [
+                [0,0,0],[x1,0,0],[x1,y1,0],[0,y1,0],
+                [0,0,z1],[x1,0,z1],[x1,y1,z1],[0,y1,z1]
+              ];
+              const segIndices = [
+                [0,1],[1,2],[2,3],[3,0],
+                [4,5],[5,6],[6,7],[7,4],
+                [0,4],[1,5],[2,6],[3,7]
+              ];
+              const pd = vtk.Common.DataModel.vtkPolyData.newInstance();
+              const points = vtk.Common.Core.vtkPoints.newInstance();
+              corners.forEach(c => points.insertNextPoint(c[0], c[1], c[2]));
+              pd.setPoints(points);
+              const lines = vtk.Common.Core.vtkCellArray.newInstance();
+              segIndices.forEach(seg => lines.insertNextCell([seg[0], seg[1]]));
+              pd.setLines(lines);
+
+              const outlineMapper = vtk.Rendering.Core.vtkMapper.newInstance();
+              outlineMapper.setInputData(pd);
+              const outlineActor = vtk.Rendering.Core.vtkActor.newInstance();
+              outlineActor.setMapper(outlineMapper);
+              outlineActor.getProperty().setColor(0.4, 0.7, 1.0);
+              outlineActor.getProperty().setLineWidth(2);
+              ren.addActor(outlineActor);
+              three3d.outlineMapper = outlineMapper;
+              three3d.outlineActor = outlineActor;
+            } catch (e) {
+              console.warn('Outline build failed, skipping box:', e);
+            }
+
+            // X/Y/Z 正交轴线：跟随三视图 slice 位置，交点 = 当前交叉点
+            try {
+              const sx = spacing[0], sy = spacing[1], sz = spacing[2];
+              const x1 = (dims[0] - 1) * sx;
+              const y1 = (dims[1] - 1) * sy;
+              const z1 = (dims[2] - 1) * sz;
+              // 当前交叉点世界坐标
+              const px = sagittalSlice.value * sx;
+              const py = coronalSlice.value * sy;
+              const pz = axialSlice.value * sz;
+              // X=红, Y=绿, Z=蓝
+              const axes = [
+                { pts: [[0, py, pz], [x1, py, pz]], color: [0, 0.85, 0.85] },   // X 轴 青
+                { pts: [[px, 0, pz], [px, y1, pz]], color: [0, 0.85, 0.85] },   // Y 轴 青
+                { pts: [[px, py, 0], [px, py, z1]], color: [0, 0.85, 0.85] }  // Z 轴 青
+              ];
+              three3d.axesPolyData = [];
+              axes.forEach(ax => {
+                const pd = vtk.Common.DataModel.vtkPolyData.newInstance();
+                const pts = vtk.Common.Core.vtkPoints.newInstance();
+                pts.insertNextPoint(ax.pts[0][0], ax.pts[0][1], ax.pts[0][2]);
+                pts.insertNextPoint(ax.pts[1][0], ax.pts[1][1], ax.pts[1][2]);
+                pd.setPoints(pts);
+                const lines = vtk.Common.Core.vtkCellArray.newInstance();
+                lines.insertNextCell([0, 1]);
+                pd.setLines(lines);
+
+                const m = vtk.Rendering.Core.vtkMapper.newInstance();
+                m.setInputData(pd);
+                const a = vtk.Rendering.Core.vtkActor.newInstance();
+                a.setMapper(m);
+                a.getProperty().setColor(ax.color[0], ax.color[1], ax.color[2]);
+                a.getProperty().setLineWidth(2);
+                ren.addActor(a);
+                three3d.axesActors.push(a);
+                three3d.axesPolyData.push(pd);
+              });
+            } catch (e) {
+              console.warn('Axes build failed:', e);
+            }
+
+            // 3D 相机：透视投影，斜视角观察
+            const cam = ren.getActiveCamera();
+            cam.setParallelProjection(false);
+            const cx = dims[0] / 2 * spacing[0];
+            const cy = dims[1] / 2 * spacing[1];
+            const cz = dims[2] / 2 * spacing[2];
+            cam.setFocalPoint(cx, cy, cz);
+            cam.setPosition(cx + (dims[0] * spacing[0]) * 1.2, cy - (dims[1] * spacing[1]) * 1.2, cz + (dims[2] * spacing[2]) * 1.2);
+            cam.setViewUp(0, 0, 1);
+            ren.resetCamera();
+            ren.resetCameraClippingRange();
+
+            renderWindows['3d'].render();
+            console.log('3D volume rendered, dims:', [...dims], 'range:', r0, '-', r1);
+          } catch (err) {
+            console.error('setupImage3D FAILED:', err);
+            errorMsg.value = '3D 渲染失败: ' + err.message;
+          }
+        };
+
+        // 3D 正交轴线跟随 slice 位置更新
+        const update3DSlices = () => {
+          if (!three3d.initialized || three3d.axesPolyData.length < 3) return;
+          const vtk = window.vtk;
+          const sx = spacing[0], sy = spacing[1], sz = spacing[2];
+          const x1 = (dims[0] - 1) * sx;
+          const y1 = (dims[1] - 1) * sy;
+          const z1 = (dims[2] - 1) * sz;
+          const px = sagittalSlice.value * sx;
+          const py = coronalSlice.value * sy;
+          const pz = axialSlice.value * sz;
+
+          // 更新三条轴线的端点坐标
+          const updateLine = (idx, p0, p1) => {
+            const pd = three3d.axesPolyData[idx];
+            const pts = vtk.Common.Core.vtkPoints.newInstance();
+            pts.insertNextPoint(p0[0], p0[1], p0[2]);
+            pts.insertNextPoint(p1[0], p1[1], p1[2]);
+            pd.setPoints(pts);
+            pd.modified();
+          };
+          updateLine(0, [0, py, pz], [x1, py, pz]);   // X 轴
+          updateLine(1, [px, 0, pz], [px, y1, pz]);   // Y 轴
+          updateLine(2, [px, py, 0], [px, py, z1]);   // Z 轴
+
+          if (show3D.value && renderWindows['3d']) renderWindows['3d'].render();
+        };
+
+        const updateSlices = () => {
+          if (mappers.axial) mappers.axial.setKSlice(axialSlice.value);
+          if (mappers.coronal) mappers.coronal.setJSlice(coronalSlice.value);
+          if (mappers.sagittal) mappers.sagittal.setISlice(sagittalSlice.value);
+          update3DSlices();
+        };
+
+        const renderAll = () => {
+          views.forEach(v => {
+            if (renderWindows[v.name]) renderWindows[v.name].render();
+          });
+          if (show3D.value && three3d.initialized && renderWindows['3d']) renderWindows['3d'].render();
+        };
+
+        const resizeAll = () => {
+          // 先更新 2D 视图正方形容器尺寸
+          views.forEach(v => updateSquareSize(v.name));
+          const allNames = [...views.map(v => v.name)];
+          if (show3D.value) allNames.push('3d');
+          allNames.forEach(name => {
+            const container = containers[name];
+            const glrw = glRenderWindows[name];
+            if (container && glrw) {
+              const w = Math.max(1, container.clientWidth);
+              const h = Math.max(1, container.clientHeight);
+              glrw.setSize(w, h);
+            }
+          });
+          renderAll();
+        };
+        window.addEventListener('resize', () => {
+          clearTimeout(window._resizeTimer);
+          window._resizeTimer = setTimeout(resizeAll, 100);
+        });
+
+        const toggle3D = async () => {
+          show3D.value = !show3D.value;
+          await nextTick();
+          // grid 列数变化后，先更新 2D 正方形容器尺寸
+          views.forEach(v => updateSquareSize(v.name));
+          const allNames = [...views.map(v => v.name)];
+          if (show3D.value) allNames.push('3d');
+          allNames.forEach(name => {
+            const container = containers[name];
+            const glrw = glRenderWindows[name];
+            if (container && glrw) {
+              // v-show 切换后容器可能尺寸变化，重新关联并设置尺寸
+              if (name === '3d' && three3d.initialized) {
+                glrw.setContainer(container);
+              }
+              const w = Math.max(1, container.clientWidth);
+              const h = Math.max(1, container.clientHeight);
+              glrw.setSize(w, h);
+            }
+          });
+          if (show3D.value) {
+            ensure3DView();
+            if (three3d.initialized && vtkImageDataObj && !three3d.volume) {
+              setupImage3D();
+            } else if (three3d.initialized) {
+              renderWindows['3d'].render();
+            }
+          }
+          renderAll();
+        };
+
+        const onSliceChange = () => {
+          crosshair.x = sagittalSlice.value;
+          crosshair.y = coronalSlice.value;
+          crosshair.z = axialSlice.value;
+          crosshairVisible.value = true;
+          updateVoxelValue();
+          updateSlices();
+          renderAll();
+        };
+
+        const updateVoxelValue = () => {
+          if (!rawData) return;
+          const idx = crosshair.z * dims[0] * dims[1] + crosshair.y * dims[0] + crosshair.x;
+          if (idx >= 0 && idx < rawData.length) voxelValue.value = rawData[idx].toFixed(2);
+        };
+
+        // 鼠标事件
+        let dragState = { isDragging: false, startX: 0, startY: 0, moved: false };
+
+        const getVoxelFromEvent = (view, e) => {
+          const ren = renderers[view];
+          if (!ren) return null;
+          const glrw = glRenderWindows[view];
+          const w = Math.max(1, glrw.getSize()[0]);
+          const h = Math.max(1, glrw.getSize()[1]);
+          const ndx = e.position.x / w;
+          const ndy = 1.0 - e.position.y / h;
+          const aspect = w / h;
+          const worldPos = ren.normalizedDisplayToWorld(ndx, ndy, 0, aspect);
+          // 世界坐标需除以 spacing 才是体素索引
+          return {
+            x: Math.max(0, Math.min(dims[0]-1, Math.round(worldPos[0] / spacing[0]))),
+            y: Math.max(0, Math.min(dims[1]-1, Math.round(worldPos[1] / spacing[1]))),
+            z: Math.max(0, Math.min(dims[2]-1, Math.round(worldPos[2] / spacing[2])))
+          };
+        };
+
+        const handleWheel = (view, e) => {
+          const delta = e.wheelDelta > 0 ? 1 : -1;
+          if (view === 'axial') axialSlice.value = Math.max(0, Math.min(dims[2]-1, axialSlice.value + delta));
+          else if (view === 'coronal') coronalSlice.value = Math.max(0, Math.min(dims[1]-1, coronalSlice.value + delta));
+          else sagittalSlice.value = Math.max(0, Math.min(dims[0]-1, sagittalSlice.value + delta));
+          crosshair.x = sagittalSlice.value;
+          crosshair.y = coronalSlice.value;
+          crosshair.z = axialSlice.value;
+          crosshairVisible.value = true;
+          updateVoxelValue();
+          updateSlices();
+          renderAll();
+        };
+
+        const handleDrag = (view, e) => {
+          const v = getVoxelFromEvent(view, e);
+          if (!v) return;
+          if (view === 'axial') { crosshair.x = v.x; crosshair.y = v.y; crosshair.z = axialSlice.value; coronalSlice.value = v.y; sagittalSlice.value = v.x; }
+          else if (view === 'coronal') { crosshair.x = v.x; crosshair.y = coronalSlice.value; crosshair.z = v.z; sagittalSlice.value = v.x; axialSlice.value = v.z; }
+          else { crosshair.x = sagittalSlice.value; crosshair.y = v.y; crosshair.z = v.z; coronalSlice.value = v.y; axialSlice.value = v.z; }
+          crosshairVisible.value = true;
+          updateVoxelValue();
+          updateSlices();
+          renderAll();
+        };
+
+        const handleClick = (view, e) => {
+          const v = getVoxelFromEvent(view, e);
+          if (!v) return;
+          crosshair.x = v.x; crosshair.y = v.y; crosshair.z = v.z;
+          sagittalSlice.value = v.x; coronalSlice.value = v.y; axialSlice.value = v.z;
+          crosshairVisible.value = true;
+          updateVoxelValue();
+          updateSlices();
+          renderAll();
+        };
+
+        const loadFile = async (filePath) => {
+          loading.value = true;
+          errorMsg.value = '';
+          try {
+            const resp = await fetch(`/api/v1/medical/nifti/file?file_path=${encodeURIComponent(filePath)}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+            let buffer = await resp.arrayBuffer();
+            const fname = filePath.split('/').pop().split('\\').pop();
+            buffer = await maybeDecompress(buffer, fname);
+
+            const reader = new NIfTIReader(buffer);
+            const result = reader.parse();
+
+            dims[0] = result.dims[0]; dims[1] = result.dims[1]; dims[2] = result.dims[2];
+            spacing[0] = result.spacing[0]; spacing[1] = result.spacing[1]; spacing[2] = result.spacing[2];
+            header.value = result.header;
+            fileName.value = fname;
+
+            const typeNames = { 2:'UINT8', 4:'INT16', 8:'INT32', 16:'FLOAT32', 64:'FLOAT64', 512:'UINT16' };
+            dataTypeName.value = typeNames[result.header.datatype] || `UNKNOWN(${result.header.datatype})`;
+
+            let min = Infinity, max = -Infinity;
+            for (let i = 0; i < result.data.length; i++) { if (result.data[i] < min) min = result.data[i]; if (result.data[i] > max) max = result.data[i]; }
+            stats.min = min; stats.max = max;
+
+            axialSlice.value = Math.floor(dims[2] / 2);
+            coronalSlice.value = Math.floor(dims[1] / 2);
+            sagittalSlice.value = Math.floor(dims[0] / 2);
+            crosshair.x = sagittalSlice.value; crosshair.y = coronalSlice.value; crosshair.z = axialSlice.value;
+
+            await nextTick();
+            setupImage(result);
+            // 相机设置完成后再显示指示器，避免用默认相机算位置
+            crosshairVisible.value = true;
+          } catch (err) {
+            errorMsg.value = '加载失败: ' + err.message;
+            console.error(err);
+          } finally {
+            loading.value = false;
+          }
+        };
+
+        onMounted(async () => {
+          await nextTick();
+          updateAllSquareSizes();
+          initVTK();
           const params = new URLSearchParams(window.location.search);
           const filePath = params.get('file_path') || params.get('url') || '';
-          this.loadFile('');
-        },
+          loadFile(filePath);
+        });
 
-        methods: {
-          _setupRangeListeners() {
-            // 为每个 range input 添加原生 input 事件监听，同步更新 crosshair 和所有视图
-            const setupRange = (refName, sliceName, axis) => {
-              const range = this.$refs[refName];
-              if (!range) return;
-              range.addEventListener('input', (e) => {
-                const val = parseInt(e.target.value);
-                this[sliceName] = val;
-                // 同步更新 crosshair 位置
-                const newCrosshair = { ...this.crosshair, visible: true };
-                if (axis === 'x') newCrosshair.x = val;
-                else if (axis === 'y') newCrosshair.y = val;
-                else if (axis === 'z') newCrosshair.z = val;
-                this.crosshair = newCrosshair;
-                // 重新渲染所有视图
-                this.renderAll();
-              });
-            };
-            setupRange('axialRange', 'axialSlice', 'z');
-            setupRange('coronalRange', 'coronalSlice', 'y');
-            setupRange('sagittalRange', 'sagittalSlice', 'x');
-          },
-
-          _updateRangeValues() {
-            // 手动同步 range input 的显示值
-            const updateRange = (refName, val) => {
-              const range = this.$refs[refName];
-              if (range) range.value = val;
-            };
-            updateRange('axialRange', this.axialSlice);
-            updateRange('coronalRange', this.coronalSlice);
-            updateRange('sagittalRange', this.sagittalSlice);
-          },
-
-          async loadFile(filePath) {
-            this.loading = true;
-            this.errorMessage = '';
-            try {
-              const resp = await fetch(`/api/v1/medical/nifti/file?file_path=${encodeURIComponent(filePath)}`);
-              if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-              const buf = await resp.arrayBuffer();
-              const result = await NiftiParser.parse(new Uint8Array(buf));
-              this.header = result;
-              this.imageData = result.data;
-              this.dims = [result.dims[0], result.dims[1], result.dims[2]];
-              this.voxelSize = result.pixDims;
-              this.dataTypeName = result.dataTypeName;
-              this.fileName = filePath.split('/').pop().split('\\').pop();
-              // 计算窗宽窗位
-              let min = Infinity, max = -Infinity;
-              const data = this.imageData;
-              const step = Math.max(1, Math.floor(data.length / 100000));
-              for (let i = 0; i < data.length; i += step) {
-                const v = data[i];
-                if (v < min) min = v;
-                if (v > max) max = v;
-              }
-              this.level = (min + max) / 2;
-              this.window = Math.max(1, max - min);
-              this.$nextTick(() => {
-                this.axialSlice = Math.floor(this.dims[2] / 2);
-                this.coronalSlice = Math.floor(this.dims[1] / 2);
-                this.sagittalSlice = Math.floor(this.dims[0] / 2);
-                // 初始化 crosshair 到中心位置，始终显示
-                this.crosshair = {
-                  x: this.sagittalSlice,
-                  y: this.coronalSlice,
-                  z: this.axialSlice,
-                  visible: true
-                };
-                this._updateRangeValues();
-                this.renderAll();
-              });
-            } catch (err) {
-              this.errorMessage = '加载失败: ' + err.message;
-            } finally {
-              this.loading = false;
-            }
-          },
-
-          // 获取当前 crosshair 位置的体素强度值
-          getVoxelValue() {
-            if (!this.imageData) return '-';
-            const { x, y, z } = this.crosshair;
-            const [nx, ny] = this.dims;
-            const idx = z * nx * ny + y * nx + x;
-            if (idx >= 0 && idx < this.imageData.length) {
-              return this.imageData[idx].toFixed(2);
-            }
-            return '-';
-          },
-
-          applyWindowLevel(val) {
-            const w = this.window;
-            const l = this.level;
-            return Math.max(0, Math.min(255, ((val - l) / w + 0.5) * 255));
-          },
-
-          getColor(val) {
-            const g = this.applyWindowLevel(val);
-            switch (this.palette) {
-              case 'hot': {
-                return [Math.min(255, g * 2.5), Math.min(255, Math.max(0, (g - 100) * 2.5)), Math.min(255, Math.max(0, (g - 180) * 4))];
-              }
-              case 'jet': {
-                if (g < 64) return [0, 0, g * 4];
-                if (g < 128) return [0, (g - 64) * 4, 255];
-                if (g < 192) return [(g - 128) * 4, 255, 255 - (g - 128) * 4];
-                return [255, 255 - (g - 192) * 4, 0];
-              }
-              case 'pet': {
-                if (g < 85) return [g * 3, 0, g * 3];
-                if (g < 170) return [255, (g - 85) * 3, 128 + (g - 85) * 2];
-                return [255, 255, (g - 170) * 4];
-              }
-              default: return [g, g, g];
-            }
-          },
-
-          fitCanvas(canvas, imgW, imgH) {
-            const wrap = canvas.parentElement;
-            const cw = wrap.clientWidth - 8;
-            const ch = wrap.clientHeight - 8;
-            if (cw <= 0 || ch <= 0) return;
-            const scale = Math.min(cw / imgW, ch / imgH);
-            canvas.style.width = (imgW * scale) + 'px';
-            canvas.style.height = (imgH * scale) + 'px';
-          },
-
-          renderAxial() {
-            const canvas = this.$refs.axialCanvas;
-            if (!canvas || !this.imageData) return;
-            const [nx, ny] = this.dims;
-            canvas.width = nx;
-            canvas.height = ny;
-            const ctx = canvas.getContext('2d');
-            const imgData = ctx.createImageData(nx, ny);
-            const z = this.axialSlice;
-            const offset = z * nx * ny;
-            // 翻转 Y 轴，使图像从上到下显示
-            for (let y = 0; y < ny; y++) {
-              const canvasY = ny - 1 - y; // 翻转
-              for (let x = 0; x < nx; x++) {
-                const val = this.imageData[offset + y * nx + x];
-                const [r, g, b] = this.getColor(val);
-                const idx = (canvasY * nx + x) * 4;
-                imgData.data[idx] = r;
-                imgData.data[idx + 1] = g;
-                imgData.data[idx + 2] = b;
-                imgData.data[idx + 3] = 255;
-              }
-            }
-            ctx.putImageData(imgData, 0, 0);
-            // 绘制十字线
-            this.drawCrosshair(ctx, canvas, 'axial');
-            this.fitCanvas(canvas, nx, ny);
-          },
-
-          renderCoronal() {
-            const canvas = this.$refs.coronalCanvas;
-            if (!canvas || !this.imageData) return;
-            const [nx, ny, nz] = this.dims;
-            canvas.width = nx;
-            canvas.height = nz;
-            const ctx = canvas.getContext('2d');
-            const imgData = ctx.createImageData(nx, nz);
-            const y = this.coronalSlice;
-            // 翻转 Y 轴
-            for (let z = 0; z < nz; z++) {
-              const canvasY = nz - 1 - z; // 翻转
-              for (let x = 0; x < nx; x++) {
-                const val = this.imageData[z * nx * ny + y * nx + x];
-                const [r, g, b] = this.getColor(val);
-                const idx = (canvasY * nx + x) * 4;
-                imgData.data[idx] = r;
-                imgData.data[idx + 1] = g;
-                imgData.data[idx + 2] = b;
-                imgData.data[idx + 3] = 255;
-              }
-            }
-            ctx.putImageData(imgData, 0, 0);
-            // 绘制十字线
-            this.drawCrosshair(ctx, canvas, 'coronal');
-            this.fitCanvas(canvas, nx, nz);
-          },
-
-          renderSagittal() {
-            const canvas = this.$refs.sagittalCanvas;
-            if (!canvas || !this.imageData) return;
-            const [nx, ny, nz] = this.dims;
-            canvas.width = ny;
-            canvas.height = nz;
-            const ctx = canvas.getContext('2d');
-            const imgData = ctx.createImageData(ny, nz);
-            const x = this.sagittalSlice;
-            // 翻转 Y 轴
-            for (let z = 0; z < nz; z++) {
-              const canvasY = nz - 1 - z; // 翻转
-              for (let y = 0; y < ny; y++) {
-                const val = this.imageData[z * nx * ny + y * nx + x];
-                const [r, g, b] = this.getColor(val);
-                const idx = (canvasY * ny + y) * 4;
-                imgData.data[idx] = r;
-                imgData.data[idx + 1] = g;
-                imgData.data[idx + 2] = b;
-                imgData.data[idx + 3] = 255;
-              }
-            }
-            ctx.putImageData(imgData, 0, 0);
-            // 绘制十字线
-            this.drawCrosshair(ctx, canvas, 'sagittal');
-            this.fitCanvas(canvas, ny, nz);
-          },
-
-          renderAll() {
-            this.renderAxial();
-            this.renderCoronal();
-            this.renderSagittal();
-          },
-
-          onMouseDown(e) {
-            this._isDragging = true;
-            this._dragMoved = false;
-            this._dragStartX = e.clientX;
-            this._dragStartY = e.clientY;
-          },
-
-          onCanvasMove(view, e) {
-            if (this._isDragging) {
-              const dx = e.clientX - this._dragStartX;
-              const dy = e.clientY - this._dragStartY;
-              if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-                this._dragMoved = true;
-              }
-              // 仅在拖拽时更新 crosshair 和切片位置（3D联动）
-              this.updateCrosshair(view, e);
-            }
-            // 单纯移动鼠标时不更新指示器
-          },
-
-          onMouseUp(e) {
-            // 如果没有拖拽移动，视为点击，切换切片
-            if (this._isDragging && !this._dragMoved && e) {
-              this.handleClick(e);
-            }
-            this._isDragging = false;
-          },
-
-          // 点击切换切片
-          handleClick(e) {
-            const canvas = e.target;
-            const view = canvas === this.$refs.axialCanvas ? 'axial' :
-                        canvas === this.$refs.coronalCanvas ? 'coronal' : 'sagittal';
-            
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            const canvasX = (e.clientX - rect.left) * scaleX;
-            const canvasY = (e.clientY - rect.top) * scaleY;
-
-            let voxelX = 0, voxelY = 0, voxelZ = 0;
-            
-            if (view === 'axial') {
-              voxelX = Math.round(canvasX);
-              voxelY = Math.round(canvas.height - 1 - canvasY);
-              voxelZ = this.axialSlice;
-            } else if (view === 'coronal') {
-              voxelX = Math.round(canvasX);
-              voxelY = this.coronalSlice;
-              voxelZ = Math.round(canvas.height - 1 - canvasY);
-            } else if (view === 'sagittal') {
-              voxelX = this.sagittalSlice;
-              voxelY = Math.round(canvasX);
-              voxelZ = Math.round(canvas.height - 1 - canvasY);
-            }
-
-            // 限制范围
-            voxelX = Math.max(0, Math.min(this.dims[0] - 1, voxelX));
-            voxelY = Math.max(0, Math.min(this.dims[1] - 1, voxelY));
-            voxelZ = Math.max(0, Math.min(this.dims[2] - 1, voxelZ));
-
-            // 更新切片位置
-            this.sagittalSlice = voxelX;
-            this.coronalSlice = voxelY;
-            this.axialSlice = voxelZ;
-
-            // 更新 crosshair
-            this.crosshair = { x: voxelX, y: voxelY, z: voxelZ, visible: true };
-            
-            this._updateRangeValues();
-            this.renderAll();
-          },
-
-          onCanvasLeave() {
-            // 保持 crosshair 显示，不隐藏
-          },
-
-          // 更新 crosshair 位置
-          updateCrosshair(view, e) {
-            const canvas = e.target;
-            const rect = canvas.getBoundingClientRect();
-            // 转换为 canvas 内部坐标
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            let canvasX = (e.clientX - rect.left) * scaleX;
-            let canvasY = (e.clientY - rect.top) * scaleY;
-
-            // 转换为体素坐标（ImageData 已经翻转了 Y 轴）
-            let voxelX = 0, voxelY = 0, voxelZ = 0;
-            
-            if (view === 'axial') {
-              // Axial: canvas_x = X, canvas_y 已翻转 => voxelY = canvas.height - 1 - canvasY
-              voxelX = Math.round(canvasX);
-              voxelY = Math.round(canvas.height - 1 - canvasY);
-              voxelZ = this.axialSlice;
-            } else if (view === 'coronal') {
-              // Coronal: canvas_x = X, canvas_y 已翻转 => voxelZ = canvas.height - 1 - canvasY
-              voxelX = Math.round(canvasX);
-              voxelY = this.coronalSlice;
-              voxelZ = Math.round(canvas.height - 1 - canvasY);
-            } else if (view === 'sagittal') {
-              // Sagittal: canvas_x = Y, canvas_y 已翻转 => voxelZ = canvas.height - 1 - canvasY
-              voxelX = this.sagittalSlice;
-              voxelY = Math.round(canvasX);
-              voxelZ = Math.round(canvas.height - 1 - canvasY);
-            }
-
-            // 限制在有效范围内
-            voxelX = Math.max(0, Math.min(this.dims[0] - 1, voxelX));
-            voxelY = Math.max(0, Math.min(this.dims[1] - 1, voxelY));
-            voxelZ = Math.max(0, Math.min(this.dims[2] - 1, voxelZ));
-
-            this.crosshair = { x: voxelX, y: voxelY, z: voxelZ, visible: true };
-
-            // 拖拽时同步更新其他视图的切片位置（3D联动）
-            if (this._isDragging && this._dragMoved) {
-              if (view === 'axial') {
-                // 在 Axial 视图拖拽：更新 X 和 Y 切片
-                this.sagittalSlice = voxelX;
-                this.coronalSlice = voxelY;
-              } else if (view === 'coronal') {
-                // 在 Coronal 视图拖拽：更新 X 和 Z 切片
-                this.sagittalSlice = voxelX;
-                this.axialSlice = voxelZ;
-              } else if (view === 'sagittal') {
-                // 在 Sagittal 视图拖拽：更新 Y 和 Z 切片
-                this.coronalSlice = voxelY;
-                this.axialSlice = voxelZ;
-              }
-              this._updateRangeValues();
-            }
-
-            this.renderAll();
-          },
-
-          // 绘制十字线
-          drawCrosshair(ctx, canvas, view) {
-            if (!this.crosshair.visible) return;
-            const { x, y, z } = this.crosshair;
-            
-            ctx.save();
-            ctx.strokeStyle = 'rgba(100, 180, 255, 0.6)';
-            ctx.lineWidth = 1;
-
-            if (view === 'axial') {
-              // Axial: X 对应 canvas_x, Y 已翻转 => canvasY = canvas.height - 1 - y
-              const cx = x + 0.5;
-              const cy = (canvas.height - 1 - y) + 0.5;
-              ctx.beginPath();
-              ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height);
-              ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy);
-              ctx.stroke();
-            } else if (view === 'coronal') {
-              // Coronal: X 对应 canvas_x, Z 已翻转 => canvasY = canvas.height - 1 - z
-              const cx = x + 0.5;
-              const cy = (canvas.height - 1 - z) + 0.5;
-              ctx.beginPath();
-              ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height);
-              ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy);
-              ctx.stroke();
-            } else if (view === 'sagittal') {
-              // Sagittal: Y 对应 canvas_x, Z 已翻转 => canvasY = canvas.height - 1 - z
-              const cx = y + 0.5;
-              const cy = (canvas.height - 1 - z) + 0.5;
-              ctx.beginPath();
-              ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height);
-              ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy);
-              ctx.stroke();
-            }
-            ctx.restore();
-          },
-
-          onWheel(e, view) {
-            const delta = e.deltaY > 0 ? 1 : -1;
-            const newCrosshair = { ...this.crosshair, visible: true };
-            if (view === 'axial') {
-              this.axialSlice = Math.max(0, Math.min(this.dims[2] - 1, this.axialSlice + delta));
-              newCrosshair.z = this.axialSlice;
-            } else if (view === 'coronal') {
-              this.coronalSlice = Math.max(0, Math.min(this.dims[1] - 1, this.coronalSlice + delta));
-              newCrosshair.y = this.coronalSlice;
-            } else if (view === 'sagittal') {
-              this.sagittalSlice = Math.max(0, Math.min(this.dims[0] - 1, this.sagittalSlice + delta));
-              newCrosshair.x = this.sagittalSlice;
-            }
-            this.crosshair = newCrosshair;
-            this._updateRangeValues();
-            this.renderAll();
-          },
-        },
-      }).mount('#app');
-    </script>
-  </body>
+        return {
+          loading, errorMsg, fileName, dims, spacing, dataTypeName, header,
+          axialSlice, coronalSlice, sagittalSlice, crosshair, crosshairVisible,
+          voxelValue, stats, views, containers, show3D, gridStyle,
+          currentSlice, crosshairPos, onSliceChange, toggle3D
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
 </html>

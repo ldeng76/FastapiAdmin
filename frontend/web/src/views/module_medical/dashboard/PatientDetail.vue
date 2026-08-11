@@ -1,23 +1,23 @@
 <template>
-  <el-row :gutter="10" class="h-full">
+  <el-row :gutter="10" class="h-full patientDetail">
     <el-col :span="4" class="overflow-y-auto">
-      <el-collapse expand-icon-position="left" v-model="activeNames" style="border: 1px solid var(--el-collapse-border-color);">
+      <el-collapse expand-icon-position="left" class="patientDetail-collapse" v-model="activeNames">
         <el-collapse-item title="CT" name="ct" class="pl-2 pr-2">
-          <el-table :data="[
+          <el-table class="patientDetail-collapse-table" :row-class-name="tableRowClassName" :data="[
               {fileName:'0100_000001_1.3.46.670589.33.1.63896480002311796600001.5635762842026550517',type:'dicom'},
               {fileName:'case_5.nii',type:'nii'},
-            ]" stripe>
+            ]">
             <el-table-column prop="fileName">
-              <template #default="{ row: row }">
-                <div style="cursor: pointer"  @click="seeImage(row,row.type)">{{ row.fileName }}</div>
+              <template #default="{ row: row }:{row : FileName}">
+                <div style="cursor: pointer" @click="seeImage(row,row.type)">{{ row.fileName }}</div>
               </template>
             </el-table-column>
           </el-table>
         </el-collapse-item>
         <el-collapse-item title="病理" name="svs" class="pl-2 pr-2">
-          <el-table :data="[{fileName:'B1229048-2.svs'}]" stripe>
+          <el-table class="patientDetail-collapse-table" :row-class-name="tableRowClassName" :data="[{fileName:'B1229048-2.svs',type :'svs'}]">
             <el-table-column prop="fileName">
-              <template #default="{ row: row }">
+              <template #default="{ row: row }:{row : FileName}">
                 <div style="cursor: pointer" @click="seeImage(row,'svs')">{{ row.fileName }}</div>
               </template>
             </el-table-column>
@@ -27,7 +27,7 @@
     </el-col>
     <el-col :span="20">
       <div class="flex flex-col h-full">
-        <ElDescriptions :column="6" border size="small">
+        <ElDescriptions class="patientDetail-elDescriptions" :column="6" border>
           <ElDescriptionsItem label="患者编号">{{ data?.patient_id }}</ElDescriptionsItem>
           <ElDescriptionsItem label="中心">{{ getDictLabel('med_center',data?.center_code )}}</ElDescriptionsItem>
           <ElDescriptionsItem label="性别">{{ getDictLabel('med_sex',data?.sex ) }}</ElDescriptionsItem>
@@ -59,7 +59,10 @@ defineProps<{
   data:PatientListItem | undefined,
   getDictLabel:(key:string,value:any) => string
 }>()
-
+interface FileName {
+  fileName: string
+  type: string
+}
 const activeNames = ref(['ct','svs'])
 const currImageType = ref()
 function seeImage(row : any,type : string){
@@ -67,8 +70,14 @@ function seeImage(row : any,type : string){
     loadingInstance.value = ElLoading.service()
     currImageType.value = type
   }
-
 }
+function tableRowClassName({row}:{row :FileName}){
+  if(row.type === currImageType.value){
+    return 'success-row'
+  }
+  return ''
+}
+
 function closeLoading(){
   if(loadingInstance.value != null){
     loadingInstance.value.close()
@@ -78,3 +87,24 @@ onMounted(function (){
   seeImage({},'dicom')
 })
 </script>
+<style>
+.patientDetail-collapse-table .success-row{
+  --el-table-tr-bg-color: rgb(231 255 223)
+}
+</style>
+<style scoped>
+.patientDetail{
+  font-size: 16px;
+
+}
+.patientDetail-collapse{
+  border: 1px solid var(--el-collapse-border-color);
+  --el-collapse-border-color:#ccc;
+}
+.patientDetail-collapse-table{
+  --el-table-border-color: #ccc;
+}
+.patientDetail-elDescriptions{
+   --el-border-color-lighter: #ccc;
+}
+</style>

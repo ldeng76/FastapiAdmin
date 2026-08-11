@@ -85,8 +85,8 @@ const { chartRef, isDark, getAnimationConfig, getTooltipStyle, getLegendStyle } 
               show: props.showLabel,
               formatter: "{b}\n{d}%",
               position: "outside",
-              color: isDark.value ? "#ccc" : "#999",
-              fontSize: 12,
+              color: isDark.value ? "#ccc" : useChartOps().fontColor,
+              fontSize: useChartOps().fontSize,
             },
             emphasis: {
               label: {

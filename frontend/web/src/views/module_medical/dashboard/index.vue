@@ -2,14 +2,14 @@
   <el-container class="layout-container">
     <el-header class="top-header flex">
       <el-text size="large" :style="'width: '+asideWidth+'px'">肺结节/肺癌科研数据管理仪表板</el-text>
-      <div style="position: relative">
-        <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">
-          <el-tab-pane label="数据概览" name="first"></el-tab-pane>
+<!--      <div style="position: relative">-->
+<!--        <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">-->
+<!--          <el-tab-pane label="数据概览" name="first"></el-tab-pane>-->
 <!--          <el-tab-pane label="影像特征" name="second"></el-tab-pane>-->
 <!--          <el-tab-pane label="病理与分子" name="third"></el-tab-pane>-->
 <!--          <el-tab-pane label="生存随访" name="fourth"></el-tab-pane>-->
-        </el-tabs>
-      </div>
+<!--        </el-tabs>-->
+<!--      </div>-->
     </el-header>
     <el-container class="layout-body">
       <!-- 2. 左侧侧边栏 -->
@@ -59,7 +59,7 @@
           </el-col>
         </el-row>
         <el-row :gutter="20" class="mt-5">
-           <el-col :sm="8">
+           <el-col :sm="6">
             <el-card class="echarts-card">
               <div class="pb-3.5"><span class="text-base font-medium">各中心患者例数</span></div>
               <FaHBarChart
@@ -68,7 +68,7 @@
               />
             </el-card>
           </el-col>
-          <el-col :sm="8">
+          <el-col :sm="9">
             <el-card class="echarts-card">
               <div class="pb-3.5"><span class="text-base font-medium">各年龄段患者例数</span></div>
               <FaBarChart
@@ -79,7 +79,7 @@
               />
             </el-card>
           </el-col>
-          <el-col :sm="8">
+          <el-col :sm="9">
             <el-card class="echarts-card">
                <div class="pb-3.5"><span class="text-base font-medium">患者例数性别比</span></div>
                <FaRingChart
@@ -121,9 +121,8 @@
               <div class="pb-3.5"><span class="text-base font-medium">患者列表</span></div>
               <FaTable
                 :data="patientData.data"
-                size="small"
                 :border="false"
-                :height="400"
+                :height="500"
                 :stripe="false"
                 :pagination="patientData.pagination"
                 @pagination:size-change="patientList.handlePatientSizeChange"
@@ -453,9 +452,12 @@ onMounted(async function () {
 }
 </style>
 <style scoped>
+.layout-aside{
+  border-right: 1px solid #ccc;
+}
 .top-header{
   background-color: #fff;
-  border-bottom: 1px solid #dddddd;
+  border-bottom: 1px solid #ccc;
 }
 .layout-container {
   height: 100vh;
@@ -479,6 +481,8 @@ onMounted(async function () {
 }
 .echarts-card{
   --el-card-border-radius : 20px !important;
+  --el-card-border-color:#ccc
 }
 
 </style>
+<!-- &#45;&#45;el-card-border-color-->

@@ -60,16 +60,16 @@ export const useChartOps = (): ChartThemeConfig => ({
   /** */
   chartHeight: "16rem",
   /** 字体大小 */
-  fontSize: 13,
+  fontSize: 16,
   /** 字体颜色 */
-  fontColor: "#999",
+  fontColor: "#333",
   /** 主题颜色 */
   themeColor: getCssVar("--el-color-primary-light-1"),
   /** 颜色组 */
   colors: [
     getCssVar("--el-color-primary-light-1"),
     "#4ABEFF",
-    "#EDF2FF",
+    "#c5d3ff",
     "#14DEBA",
     "#FFAF20",
     "#FA8A6C",
@@ -83,7 +83,7 @@ const MENU_RESIZE_DELAYS = [50, 100, 200] as const;
 const RESIZE_DEBOUNCE_DELAY = 100;
 
 export function useChart(options: UseChartOptions = {}) {
-  const { initOptions, initDelay = 0, threshold = 0.1, autoTheme = true } = options;
+  const { initOptions, initDelay = 0, threshold = 0.1, autoTheme = true,onClick = ()=>{} } = options;
 
   const settingStore = useSettingsStore();
   const { isDark, menuOpen, menuType } = storeToRefs(settingStore);
@@ -280,7 +280,7 @@ export function useChart(options: UseChartOptions = {}) {
     borderColor: isDark.value ? "#333" : "#ddd",
     borderWidth: 1,
     textStyle: {
-      color: isDark.value ? "#fff" : "#333",
+      color: isDark.value ? "#fff" :  useChartOps().fontColor,
     },
     ...customOptions,
   });
@@ -292,7 +292,8 @@ export function useChart(options: UseChartOptions = {}) {
   ) => {
     const baseConfig = {
       textStyle: {
-        color: isDark.value ? "#fff" : "#333",
+        color: isDark.value ? "#fff" :  useChartOps().fontColor,
+        fontSize:useChartOps().fontSize
       },
       itemWidth: 12,
       itemHeight: 12,
@@ -444,6 +445,7 @@ export function useChart(options: UseChartOptions = {}) {
       // 图表创建后立即设置监听器
       setupMenuWatchers();
       setupThemeWatcher();
+      chart.on("click",onClick)
     }
     if (chart && !isDestroyed) {
       chart.setOption(options);

@@ -2,14 +2,14 @@
   <el-container class="layout-container">
     <el-header class="top-header flex">
       <el-text size="large" :style="'width: '+asideWidth+'px'">肺结节/肺癌科研数据管理仪表板</el-text>
-      <div style="position: relative">
-        <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">
-          <el-tab-pane label="数据概览" name="first"></el-tab-pane>
+<!--      <div style="position: relative">-->
+<!--        <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">-->
+<!--          <el-tab-pane label="数据概览" name="first"></el-tab-pane>-->
 <!--          <el-tab-pane label="影像特征" name="second"></el-tab-pane>-->
 <!--          <el-tab-pane label="病理与分子" name="third"></el-tab-pane>-->
 <!--          <el-tab-pane label="生存随访" name="fourth"></el-tab-pane>-->
-        </el-tabs>
-      </div>
+<!--        </el-tabs>-->
+<!--      </div>-->
     </el-header>
     <el-container class="layout-body">
       <!-- 2. 左侧侧边栏 -->
@@ -59,16 +59,17 @@
           </el-col>
         </el-row>
         <el-row :gutter="20" class="mt-5">
-           <el-col :sm="8">
+           <el-col :sm="6">
             <el-card class="echarts-card">
               <div class="pb-3.5"><span class="text-base font-medium">各中心患者例数</span></div>
               <FaHBarChart
                 :data="centerCount.data"
                 :xAxisData="centerCount.names"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
-          <el-col :sm="8">
+          <el-col :sm="9">
             <el-card class="echarts-card">
               <div class="pb-3.5"><span class="text-base font-medium">各年龄段患者例数</span></div>
               <FaBarChart
@@ -76,10 +77,11 @@
                 :xAxisData="ageCount.names"
                 :showLegend="true"
                 legendPosition="right"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
-          <el-col :sm="8">
+          <el-col :sm="9">
             <el-card class="echarts-card">
                <div class="pb-3.5"><span class="text-base font-medium">患者例数性别比</span></div>
                <FaRingChart
@@ -87,6 +89,7 @@
                 :radius="['0%', '70%']"
                 :showLegend="true"
                 :showLabel="true"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
@@ -100,6 +103,7 @@
                 :radius="['0%', '70%']"
                 :showLegend="true"
                 :showLabel="true"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
@@ -121,13 +125,13 @@
               <div class="pb-3.5"><span class="text-base font-medium">患者列表</span></div>
               <FaTable
                 :data="patientData.data"
-                size="small"
                 :border="false"
-                :height="400"
+                :height="500"
                 :stripe="false"
                 :pagination="patientData.pagination"
                 @pagination:size-change="patientList.handlePatientSizeChange"
                 @pagination:current-change="patientList.handlePatientCurrentChange"
+                style="--default-box-color:var(--el-fill-color-light)"
               >
                 <ElTableColumn type="index" label="操作" width="120">
                   <template #default="{ row: row }">
@@ -174,6 +178,11 @@
   </el-container>
   <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showPatientDetail" fullscreen>
     <PatientDetail v-if="showPatientDetail" :data="showPatientDetailData" :getDictLabel="getDictLabel" />
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="showPatientDetail = false" type="primary"  plain>关闭</el-button>
+      </div>
+    </template>
   </el-dialog>
 </template>
 
@@ -316,6 +325,21 @@ function search(item1:FilterConfigType, item2:FilterDictDataTable ) {
   item1.currFilterText = item2.dict_label;
   searchCall()
 }
+
+function chartSelect(obj:any){
+  let item1 =  searchConfig.value.find(function (n){
+    return n.name === obj?.data?.filterName
+  })
+  if(item1 !== undefined){
+    let item2 = item1?.children?.find(function (n){
+      return n.dict_value === obj?.data?.filterValue
+    })
+    if(item2){
+      search(item1,item2)
+    }
+  }
+}
+
 function getDictLabel(key:string,value:any){
   let item = dictStore.getDictLabel(key, value)
   if(typeof item !== "string" && item?.dict_label){
@@ -348,10 +372,15 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
   if(age_distribution != null){
     ageCount.value = {
       names :age_distribution.data.map(function (n){
-         return n.label
+        return n.label
       }),
-      data :age_distribution.data.map(function (n){
-        return n.count
+      data : age_distribution.data.map(function (n){
+        return {
+          value:n.count,
+          name:n.label,
+          filterValue: n.label,
+          filterName: 'age_bucket'
+        }
       })
     }
   }
@@ -365,8 +394,13 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
           return n.center_code
         }
       }),
-      data :center_distribution.data.map(function (n){
-        return n.count
+      data : center_distribution.data.map(function (n){
+        return {
+          value:n.count,
+          name:n.center_code,
+          filterValue: n.center_code,
+          filterName: 'center'
+        }
       })
     }
   }
@@ -375,7 +409,8 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
       return {
         name : n.label,
         value : n.count,
-        sex : n.sex
+        filterValue : n.sex,
+        filterName: 'gender'
       }
     })
   }
@@ -384,7 +419,8 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
       return {
         name : n.label,
         value : n.count,
-        type : n.exam_type,
+        filterValue : n.exam_type,
+        filterName: 'modality'
       }
     })
   }
@@ -448,9 +484,12 @@ onMounted(async function () {
 }
 </style>
 <style scoped>
+.layout-aside{
+  border-right: 1px solid #ccc;
+}
 .top-header{
   background-color: #fff;
-  border-bottom: 1px solid #dddddd;
+  border-bottom: 1px solid #ccc;
 }
 .layout-container {
   height: 100vh;
@@ -474,6 +513,7 @@ onMounted(async function () {
 }
 .echarts-card{
   --el-card-border-radius : 20px !important;
+  --el-card-border-color:#ccc
 }
 
 </style>

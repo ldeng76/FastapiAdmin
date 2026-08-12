@@ -1,9 +1,11 @@
-"""SVS 切片服务层（基于 large_image）。
+"""SVS 切片服务层（基于 large-image SDK）。
 
-使用 Kitware large_image 库提供 SVS/SLD/NDPI/TIFF 等切片文件的
-读取和瓦片服务，供 OpenSeadragon 等前端查看器使用。
+使用 Kitware 的 large_image 库提供 SVS/SLD/NDPI/TIFF 等切片文件的
+读取和瓦片服务，内置缓存、边界处理、关联图像等功能。
 
-large_image 内置缓存和边界处理，无需手动管理 slide 对象。
+依赖：
+- Windows: pip install openslide-bin openslide-python large-image large-image-source-openslide
+- Linux:   yum install openslide openslide-devel && pip install openslide-python large-image large-image-source-openslide
 """
 
 from __future__ import annotations
@@ -13,21 +15,29 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
+from large_image.exceptions import TileSourceXYZRangeError, TileSourceError
 
 from app.core.logger import log
 
 # 可选依赖：large_image
 try:
     import large_image
-    from large_image.exceptions import TileSourceXYZRangeError, TileSourceError
+    # 手动注册 openslide source（entry point 在某些环境下不自动注册）
+    try:
+        from large_image_source_openslide import OpenslideFileTileSource
+        if "openslide" not in large_image.tilesource.AvailableTileSources:
+            large_image.tilesource.AvailableTileSources["openslide"] = OpenslideFileTileSource
+    except ImportError:
+        pass
+
     HAS_LARGE_IMAGE = True
 except ImportError:
     HAS_LARGE_IMAGE = False
-    log.warning("large-image 未安装，SVS 功能不可用。请执行: pip install large-image[openslide]")
+    log.warning("large-image 未安装，SVS 功能不可用。")
 
 
 class SVSService:
-    """SVS 切片服务（基于 large_image）。"""
+    """SVS 切片服务（基于 large-image SDK）。"""
 
     # slide_id -> file_path 映射（large_image 自带 tile source 缓存）
     _slide_paths: dict[str, str] = {}
@@ -38,7 +48,7 @@ class SVSService:
         if not HAS_LARGE_IMAGE:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="服务器缺少 large-image 依赖，请执行: pip install large-image[openslide]",
+                detail="服务器缺少 large-image 依赖",
             )
 
     @classmethod
@@ -106,7 +116,7 @@ class SVSService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"无法打开切片文件: {str(e)}",
             )
-        except Exception as e:
+        except TileSourceError as e:
             log.error(f"打开 SVS 文件失败: {path}, 错误: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

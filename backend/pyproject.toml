@@ -72,11 +72,11 @@ dev = [
 [tool.uv]
 default-groups = ["dev"]     # 本地 uv sync 含 dev；生产 pip -r requirements.txt 不含 pytest/ruff/fakeredis
 
-# 覆盖 large-image-source-openslide 的依赖声明，移除 openslide-bin（仅 Windows 手动声明）
-# Linux 通过 yum/apt 安装系统 OpenSlide 库
-[[tool.uv.dependency-metadata]]
-name = "large-image-source-openslide"
-version = "1.35.1"
+# 强制 openslide-bin 仅 Windows 安装（覆盖所有包的传递依赖声明）
+# large-image-source-openslide 原始声明无条件依赖 openslide-bin，Linux 无预编译 wheel 会编译失败
+override-dependencies = [
+    "openslide-bin>=4.0.1.2 ; sys_platform == 'win32'",
+]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"

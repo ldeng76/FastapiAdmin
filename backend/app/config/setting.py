@@ -237,6 +237,7 @@ class Settings(BaseSettings):
     DICOM_DATA_DIR: Path = BASE_DIR.parent / "docs" / "dicom_demo"
     DICOM_STATIC_DIR:  Path = BASE_DIR.parent / "docs" / "dicom_static"
     SVS_DATA_DIR: Path = BASE_DIR.parent / "docs" / "svs_demo"
+    NII_DATA_DIR: Path = BASE_DIR.parent / "docs" / "nii_demo"
     # ================================================= #
     # ************** ETL-2 脱敏落库配置 (ADR-0001/0006) *** #
     # ================================================= #

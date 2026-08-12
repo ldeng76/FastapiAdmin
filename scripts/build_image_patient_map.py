@@ -26,9 +26,7 @@ from pathlib import Path
 ROOT = Path("/data/wlx/DATABASE")
 OUT_CSV = Path("/home/dzy/wk/lnrs/docs/sour/ct_image_patient_map.csv")
 
-# 珠江 DICOM 目录第一段是日期(YYYYMMDD)
 DICOM_DATE_RE = re.compile(r"^\d{8}$")
-# 目录命名 <PID>_<StudyInstanceUID>，PID 段由数字+可选字母前缀组成
 PID_STUDY_RE = re.compile(r"^([A-Za-z]?\d+[A-Za-z0-9]*|\d+)_(.+)$")
 
 CT_CSV = ROOT / "01_disk/_字段与原始数据/1珠江/CT与病理数据/0-Select_v_exam_patient_rpt.csv"
@@ -50,7 +48,6 @@ CSV_FIELDS = [
     "patient_sex",
     "patient_age",
     "exam_class",
-    "exam_desc",         # 检查所见/报告
     "admission_count",   # 历史病历中的住院次数（按 pid 统计）
 ]
 
@@ -140,13 +137,30 @@ def scan_disk2_zhujiang_supplement():
 
 # ---------- 表格数据加载 ----------
 
-def _read_csv_gbk(path: Path) -> list[dict]:
-    with path.open("r", encoding="gbk", errors="replace", newline="") as f:
-        # 跳过 BOM
-        first = f.read(1)
-        if first != "\ufeff":
-            f.seek(0)
-        return list(csv.DictReader(f))
+def _detect_encoding(path: Path) -> str:
+    """探测文件编码。"""
+    try:
+        import chardet
+    except ImportError:
+        return "utf-8"
+    raw = path.read_bytes()[:200_000]
+    enc = chardet.detect(raw).get("encoding") or "utf-8"
+    # chardet 把 GB2312/GBK 报成 GB2312，统一为 gbk（超集）
+    if enc.lower() in {"gb2312", "gb18030"}:
+        enc = "gbk"
+    return enc
+
+
+def _read_csv_auto(path: Path) -> list[dict]:
+    """按探测出的编码读取 CSV，去除 BOM。"""
+    enc = _detect_encoding(path)
+    try:
+        text = path.read_text(encoding=enc, errors="replace")
+    except (UnicodeDecodeError, LookupError):
+        text = path.read_text(encoding="utf-8", errors="replace")
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return list(csv.DictReader(text.splitlines()))
 
 
 def _strip_keys(rows: list[dict]) -> list[dict]:
@@ -158,18 +172,13 @@ def _strip_keys(rows: list[dict]) -> list[dict]:
 
 
 def load_patient_records():
-    """
-    加载珠江患者表，按 PAT_LOCAL_ID 聚合。
-    返回 dict[pid] = {exam_no, pat_local_id, sick_id, name, sex, age, exam_class, exam_desc}
-    """
+    """加载珠江患者表，按 PAT_LOCAL_ID 聚合。"""
     agg: dict[str, dict] = {}
     for path in (CT_CSV, JZ_CSV):
-        for r in _strip_keys(_read_csv_gbk(path)):
+        for r in _strip_keys(_read_csv_auto(path)):
             pid = (r.get("PAT_LOCAL_ID") or "").strip()
             if not pid:
                 continue
-            desc_parts = [r.get("DESCRIPTION") or "", r.get("IMPRESSION") or ""]
-            desc = " | ".join(p for p in desc_parts if p.strip())
             rec = agg.setdefault(pid, {
                 "exam_no": "",
                 "pat_local_id": pid,
@@ -178,9 +187,7 @@ def load_patient_records():
                 "patient_sex": "",
                 "patient_age": "",
                 "exam_class": "",
-                "exam_desc": "",
             })
-            # 多行合并：保留第一个非空值
             for src_key, dst_key in [
                 ("EXAM_NO", "exam_no"),
                 ("SICK_ID", "sick_id"),
@@ -193,29 +200,22 @@ def load_patient_records():
                     v = (r.get(src_key) or "").strip()
                     if v:
                         rec[dst_key] = v
-            if desc and not rec["exam_desc"]:
-                rec["exam_desc"] = desc[:500]
     return agg
 
 
 def load_admission_count():
-    """加载历史病历查询，按 pid 统计住院次数集合大小。"""
+    """加载历史病历查询，按 pid 统计住院次数最大值。"""
     cnt: dict[str, int] = defaultdict(int)
-    rows = _strip_keys(_read_csv_gbk(HIST_CSV))
+    rows = _strip_keys(_read_csv_auto(HIST_CSV))
     for r in rows:
         pid = (r.get("pid") or "").strip()
         if not pid:
             continue
-        # 住院次数列
         try:
             n = int((r.get("住院次数") or "0").strip() or 0)
         except ValueError:
             n = 0
-        # 该行记录一次病历事件，至少算 1
-        if n > 0:
-            cnt[pid] = max(cnt[pid], n)
-        else:
-            cnt[pid] = max(cnt[pid], 1)
+        cnt[pid] = max(cnt[pid], n if n > 0 else 1)
     return cnt
 
 
@@ -241,7 +241,6 @@ def main():
     adm = load_admission_count()
     print(f"  历史病历 pid 数: {len(adm)}", flush=True)
 
-    # 关联
     matched = 0
     for r in rows:
         pid = r["patient_id"]
@@ -254,13 +253,11 @@ def main():
             r["patient_sex"] = rec["patient_sex"]
             r["patient_age"] = rec["patient_age"]
             r["exam_class"] = rec["exam_class"]
-            r["exam_desc"] = rec["exam_desc"]
             matched += 1
         r["admission_count"] = adm.get(pid, "")
 
     print(f"  命中 CT/精准医学表的影像检查数: {matched} / {len(rows)}", flush=True)
 
-    # 按日期 + PID 排序
     rows.sort(key=lambda r: (r["source"], r["exam_date"], r["patient_id"], r["study_instance_uid"]))
 
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)

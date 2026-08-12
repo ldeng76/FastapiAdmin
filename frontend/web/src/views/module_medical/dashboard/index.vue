@@ -65,6 +65,7 @@
               <FaHBarChart
                 :data="centerCount.data"
                 :xAxisData="centerCount.names"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
@@ -76,6 +77,7 @@
                 :xAxisData="ageCount.names"
                 :showLegend="true"
                 legendPosition="right"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
@@ -87,6 +89,7 @@
                 :radius="['0%', '70%']"
                 :showLegend="true"
                 :showLabel="true"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
@@ -100,6 +103,7 @@
                 :radius="['0%', '70%']"
                 :showLegend="true"
                 :showLabel="true"
+                :onClick="chartSelect"
               />
             </el-card>
           </el-col>
@@ -127,6 +131,7 @@
                 :pagination="patientData.pagination"
                 @pagination:size-change="patientList.handlePatientSizeChange"
                 @pagination:current-change="patientList.handlePatientCurrentChange"
+                style="--default-box-color:var(--el-fill-color-light)"
               >
                 <ElTableColumn type="index" label="操作" width="120">
                   <template #default="{ row: row }">
@@ -320,6 +325,21 @@ function search(item1:FilterConfigType, item2:FilterDictDataTable ) {
   item1.currFilterText = item2.dict_label;
   searchCall()
 }
+
+function chartSelect(obj:any){
+  let item1 =  searchConfig.value.find(function (n){
+    return n.name === obj?.data?.filterName
+  })
+  if(item1 !== undefined){
+    let item2 = item1?.children?.find(function (n){
+      return n.dict_value === obj?.data?.filterValue
+    })
+    if(item2){
+      search(item1,item2)
+    }
+  }
+}
+
 function getDictLabel(key:string,value:any){
   let item = dictStore.getDictLabel(key, value)
   if(typeof item !== "string" && item?.dict_label){
@@ -352,10 +372,15 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
   if(age_distribution != null){
     ageCount.value = {
       names :age_distribution.data.map(function (n){
-         return n.label
+        return n.label
       }),
-      data :age_distribution.data.map(function (n){
-        return n.count
+      data : age_distribution.data.map(function (n){
+        return {
+          value:n.count,
+          name:n.label,
+          filterValue: n.label,
+          filterName: 'age_bucket'
+        }
       })
     }
   }
@@ -369,8 +394,13 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
           return n.center_code
         }
       }),
-      data :center_distribution.data.map(function (n){
-        return n.count
+      data : center_distribution.data.map(function (n){
+        return {
+          value:n.count,
+          name:n.center_code,
+          filterValue: n.center_code,
+          filterName: 'center'
+        }
       })
     }
   }
@@ -379,7 +409,8 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
       return {
         name : n.label,
         value : n.count,
-        sex : n.sex
+        filterValue : n.sex,
+        filterName: 'gender'
       }
     })
   }
@@ -388,7 +419,8 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
       return {
         name : n.label,
         value : n.count,
-        type : n.exam_type,
+        filterValue : n.exam_type,
+        filterName: 'modality'
       }
     })
   }
@@ -485,4 +517,3 @@ onMounted(async function () {
 }
 
 </style>
-<!-- &#45;&#45;el-card-border-color-->

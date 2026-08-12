@@ -17,10 +17,10 @@ const props = withDefaults(defineProps<BarChartProps>(), {
   loading: false,
   isEmpty: false,
   colors: () => useChartOps().colors,
+  onClick :()=> {},
   borderRadius: 4,
-
   // 数据配置
-  data: () => [0, 0, 0, 0, 0, 0, 0],
+  data: () => [],
   xAxisData: () => [],
   barWidth: "40%",
   stack: false,
@@ -42,7 +42,7 @@ const isMultipleData = computed(() => {
     Array.isArray(props.data) &&
     props.data.length > 0 &&
     typeof props.data[0] === "object" &&
-    "name" in props.data[0]
+    "data" in props.data[0]
   );
 });
 
@@ -125,23 +125,23 @@ const {
   props,
   checkEmpty: () => {
     // 检查单数据情况
-    if (Array.isArray(props.data) && typeof props.data[0] === "number") {
+    if (Array.isArray(props.data) && !isMultipleData.value) {
       const singleData = props.data as number[];
-      return !singleData.length || singleData.every((val) => val === 0);
+      return singleData.length === 0;
     }
 
     // 检查多数据情况
-    if (Array.isArray(props.data) && typeof props.data[0] === "object") {
+    if (Array.isArray(props.data) && isMultipleData.value) {
       const multiData = props.data as BarDataItem[];
-      return (
-        !multiData.length ||
-        multiData.every((item) => !item.data?.length || item.data.every((val) => val === 0))
-      );
+      return multiData.length === 0
     }
 
     return true;
   },
   watchSources: [() => props.data, () => props.xAxisData, () => props.colors],
+  chartOptions: {
+    onClick: props.onClick
+  },
   generateOptions: (): EChartsOption => {
     const options: EChartsOption = {
       grid: getGridWithLegend(props.showLegend && isMultipleData.value, props.legendPosition, {

@@ -83,7 +83,7 @@ const MENU_RESIZE_DELAYS = [50, 100, 200] as const;
 const RESIZE_DEBOUNCE_DELAY = 100;
 
 export function useChart(options: UseChartOptions = {}) {
-  const { initOptions, initDelay = 0, threshold = 0.1, autoTheme = true } = options;
+  const { initOptions, initDelay = 0, threshold = 0.1, autoTheme = true,onClick = ()=>{} } = options;
 
   const settingStore = useSettingsStore();
   const { isDark, menuOpen, menuType } = storeToRefs(settingStore);
@@ -445,6 +445,7 @@ export function useChart(options: UseChartOptions = {}) {
       // 图表创建后立即设置监听器
       setupMenuWatchers();
       setupThemeWatcher();
+      chart.on("click",onClick)
     }
     if (chart && !isDestroyed) {
       chart.setOption(options);

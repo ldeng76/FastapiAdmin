@@ -21,7 +21,7 @@ const props = withDefaults(defineProps<RingChartProps>(), {
   loading: false,
   isEmpty: false,
   colors: () => useChartOps().colors,
-
+  onClick :()=> {},
   // 数据配置
   data: () => [],
   radius: () => ["50%", "80%"],
@@ -41,6 +41,9 @@ const { chartRef, isDark, getAnimationConfig, getTooltipStyle, getLegendStyle } 
     props,
     checkEmpty: () => {
       return !props.data?.length || props.data.every((item) => item.value === 0);
+    },
+    chartOptions: {
+      onClick: props.onClick
     },
     watchSources: [() => props.data, () => props.centerText],
     generateOptions: (): EChartsOption => {

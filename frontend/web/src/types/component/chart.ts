@@ -66,6 +66,8 @@ export interface UseChartOptions {
   threshold?: number;
   /** 是否自动响应主题变化 */
   autoTheme?: boolean;
+  /** 图表点击事件 */
+  onClick?:(obj:any)=> void;
 }
 
 // 基础图表 Props 接口 - 统一所有图表的基础属性
@@ -77,6 +79,8 @@ export interface BaseChartProps {
   isEmpty?: boolean;
   /** 颜色配置 */
   colors?: string[];
+   /** 图表点击事件 */
+  onClick?:(obj:any)=> void;
 }
 
 // 轴线显示控制接口 - 统一轴线相关配置

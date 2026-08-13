@@ -17,12 +17,6 @@ export interface FilterConfigType {
 
 const config: Array<FilterConfigType> = [
   {
-    dict_label: "来源中心",
-    dict_type:"med_center",
-    name :"center",
-    children: [],
-  },
-  {
     dict_label: "患者性别",
     dict_type:"med_sex",
     name :"gender",

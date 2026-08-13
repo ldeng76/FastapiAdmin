@@ -29,7 +29,6 @@
       <div class="flex flex-col h-full">
         <ElDescriptions class="patientDetail-elDescriptions" :column="6" border>
           <ElDescriptionsItem label="患者编号">{{ data?.patient_id }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="中心">{{ getDictLabel('med_center',data?.center_code )}}</ElDescriptionsItem>
           <ElDescriptionsItem label="性别">{{ getDictLabel('med_sex',data?.sex ) }}</ElDescriptionsItem>
           <ElDescriptionsItem label="出生日期">{{ data?.birth_date }}</ElDescriptionsItem>
           <ElDescriptionsItem label="年龄">{{ data?.age }}</ElDescriptionsItem>

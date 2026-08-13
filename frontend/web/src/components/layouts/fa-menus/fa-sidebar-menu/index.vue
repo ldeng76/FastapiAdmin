@@ -156,8 +156,6 @@ const sidebarLogoSrc = computed(() => {
 });
 
 const sidebarTitle = computed(() => {
-  const raw = configStore.configData.tenant_name?.config_value;
-  if (typeof raw === "string" && raw.trim()) return raw.trim();
   return AppConfig.systemInfo.name;
 });
 

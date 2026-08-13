@@ -107,7 +107,7 @@ const webLogoSrc = computed(
 );
 
 const siteTitle = computed(
-  () => configStore.configData.tenant_name?.config_value?.trim() || AppConfig.systemInfo.name
+  () => AppConfig.systemInfo.name
 );
 
 const DEFAULT_APP_VERSION = "3.0.0";

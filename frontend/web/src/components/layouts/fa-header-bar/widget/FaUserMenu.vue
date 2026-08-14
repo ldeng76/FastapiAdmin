@@ -23,12 +23,7 @@
             :src="userAvatar"
             alt="avatar"
           />
-          <img
-            v-else
-            class="size-full rounded-full block"
-            src="@imgs/user/avatar.webp"
-            alt="avatar"
-          />
+          <ElAvatar v-else icon="UserFilled" :size="'small'" />
           <!-- 与旧版 NavbarActions.user-profile__online-indicator 一致 -->
           <span class="fa-user-menu__online-dot" aria-hidden="true" />
         </div>
@@ -42,12 +37,8 @@
               :src="userAvatar"
               alt=""
             />
-            <img
-              v-else
-              class="w-10 h-10 mr-3 ml-0 overflow-hidden rounded-full float-left"
-              src="@imgs/user/avatar.webp"
-              alt=""
-            />
+            <ElAvatar class="w-10 h-10 mr-3 ml-0 float-left" v-else icon="UserFilled" :size="'small'" />
+
             <div class="w-[calc(100%-60px)] h-full">
               <span class="block text-sm font-medium text-g-800 truncate">
                 {{ displayName }}
@@ -95,14 +86,7 @@
               <FaSvgIcon icon="ri:settings-3-line" />
               <span>{{ $t("topBar.user.paramConfig") }}</span>
             </li>
-            <li class="btn-item" @click="toGithub()">
-              <FaSvgIcon icon="ri:github-line" />
-              <span>{{ $t("topBar.user.github") }}</span>
-            </li>
-            <li class="btn-item" @click="toGitee">
-              <FaSvgIcon icon="ri:git-branch-line" />
-              <span>{{ $t("topBar.user.gitee") }}</span>
-            </li>
+
             <li class="btn-item" @click="lockScreen()">
               <FaSvgIcon icon="ri:lock-line" />
               <span>{{ $t("topBar.user.lockScreen") }}</span>
@@ -123,7 +107,7 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { ElMessageBox } from "element-plus";
+import { ElMessageBox ,ElAvatar } from "element-plus";
 import { useUserStore } from "@stores";
 import { WEB_LINKS, mittBus } from "@utils";
 

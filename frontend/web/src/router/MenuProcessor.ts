@@ -118,6 +118,14 @@ function mapMenuNode(item: MenuTable, depth = 0): AppRouteRecord {
     component = toComponentImportPath(item.component_path!);
   }
 
+  const targetItem = item?.params?.find(function (n){
+    return n.key === 'target'
+  })
+  
+  const link = item.type === 4 || (targetItem && targetItem.value === '_blank') ?
+    (item.route_path?.indexOf("/") === 0 ? "#"+item.route_path : item.route_path) :
+    ''
+
   const meta: RouteMeta = {
     title: item.title ?? "",
     icon: item.icon || undefined,
@@ -129,7 +137,7 @@ function mapMenuNode(item: MenuTable, depth = 0): AppRouteRecord {
     alwaysShow: !!item.always_show,
     isHide: !!item.hidden,
     client: item.client,
-    link : item.type === 4 ? (item.route_path?.indexOf("/") === 0 ? "#"+item.route_path : item.route_path) : ''
+    link : link
   };
 
   return {

@@ -19,7 +19,11 @@
       >
         <template #default="{ row }">
           <span v-if="!col.formatter">{{ cellText(row[col.key]) }}</span>
-          <component v-else :is="col.formatter(row[col.key], row)" />
+          <component
+            v-else-if="isComponent(getFormattedValue(col,row))"
+            :is="getFormattedValue(col,row)"
+          />
+          <span v-else>{{ getFormattedValue(col,row) }}</span>
         </template>
       </ElTableColumn>
     </ElTable>
@@ -41,6 +45,19 @@ withDefaults(
   }>(),
   { showTitle: true },
 );
+
+function getFormattedValue(col: any, row: any) {
+  if (!col.formatter) return null;
+  return col.formatter(row[col.key], row);
+}
+
+function isComponent(value:any) {
+  if (!value || typeof value === 'string') return false;
+  if (typeof value === 'object') {
+    return 'render' in value || 'setup' in value;
+  }
+  return false;
+}
 
 function cellText(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";

@@ -75,6 +75,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref, defineComponent } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   ElCard,
   ElButton,
@@ -97,10 +98,9 @@ import FieldRenderer from "@/components/medical/field-renderer";
 import { getFieldLabel } from "@/components/medical/field-renderer/field-labels";
 
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
-const props = defineProps<{
-  data:{detail : string ,center:string},
-  goBack:()=> void
-}>()
+
+const route = useRoute();
+const router = useRouter();
 
 const loading = ref(false);
 const activeTab = ref("clinical");
@@ -113,8 +113,8 @@ const detail = ref<PatientDetail>({
 });
 
 const patient = computed(() => detail.value.patient);
-const patientId = computed(() => (props.data.detail as string) || "");
-const center = computed(() => (props.data.center as string) || undefined);
+const patientId = computed(() => (route.query.detail as string) || "");
+const center = computed(() => (route.query.center as string) || undefined);
 
 // DICOM 影像查看器
 const dicomViewerVisible = ref(false);
@@ -209,6 +209,12 @@ function aboLabel(code?: string) { return code ? (ABO_LABEL[code] || code) : "-"
 const RH_LABEL: Record<string, string> = { "1": "阴性", "2": "阳性", "3": "不详" };
 function rhLabel(code?: string) { return code ? (RH_LABEL[code] || code) : "-"; }
 
+function goBack() {
+  router.push("/medical/patient");
+}
+
+// 兼容：若直接通过 /medical/patient/detail 进入但无 detail 参数，回列表
+
 
 async function fetchDetail() {
   if (!patientId.value) return;
@@ -297,11 +303,11 @@ function renderRowFields(row: ModalityRow, column: number) {
     if (k === "_table" || k === "_modality") continue;
     if (v === null || v === undefined) continue;
     if (typeof v === "object") {
-        items.push(
-          h(ElDescriptionsItem,
-            { label: fieldLabel(k), span: column },
-            () => h(FieldRenderer, { keyName: k, value: v, showTitle: false })),
-        );
+      items.push(
+        h(ElDescriptionsItem,
+          { label: fieldLabel(k), span: column },
+          () => h(FieldRenderer, { keyName: k, value: v, showTitle: false })),
+      );
     } else {
       items.push(
         h(ElDescriptionsItem, { label: fieldLabel(k) },

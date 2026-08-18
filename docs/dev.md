@@ -68,3 +68,20 @@
    建议处理顺序：**立即吊销 GitLab Token → 轮换数据库/Redis/JWT/脱敏密钥 → 排查操作日志 → 清理 Git 跟踪与历史 → 完善 .gitignore/.dockerignore。**本次仅审计，未修改文件。
 
 ```
+
+## 一些重要信息：
+### 测试用 rustfs :
+```text
+
+cat /home/dzy/.config/rclone/rclone.conf                                                                                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                                                                                                                                     
+ [rustfs]                                                                                                                                                                                                                                                                                                                                            
+ type = s3                                                                                                                                                                                                                                                                                                                                           
+ env_auth = false                                                                                                                                                                                                                                                                                                                                    
+ access_key_id = rustfsadmin01                                                                                                                                                                                                                                                                                                                       
+ secret_access_key = rustfsadmin01_secret                                                                                                                                                                                                                                                                                                            
+ endpoint = http://127.0.0.1:9000                                                                                                                                                                                                                                                                                                                    
+ region = us-east-1                                                                                                                                                                                                                                                                                                                                  
+ provider = Other                           
+ 
+```

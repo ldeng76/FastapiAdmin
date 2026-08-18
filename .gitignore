@@ -103,6 +103,9 @@ workspace
 backend/data/
 # 仓库根 data/：本地样本/调试数据（parquet / dicom / 中间产物，约 50MB+），不入库
 /data/
+# ETL-2 临时 staging（etl1_adapt_zhujiang0814.py 产物，可重新生成），不入库
+/data_0814/
+/data_ct/
 *.png
 ui_*.png
 login.png
@@ -138,3 +141,5 @@ docs/codegraph-install-guide.md
 gdc_docs
 TCGA样例数据-临床-基因
 /docs/demodata/TCGA样例数据-临床+基因.zip
+/docs/demodata/zhujiang0814.parquet
+/docs/spec-wsi-slide-viewer-design.md

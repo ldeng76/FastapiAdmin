@@ -105,7 +105,7 @@
           :key="menuFormRenderKey"
           ref="dataFormRef"
           v-model="formData"
-          :items="menuDialogFormItems"
+          :items="getMenuDialogFormItems()"
           :rules="rules"
           label-suffix=":"
           :label-width="100"
@@ -549,51 +549,53 @@ const menuDetailItems: import("@/components/others/fa-descriptions/index.vue").D
     { label: "更新时间", prop: "updated_time" },
     { label: "描述", prop: "description", span: 4 },
   ];
-
-// 菜单新增/编辑表单 —— 简单字段走 items，条件渲染/Tooltip标签/复杂控件走插槽
-const menuDialogFormItems: FormItem[] = [
-  { key: "parent_id", label: "父级菜单", type: "input" /* #parent_id 插槽 */ },
-  { key: "name", label: "菜单名称", type: "input", props: { placeholder: "请输入菜单名称" } },
-  { key: "title", label: "菜单标题", type: "input", props: { placeholder: "请输入菜单标题" } },
-  { key: "type", label: "菜单类型", type: "input" /* #type 插槽 */ },
-  { key: "client", label: "终端", type: "input" /* #client 插槽 */ },
-  { key: "extlink_path", label: "外链地址", type: "input" /* #extlink_path 插槽 */ },
-  { key: "route_name", label: "路由名称", type: "input" /* #route_name 插槽 */ },
-  { key: "route_path", label: "路由路径", type: "input" /* #route_path 插槽 */ },
-  { key: "component_path", label: "组件路径", type: "input" /* #component_path 插槽 */ },
-  { key: "params", label: "路由参数", type: "input" /* #params 插槽 */ },
-  { key: "hidden", label: "是否隐藏", type: "input" /* #hidden 插槽 */ },
-  { key: "always_show", label: "始终显示", type: "input" /* #always_show 插槽 */ },
-  { key: "keep_alive", label: "缓存页面", type: "input" /* #keep_alive 插槽 */ },
-  { key: "order", label: "排序", type: "number", props: { controlsPosition: "right", min: 1 } },
-  { key: "permission", label: "权限标识", type: "input" /* #permission 插槽 */ },
-  { key: "icon", label: "图标", type: "input" /* #icon 插槽 */ },
-  { key: "redirect", label: "重定向", type: "input" /* #redirect 插槽 */ },
-  { key: "affix", label: "常驻标签栏", type: "input" /* #affix 插槽 */ },
-  {
-    key: "status",
-    label: "状态",
-    type: "radiogroup",
-    props: {
-      options: [
-        { label: "启用", value: "0" },
-        { label: "禁用", value: "1" },
-      ],
+function getMenuDialogFormItems(){
+  // 菜单新增/编辑表单 —— 简单字段走 items，条件渲染/Tooltip标签/复杂控件走插槽
+  const menuDialogFormItems: FormItem[] = [
+    { key: "parent_id", label: "父级菜单", type: "input" /* #parent_id 插槽 */ },
+    { key: "name", label: "菜单名称", type: "input", props: { placeholder: "请输入菜单名称" } },
+    { key: "title", label: "菜单标题", type: "input", props: { placeholder: "请输入菜单标题" } },
+    { key: "type", label: "菜单类型", type: "input" /* #type 插槽 */ },
+    { key: "client", label: "终端", type: "input" /* #client 插槽 */ },
+    { key: "extlink_path", label: "外链地址",hidden : !(formData?.value?.type == MenuTypeEnum.EXTLINK), type: "input" /* #extlink_path 插槽 */ },
+    { key: "route_name", label: "路由名称", hidden : !(formData?.value?.type !== MenuTypeEnum.BUTTON) ,type: "input" /* #route_name 插槽 */ },
+    { key: "route_path", label: "路由路径", hidden : !(formData?.value?.type == MenuTypeEnum.CATALOG || formData?.value?.type == MenuTypeEnum.MENU) ,type: "input" /* #route_path 插槽 */ },
+    { key: "component_path", label: "组件路径",hidden :  !(formData?.value?.type == MenuTypeEnum.MENU) , type: "input" /* #component_path 插槽 */ },
+    { key: "params", label: "路由参数",hidden : !(formData?.value?.type == MenuTypeEnum.MENU) , type: "input" /* #params 插槽 */ },
+    { key: "hidden", label: "是否隐藏",hidden : !(formData?.value?.type !== MenuTypeEnum.BUTTON) , type: "input" /* #hidden 插槽 */ },
+    { key: "always_show", label: "始终显示",hidden : !(formData?.value?.type === MenuTypeEnum.CATALOG || formData?.value?.type === MenuTypeEnum.MENU), type: "input" /* #always_show 插槽 */ },
+    { key: "keep_alive", label: "缓存页面",hidden : !(formData?.value?.type === MenuTypeEnum.MENU),type: "input" /* #keep_alive 插槽 */ },
+    { key: "order", label: "排序", type: "number", props: { controlsPosition: "right", min: 1 } },
+    { key: "permission", label: "权限标识",hidden : !(formData?.value?.type == MenuTypeEnum.BUTTON || formData?.value?.type === MenuTypeEnum.MENU), type: "input" /* #permission 插槽 */ },
+    { key: "icon", label: "图标",hidden : !(formData?.value?.type !== MenuTypeEnum.BUTTON), type: "input" /* #icon 插槽 */ },
+    { key: "redirect", label: "重定向",hidden : !(formData?.value?.type == MenuTypeEnum.CATALOG || formData?.value?.type === MenuTypeEnum.MENU), type: "input" /* #redirect 插槽 */ },
+    { key: "affix", label: "常驻标签栏",hidden : !(formData?.value?.type != MenuTypeEnum.BUTTON), type: "input" /* #affix 插槽 */ },
+    {
+      key: "status",
+      label: "状态",
+      type: "radiogroup",
+      props: {
+        options: [
+          { label: "启用", value: "0" },
+          { label: "禁用", value: "1" },
+        ],
+      },
     },
-  },
-  {
-    key: "description",
-    label: "描述",
-    type: "input",
-    props: {
-      type: "textarea",
-      rows: 4,
-      maxlength: 100,
-      showWordLimit: true,
-      placeholder: "请输入描述",
+    {
+      key: "description",
+      label: "描述",
+      type: "input",
+      props: {
+        type: "textarea",
+        rows: 4,
+        maxlength: 100,
+        showWordLimit: true,
+        placeholder: "请输入描述",
+      },
     },
-  },
-];
+  ];
+  return menuDialogFormItems
+}
 
 const formData = ref<MenuForm>({
   id: undefined,

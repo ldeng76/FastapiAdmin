@@ -38,7 +38,7 @@ import { headerBarConfig } from "./modules/headerBar";
 const appConfig: SystemConfig = {
   // 系统信息
   systemInfo: {
-    name: "肺结节研究系统", // 系统名称
+    name: "肺结节多维度数据云平台", // 系统名称
   },
   // 系统主题
   systemThemeStyles: {

@@ -296,10 +296,6 @@ export function mergeShellRoutesIntoMenu(menuList: AppRouteRecord[]): AppRouteRe
 
   tryPush(mergeShellHomeMenu);
 
-  if (!paths.has("/dashboard")) {
-    tryPush(dashboardRoutesToShellMenu(structuredClone(getDashboardMenuTreeForMerge())));
-  }
-
   if (additions.length === 0) return menuList;
   return [...additions, ...menuList];
 }

@@ -39,21 +39,27 @@
       />
     </ElCard>
   </div>
+  <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showDetail" fullscreen>
+    <Detail v-if="showDetail" :data="showDetailData" :goBack="()=>{showDetail = false}" />
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import { ElButton } from "element-plus";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
 import { useTable } from "@/hooks/core/useTable";
-import PatientAPI, { type PatientPageQuery, type PatientTable } from "@/api/module_medical/patient";
+import PatientAPI, { type PatientTable } from "@/api/module_medical/patient";
+import Detail from "./detail.vue";
 
 defineOptions({ name: "MedicalPatient", inheritAttrs: false });
 
-const router = useRouter();
-
+const showDetail = ref(false);
+const showDetailData = ref({
+  detail: '',
+  center: ""
+});
 // 中心选项：从后端动态枚举（数据当前为「珠江」单中心）
 const centerOptions = ref<{ label: string; value: string }[]>([{ label: "全部", value: "" }]);
 
@@ -82,12 +88,11 @@ const patientSearchItems = computed<SearchFormItem[]>(() => [
   },
 ]);
 
+
 // 跳转多模态详情（独立隐藏路由，patient_id/center 走 query 参数）
 function goDetail(row: PatientTable) {
-  router.push({
-    path: "/medical/patient/detail",
-    query: { detail: row.patient_id, center: row.center_code || "" },
-  });
+  showDetailData.value = { detail: row.patient_id, center: row.center_code || "" }
+  showDetail.value = true
 }
 
 const {

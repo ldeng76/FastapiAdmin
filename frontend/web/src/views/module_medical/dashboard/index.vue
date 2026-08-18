@@ -59,17 +59,7 @@
           </el-col>
         </el-row>
         <el-row :gutter="20" class="mt-5">
-           <el-col :sm="6">
-            <el-card class="echarts-card">
-              <div class="pb-3.5"><span class="text-base font-medium">各中心患者例数</span></div>
-              <FaHBarChart
-                :data="centerCount.data"
-                :xAxisData="centerCount.names"
-                :onClick="chartSelect"
-              />
-            </el-card>
-          </el-col>
-          <el-col :sm="9">
+          <el-col :sm="12">
             <el-card class="echarts-card">
               <div class="pb-3.5"><span class="text-base font-medium">各年龄段患者例数</span></div>
               <FaBarChart
@@ -81,7 +71,7 @@
               />
             </el-card>
           </el-col>
-          <el-col :sm="9">
+          <el-col :sm="12">
             <el-card class="echarts-card">
                <div class="pb-3.5"><span class="text-base font-medium">患者例数性别比</span></div>
                <FaRingChart
@@ -139,11 +129,6 @@
                   </template>
                 </ElTableColumn>
                 <ElTableColumn prop="patient_id" label="患者编号" width="120" />
-                <ElTableColumn prop="center_code" label="中心">
-                  <template #default="{ row: row }">
-                    {{ getDictLabel('med_center', row.center_code) }}
-                  </template>
-                </ElTableColumn>
                 <ElTableColumn prop="birth_date" label="出生日期" />
                 <ElTableColumn prop="age" label="年龄" />
                 <ElTableColumn prop="sex" label="性别">
@@ -213,10 +198,6 @@ const asideWidth = 300;
 const searchConfig = ref(filterConfig);
 const overviewCount = ref<StatsKpi[]>([]);
 const ageCount : any = ref({
-  names :[],
-  data :[]
-})
-const centerCount : any = ref({
   names :[],
   data :[]
 })
@@ -360,9 +341,6 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
   let age_distribution = dimensions.find(function (n){
     return n.key === 'age_distribution'
   })
-  let center_distribution = dimensions.find(function (n){
-    return n.key === 'center_distribution'
-  })
   let modality_counts = dimensions.find(function (n){
     return n.key === 'modality_counts'
   })
@@ -384,26 +362,7 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
       })
     }
   }
-  if(center_distribution != null){
-     centerCount.value = {
-      names :center_distribution.data.map(function (n){
-        let res = dictStore.getDictLabel('med_center', n.center_code);
-        if (typeof res !== "string" && res?.dict_label) {
-          return res?.dict_label
-        } else {
-          return n.center_code
-        }
-      }),
-      data : center_distribution.data.map(function (n){
-        return {
-          value:n.count,
-          name:n.center_code,
-          filterValue: n.center_code,
-          filterName: 'center'
-        }
-      })
-    }
-  }
+
   if(gender_ratio != null){
     genderCount.value = gender_ratio.data.map(function (n){
       return {
@@ -454,7 +413,6 @@ onMounted(async function () {
     "med_ethnicity",
     "med_blood_type_abo",
     "med_blood_type_rh",
-    "med_center",
   ]
   const ageBuckets = await StatisticsAPI.getAgeBuckets()
   const dictMap = await dictStore.getDict(dictKeyArr);

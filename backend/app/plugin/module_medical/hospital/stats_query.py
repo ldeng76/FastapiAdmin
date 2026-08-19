@@ -386,7 +386,6 @@ class StatsQuery:
         kpis = [
             {"key": "total_patients", "label": "患者总量", "value": total_patients, "format": "number"},
             {"key": "total_exams", "label": "检查总量", "value": total_exams, "format": "number"},
-            {"key": "center_count", "label": "来源中心", "value": len(centers), "format": "number"},
             {"key": "modality_count", "label": "检查模态", "value": len(modalities), "format": "number"},
         ]
 

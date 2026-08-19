@@ -54,7 +54,7 @@
       <!-- 3. 右侧主要内容区域 -->
       <el-main class="layout-main">
         <el-row :gutter="20">
-          <el-col :sm="6" v-for="n in overviewCount" :key="n.key">
+          <el-col :sm="8" v-for="n in overviewCount" :key="n.key">
             <Total :label="n.label" :icon="n.icon" :value="n.value"/>
           </el-col>
         </el-row>

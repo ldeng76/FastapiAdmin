@@ -88,7 +88,6 @@ MODALITY_LABEL: dict[str, str] = {
 # AnonPatientModel 业务列（排除审计列 + center_code/anon_id/bmi/created_batch_id 等）
 PATIENT_LIST_COLS = [
     AnonPatientModel.patient_id,
-    AnonPatientModel.center_code,
     AnonPatientModel.sex,
     AnonPatientModel.birth_date,
     AnonPatientModel.ethnicity,
@@ -223,7 +222,6 @@ async def anon_get_patient_detail(
             select(
                 AnonVisitModel.anon_visit_id,
                 AnonVisitModel.visit_ordinal,
-                AnonVisitModel.center_code,
                 AnonVisitModel.created_at,
                 AnonVisitDetailModel.visit_detail_json,
             )
@@ -249,7 +247,6 @@ async def anon_get_patient_detail(
         select(
             AnonSurgeryModel.surgery_id,
             AnonSurgeryModel.anon_visit_id,
-            AnonSurgeryModel.center_code,
             AnonSurgeryModel.surgery_date,
             AnonSurgeryModel.procedure_name,
             AnonSurgeryModel.resection_scope,
@@ -271,7 +268,6 @@ async def anon_get_patient_detail(
             select(
                 AnonLabResultModel.lab_result_id,
                 AnonLabResultModel.anon_visit_id,
-                AnonLabResultModel.center_code,
                 AnonLabResultModel.report_id,
                 AnonLabResultModel.test_name,
                 AnonLabResultModel.item_name,
@@ -298,7 +294,6 @@ async def anon_get_patient_detail(
             select(
                 AnonOrderModel.order_id,
                 AnonOrderModel.anon_visit_id,
-                AnonOrderModel.center_code,
                 AnonOrderModel.order_type,
                 AnonOrderModel.order_name,
                 AnonOrderModel.order_time,
@@ -320,7 +315,6 @@ async def anon_get_patient_detail(
     exam_stmt = (
         select(
             AnonExamModel.anon_exam_id,
-            AnonExamModel.center_code,
             AnonExamModel.exam_type,
             AnonExamModel.exam_date,
             AnonExamModel.anon_visit_id,
@@ -360,7 +354,6 @@ async def anon_get_patient_detail(
         exam_date = row["exam_date"]
         base = {
             "anon_exam_id": row["anon_exam_id"],
-            "center_code": row["center_code"],
             "exam_type": row["exam_type"],
             "exam_date": exam_date.isoformat() if hasattr(exam_date, "isoformat") else exam_date,
             "anon_visit_id": row["anon_visit_id"],

@@ -17,7 +17,6 @@
 
       <ElDescriptions v-loading="loading" :column="4" border size="small">
         <ElDescriptionsItem label="患者编号">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="中心编码">{{ patient?.center_code || "-" }}</ElDescriptionsItem>
         <ElDescriptionsItem label="性别">{{ sexLabel(patient?.sex) }}</ElDescriptionsItem>
         <ElDescriptionsItem label="出生日期">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
         <ElDescriptionsItem label="民族">{{ ethnicityLabel(patient?.ethnicity) }}</ElDescriptionsItem>
@@ -216,6 +215,7 @@ async function fetchDetail() {
   try {
     const res = await PatientAPI.detailPatient(patientId.value, center.value);
     detail.value = res.data?.data ?? ({} as PatientDetail);
+    console.log(  detail.value )
   } catch (err: any) {
     // 404 / 网络错误等都提示出来，避免静默"暂无数据"
     const msg =

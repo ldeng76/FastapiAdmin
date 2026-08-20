@@ -87,7 +87,7 @@
         <el-row :gutter="20" class="mt-5">
           <el-col :sm="12">
             <el-card class="echarts-card">
-               <div class="pb-3.5"><span class="text-base font-medium">模态检查量比</span></div>
+               <div class="pb-3.5"><span class="text-base font-medium">多模态检查量比</span></div>
                <FaRingChart
                 :data="modalityCount"
                 :radius="['0%', '70%']"

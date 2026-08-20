@@ -34,7 +34,6 @@ import { AppRouteRecord } from "@/types/router";
 import { getFirstMenuPath } from "@utils";
 import { HOME_PAGE_PATH } from "@/router";
 import { mergeShellRoutesIntoMenu } from "@/router/staticRoutes";
-
 /**
  * 菜单状态管理
  * 管理应用的菜单列表、首页路径、菜单宽度和动态路由移除函数

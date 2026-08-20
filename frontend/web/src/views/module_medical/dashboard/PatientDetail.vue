@@ -40,9 +40,9 @@
           <ElDescriptionsItem label="首次发现结节日期">{{ data?.first_nodule_date }}</ElDescriptionsItem>
         </ElDescriptions>
         <div class="flex-1">
-          <iframe v-if="currImageType == 'dicom'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
-          <iframe v-if="currImageType == 'nii'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/niftiViewer.html"></iframe>
-          <iframe v-if="currImageType == 'svs'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/svsViewer.html"></iframe>
+          <iframe v-if="currImageType == 'dicom'" allowfullscreen  @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
+          <iframe v-if="currImageType == 'nii'" allowfullscreen  @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/niftiViewer.html"></iframe>
+          <iframe v-if="currImageType == 'svs'" allowfullscreen  @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/svsViewer.html"></iframe>
         </div>
       </div>
     </el-col>

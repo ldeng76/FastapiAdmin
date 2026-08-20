@@ -74,40 +74,42 @@ def main() -> int:
     con = duckdb.connect(":memory:")
 
     # DuckDB LIST/STRUCT 处理要点:
-    # - nodules 是 LIST of STRUCT(lobe VARCHAR, segment VARCHAR, ...)，长度 0~N
-    # - list_extract(nodules, 1) 取首元素（若空 list 返回 NULL）
-    # - struct_pack(...) 构造 STRUCT，列名 → struct 子键
-    # - to_json(nodules) 把整个 LIST 序列化为 JSON 字符串，落到 VARCHAR 列
+    # - nodules 是 LIST of STRUCT(nodule_location STRUCT(lobe, segment), ...)
+    # - list_extract(nodules, 1) 取首元素（数组空时 NULL）
+    # - to_json(nodules) 把整个 LIST 序列化为 JSON 字符串
+    # - exam_meta 重组：to_json 字典字面量直接生成 JSON
+    # - raw_text → findings/impression：用 regexp_extract 配 's' flag 让 . 匹配换行
+    src_posix = src.as_posix()
+    dst_posix = dst.as_posix()
+    # 用 Python 字符串拼接规避 f-string 中复杂正则/字典字面量的转义陷阱
+    findings_pat = r"DESCRIPTION[\r\n]+(.*?)[\r\n]+IMPRESSION"
+    impression_pat = r"IMPRESSION[\r\n]+(.*?)$"
     sql = f"""
         COPY (
             SELECT
                 patient_id,
                 exam_id,
-                -- 引擎按 id_field=exam_id 取主键
                 CAST(exam_date AS DATE)               AS exam_date,
                 'CT'                                  AS exam_type,
                 'n1'                                  AS nodule_no,
 
-                -- 标量级 nodule_*（取首结节；数组空时全 NULL）
-                list_extract(nodules, 1).lobe
+                list_extract(nodules, 1).nodule_location.lobe
                     AS nodule_location,
                 list_extract(nodules, 1).long_diameter_mm
                     AS long_diameter,
                 list_extract(nodules, 1).density_type
                     AS density_type,
 
-                -- 引擎 body_fields 期望的 findings/impression：从 raw_text 正则分段
                 coalesce(
-                    nullif(trim(regexp_extract(raw_text, 'DESCRIPTION\n(.*?)\n\nIMPRESSION', 1, '')), ''),
+                    nullif(trim(regexp_extract(raw_text, '{findings_pat}', 1, 's')), ''),
                     ''
                 )                                       AS findings,
                 coalesce(
-                    nullif(trim(regexp_extract(raw_text, 'IMPRESSION\n(.*?)$', 1, '')), ''),
+                    nullif(trim(regexp_extract(raw_text, '{impression_pat}', 1, 's')), ''),
                     ''
                 )                                       AS impression,
 
-                -- 重组 exam_meta JSON（容纳 ct0820 全部独有字段）
-                to_json({
+                to_json({{
                     'pat_local_id': pat_local_id,
                     'exam_name': exam_name,
                     'contrast': contrast,
@@ -118,17 +120,15 @@ def main() -> int:
                     'pleural_effusion': pleural_effusion,
                     'report_date': exam_date,
                     'source': 'ct0820.parquet'
-                })                                       AS exam_meta,
+                }})                                      AS exam_meta,
 
-                -- 完整结节数组保留（供后续 detail_json 重建 / 查询）
                 to_json(nodules)                        AS nodule_morphology,
 
-                -- ct0820 无此概念
                 CAST(NULL AS VARCHAR)                   AS nodule_quantitative,
                 CAST(NULL AS VARCHAR)                   AS follow_up_comparison
 
-            FROM read_parquet('{src.as_posix()}')
-        ) TO '{dst.as_posix()}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
+            FROM read_parquet('{src_posix}')
+        ) TO '{dst_posix}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
     """
     con.execute(sql)
 

@@ -100,7 +100,7 @@
     </template>
   </ElTable>
   <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showCt" fullscreen>
-    <iframe v-if="showCt" allowfullscreen class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
+    <iframe v-if="showCt" allowfullscreen @load="closeCtLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="showCt = false" type="primary"  plain>关闭</el-button>
@@ -120,8 +120,8 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref, watch} from "vue";
-import {ElTable, ElTableColumn} from "element-plus";
+import {computed, ref, watch,nextTick} from "vue";
+import {ElLoading, ElTable, ElTableColumn} from "element-plus";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
 
@@ -134,6 +134,7 @@ interface TableItem<T = any> {
   tableData: T[];
   tableColumn: { prop:string,label:string }[];
 }
+const loadingCt = ref()
 const showCt = ref(false);
 const showFsq = ref(false);
 // const fsq = ref(``);
@@ -208,13 +209,20 @@ function getTableColumn(obj:any){
   }
   return arr
 }
+function closeCtLoading(){
+  if(loadingCt.value != null){
+    loadingCt.value.close()
+  }
+}
 function ctToggle(){
   showCt.value = true
+  nextTick(()=>{
+    loadingCt.value = ElLoading.service()
+  })
 }
 function fsqToggle(){
   showFsq.value = true
 }
-console.log(props.rows)
 watch(props.rows,(newRows)=>{
   if(!isShowExpand.value){
     return;

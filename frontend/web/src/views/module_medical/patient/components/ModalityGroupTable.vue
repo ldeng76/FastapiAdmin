@@ -17,6 +17,8 @@
     <ElTableColumn label="操作" width="110" :align="'center'">
       <template #default="{ row }" >
         <ElButton type="primary" size="small">查看原始值</ElButton>
+        <div v-if="tableName === '影像'" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
+        <div v-else-if="tableName === '基因'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因</ElButton></div>
       </template>
     </ElTableColumn>
     <ElTableColumn v-if="getIsVisit()" prop="anon_visit_id" :label="getFieldLabel('anon_visit_id')"  width="200" />
@@ -97,12 +99,32 @@
       <ElTableColumn prop="report_text.body_clean" :label="getFieldLabel('body_clean')" />
     </template>
   </ElTable>
+  <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showCt" fullscreen>
+    <iframe v-if="showCt" allowfullscreen class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="showCt = false" type="primary"  plain>关闭</el-button>
+      </div>
+    </template>
+  </el-dialog>
+  <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showFsq" fullscreen>
+    <div v-if="showFsq" style="height: 100%">
+      <FastqRawView :text="onLoadSample()" colored />
+    </div>
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="showFsq = false" type="primary"  plain>关闭</el-button>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed ,ref ,watch} from "vue";
-import {ElTable,ElTableColumn} from "element-plus";
+import {computed, ref, watch} from "vue";
+import {ElTable, ElTableColumn} from "element-plus";
 import {getFieldLabel} from "@/components/medical/field-renderer";
+import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
+
 interface Props {
   rows: any[];
   tableName: string;
@@ -112,6 +134,9 @@ interface TableItem<T = any> {
   tableData: T[];
   tableColumn: { prop:string,label:string }[];
 }
+const showCt = ref(false);
+const showFsq = ref(false);
+// const fsq = ref(``);
 const expandTableList = ref<TableItem[][]>([])
 const props = defineProps<Props>();
 function isObjectKey(value:any,key:string){
@@ -137,6 +162,40 @@ function getIsVisit(){
     tableName === '手术' ||
     tableName === '检验结果'
 }
+function onLoadSample() {
+  // 3 条 read：1 对双端 + 1 单端（与 parser.spec.ts fixture 一致）
+  const seq = "GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT";
+  const qual = "I".repeat(60);
+  const r3seq = "ACGT".repeat(15);
+  let arr:any = []
+  let tempArr = [
+    `@A00582:907:H7255DSX3:1:1101:8196:1063 1:N:0:TAAGGCGA`,
+    seq,
+    `+`,
+    qual,
+    `@A00582:907:H7255DSX3:1:1101:8196:1063 2:N:0:TAAGGCGA`,
+    seq,
+    `+`,
+    qual,
+    `@A00582:907:H7255DSX3:1:1101:8196:9999`,
+    r3seq,
+    `+`,
+    "I".repeat(r3seq.length),
+  ]
+
+  for (let i = 0; i <41;i++){
+    arr = arr.concat(tempArr)
+  }
+  arr.push(".....")
+  arr.push(".....")
+  arr.push(".....")
+  arr.push(".....")
+  arr.push(".....")
+  for (let i = 0; i <41;i++){
+    arr = arr.concat(tempArr)
+  }
+  return arr.join("\n")
+}
 function getTableColumn(obj:any){
   let arr = []
   for (const key in obj){
@@ -149,12 +208,17 @@ function getTableColumn(obj:any){
   }
   return arr
 }
-  console.log(props.tableName,props.rows)
+function ctToggle(){
+  showCt.value = true
+}
+function fsqToggle(){
+  showFsq.value = true
+}
+console.log(props.rows)
 watch(props.rows,(newRows)=>{
   if(!isShowExpand.value){
     return;
   }
-  console.log(props.tableName,props.rows)
   let arr:TableItem[][] = [];
   newRows.forEach(function (row:any,index:number){
     for (const key in row){
@@ -163,11 +227,20 @@ watch(props.rows,(newRows)=>{
         if(arr[index] === undefined){
           arr[index] = []
         }
-        let cols = getTableColumn(value)
+        let valueFirst = value;
+        let tableData:any[] = [];
+        if(value instanceof Array && value.length > 0){
+          valueFirst = value[0]
+          tableData = tableData.concat(value)
+        } else {
+          tableData = [valueFirst]
+        }
+        let cols = getTableColumn(valueFirst)
         if(cols.length > 0){
+
           arr[index].push({
             tableName:key,
-            tableData:[value],
+            tableData:tableData,
             tableColumn:cols
           })
         }
@@ -177,3 +250,8 @@ watch(props.rows,(newRows)=>{
   expandTableList.value = arr
 },{immediate : true})
 </script>
+<style>
+.mdDialogDetailBody{
+  height: calc(100% - 80px);
+}
+</style>

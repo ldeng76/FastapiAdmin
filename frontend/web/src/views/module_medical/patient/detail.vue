@@ -38,29 +38,16 @@
         </ElTabPane>
         <ElTabPane :label="getFieldLabel('genetic')" name="genetic">
           <ModalityGroup :rows="detail.genetic" name="genetic" />
-          <FastqSection />
         </ElTabPane>
         <ElTabPane :label="getFieldLabel('pathology')" name="pathology">
           <ModalityGroup :rows="detail.pathology" name="pathology" />
         </ElTabPane>
         <ElTabPane :label="getFieldLabel('imaging')" name="imaging">
-          <div class="imaging-toolbar">
-            <ElButton type="primary" :icon="Picture" @click="openDicomViewer">
-              查看 DICOM 影像
-            </ElButton>
-            <span class="imaging-hint">在 PACS 阅片器中逐层浏览 / 调窗 / 测量</span>
-          </div>
           <ModalityGroup :rows="detail.imaging"  name="imaging" />
         </ElTabPane>
       </ElTabs>
     </ElCard>
 
-    <!-- DICOM 影像查看器（全屏弹窗） -->
-    <DicomViewerDialog
-      v-model="dicomViewerVisible"
-      :study-id="dicomStudyId"
-      :patient-name="patient?.patient_name as string"
-    />
   </div>
 </template>
 
@@ -75,13 +62,10 @@ import {
   ElTabs,
   ElTabPane,
 } from "element-plus";
-import { ArrowLeft, Picture } from "@element-plus/icons-vue";
+import { ArrowLeft } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PatientAPI, {  type PatientDetail } from "@/api/module_medical/patient";
 import ModalityGroup from "@views/module_medical/patient/components/ModalityGroup.vue";
-import DicomAPI from "@/api/module_medical/dicom";
-import DicomViewerDialog from "./components/DicomViewerDialog.vue";
-import FastqSection from "./components/FastqSection.vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
 const props = defineProps<{
@@ -102,78 +86,6 @@ const detail = ref<PatientDetail>({
 const patient = computed(() => detail.value.patient);
 const patientId = computed(() => (props.data.detail as string) || "");
 const center = computed(() => (props.data.center as string) || undefined);
-
-// DICOM 影像查看器
-const dicomViewerVisible = ref(false);
-const dicomStudyId = ref<string>("");
-// 首期按数据目录浏览：按约定 Study 目录名 = <patient_id>_1 查找；
-// 若该目录不存在（如 demo 患者无对应 DICOM），回退到数据目录中第一个可用 Study，
-// 便于开发期用示例数据验证阅片功能。后续可由 nodule_imaging.exam_id 映射真实 Study。
-async function openDicomViewer() {
-  const expected = patientId.value ? `${patientId.value}_1` : "";
-  let target = expected;
-  try {
-    const res = await DicomAPI.listStudies();
-    const studies = res.data?.data || [];
-    if (studies.length) {
-      const matched = studies.find((s) => s.study_id === expected);
-      target = matched ? expected : studies[0].study_id;
-      if (!matched && expected) {
-        ElMessage.info(`未找到 ${expected} 的 DICOM 数据，已切换至示例数据 ${target}`);
-      }
-    }
-  } catch {
-    /* 查询失败则用约定值，由 viewer 内部报错 */
-  }
-  dicomStudyId.value = target;
-  dicomViewerVisible.value = true;
-}
-
-// 基本信息 JSON 扩展列。
-//   - 优先渲染 demographics / medical_history（高频语义字段）
-//   - 自动枚举 patient dict 里其它未在固定 ElDescriptionsItem 中展示的 key
-//   - 全部走 FieldRenderer：命中 schema → 业务卡片；未命中 → FaJsonPretty 折叠 JSON 树
-// 固定的 10 项基本信息已显式列在 ElDescriptionsItem 里，这里跳过避免重复。
-const FIXED_BASIC_KEYS = new Set([
-  "patient_id",
-  "center_code",
-  "sex",
-  "birth_date",
-  "ethnicity",
-  "native_place",
-  "abo_blood_type",
-  "rh_blood_type",
-  "smoking_status",
-  "first_nodule_date",
-]);
-const PRIORITY_EXT_KEYS = ["demographics", "medical_history"];
-
-function getExtRow(patient:any){
-  const p = patient || {};
-  const rows: { key: string; value: unknown }[] = [];
-
-  // 优先项
-  for (const k of PRIORITY_EXT_KEYS) {
-    if (p[k] && !isEmpty(p[k])) rows.push({ key: k, value: p[k] });
-  }
-  // 自动枚举其余非空、非固定的 key
-  for (let [k, v] of Object.entries(p)) {
-    if (PRIORITY_EXT_KEYS.includes(k)) continue;
-    if (FIXED_BASIC_KEYS.has(k)) continue;
-    if (isEmpty(v)) continue;
-    if (typeof v === "boolean"){
-       v = v ? "是" : "否"
-    }
-    rows.push({ key: k, value: v });
-  }
-  return rows;
-}
-
-function isEmpty(v: unknown): boolean {
-  if (v === null || v === undefined || v === "") return true;
-  if (typeof v === "object" && Object.keys(v).length === 0) return true;
-  return false;
-}
 
 function fmtDate(v?: string): string {
   if (!v) return "-";
@@ -220,7 +132,6 @@ async function fetchDetail() {
 }
 
 onMounted(fetchDetail);
-
 
 </script>
 

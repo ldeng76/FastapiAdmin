@@ -62,6 +62,7 @@ export const FIELD_LABELS: Record<string, string> = {
   visit_id: "就诊编号",
   anon_visit_id: "就诊编号",
   exam_id: "检查编号",
+  exam_method: "检查方法",
   anon_exam_id: "检查编号",
   visit_ordinal: "就诊序号",
   inpatient_no: "住院号",

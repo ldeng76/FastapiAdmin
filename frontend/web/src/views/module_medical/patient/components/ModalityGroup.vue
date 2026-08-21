@@ -35,7 +35,7 @@ const groups = computed(() => {
       key = getFieldLabel("genetic")
     } else if(key === 'pathology'){
       key = getFieldLabel("pathology")
-    } else if(key.indexOf('nodule_imaging') === 0){
+    } else if(key.indexOf('nodule_imaging') === 0 || key === 'imaging_report' || key === 'ultrasound'){
       key = getFieldLabel("imaging")
     } else if(key === 'ihc'){
       key = getFieldLabel("ihc")

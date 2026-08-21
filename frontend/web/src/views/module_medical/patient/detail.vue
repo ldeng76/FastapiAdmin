@@ -16,49 +16,41 @@
       </template>
 
       <ElDescriptions v-loading="loading" :column="4" border size="small">
-        <ElDescriptionsItem label="患者编号">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="性别">{{ sexLabel(patient?.sex) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="出生日期">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="民族">{{ ethnicityLabel(patient?.ethnicity) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="籍贯">{{ patient?.native_place || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="ABO血型">{{ aboLabel(patient?.abo_blood_type) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="RH血型">{{ rhLabel(patient?.rh_blood_type) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="吸烟状态">{{ smokingLabel(patient?.smoking_status) }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="首结节日期">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('sex')">{{ sexLabel(patient?.sex) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('birth_date')">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('ethnicity')">{{ ethnicityLabel(patient?.ethnicity) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('native_place')">{{ patient?.native_place || "-" }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('abo_blood_type')">{{ aboLabel(patient?.abo_blood_type) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ rhLabel(patient?.rh_blood_type) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ smokingLabel(patient?.smoking_status) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
+        <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
+<!--        <ElDescriptionsItem v-for="n in getExtRow(detail.patient)" :key="n.key" :label="n.key">{{ n.value }}</ElDescriptionsItem>-->
       </ElDescriptions>
-
-      <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
-      <div v-if="extRows.length" class="ext-block">
-        <FieldRenderer
-          v-for="r in extRows"
-          :key="r.key"
-          :key-name="r.key"
-          :value="r.value"
-        />
-      </div>
     </ElCard>
 
     <!-- 四模态 Tab -->
     <ElCard shadow="never" v-loading="loading">
       <ElTabs v-model="activeTab">
-        <ElTabPane label="临床" name="clinical">
-          <ModalityGroup :rows="detail.clinical" empty-text="暂无临床数据" />
+        <ElTabPane :label="getFieldLabel('clinical')" name="clinical">
+          <ModalityGroup :rows="detail.clinical" name="clinical" />
         </ElTabPane>
-        <ElTabPane label="基因" name="genetic">
-          <ModalityGroup :rows="detail.genetic" empty-text="暂无基因检测数据" />
+        <ElTabPane :label="getFieldLabel('genetic')" name="genetic">
+          <ModalityGroup :rows="detail.genetic" name="genetic" />
           <FastqSection />
         </ElTabPane>
-        <ElTabPane label="病理" name="pathology">
-          <ModalityGroup :rows="detail.pathology" empty-text="暂无病理数据" />
+        <ElTabPane :label="getFieldLabel('pathology')" name="pathology">
+          <ModalityGroup :rows="detail.pathology" name="pathology" />
         </ElTabPane>
-        <ElTabPane label="影像" name="imaging">
+        <ElTabPane :label="getFieldLabel('imaging')" name="imaging">
           <div class="imaging-toolbar">
             <ElButton type="primary" :icon="Picture" @click="openDicomViewer">
               查看 DICOM 影像
             </ElButton>
             <span class="imaging-hint">在 PACS 阅片器中逐层浏览 / 调窗 / 测量</span>
           </div>
-          <ModalityGroup :rows="detail.imaging" empty-text="暂无影像数据" />
+          <ModalityGroup :rows="detail.imaging"  name="imaging" />
         </ElTabPane>
       </ElTabs>
     </ElCard>
@@ -73,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref, defineComponent } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   ElCard,
   ElButton,
@@ -82,19 +74,15 @@ import {
   ElDescriptionsItem,
   ElTabs,
   ElTabPane,
-  ElCollapse,
-  ElCollapseItem,
-  ElEmpty,
 } from "element-plus";
 import { ArrowLeft, Picture } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import PatientAPI, { type ModalityRow, type PatientDetail } from "@/api/module_medical/patient";
+import PatientAPI, {  type PatientDetail } from "@/api/module_medical/patient";
+import ModalityGroup from "@views/module_medical/patient/components/ModalityGroup.vue";
 import DicomAPI from "@/api/module_medical/dicom";
 import DicomViewerDialog from "./components/DicomViewerDialog.vue";
 import FastqSection from "./components/FastqSection.vue";
-import FieldRenderer from "@/components/medical/field-renderer";
-import { getFieldLabel } from "@/components/medical/field-renderer/field-labels";
-
+import {getFieldLabel} from "@/components/medical/field-renderer";
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
 const props = defineProps<{
   data:{detail : string ,center:string},
@@ -160,22 +148,26 @@ const FIXED_BASIC_KEYS = new Set([
 ]);
 const PRIORITY_EXT_KEYS = ["demographics", "medical_history"];
 
-const extRows = computed(() => {
-  const p = detail.value.patient || {};
+function getExtRow(patient:any){
+  const p = patient || {};
   const rows: { key: string; value: unknown }[] = [];
+
   // 优先项
   for (const k of PRIORITY_EXT_KEYS) {
     if (p[k] && !isEmpty(p[k])) rows.push({ key: k, value: p[k] });
   }
   // 自动枚举其余非空、非固定的 key
-  for (const [k, v] of Object.entries(p)) {
+  for (let [k, v] of Object.entries(p)) {
     if (PRIORITY_EXT_KEYS.includes(k)) continue;
     if (FIXED_BASIC_KEYS.has(k)) continue;
     if (isEmpty(v)) continue;
+    if (typeof v === "boolean"){
+       v = v ? "是" : "否"
+    }
     rows.push({ key: k, value: v });
   }
   return rows;
-});
+}
 
 function isEmpty(v: unknown): boolean {
   if (v === null || v === undefined || v === "") return true;
@@ -208,14 +200,12 @@ function aboLabel(code?: string) { return code ? (ABO_LABEL[code] || code) : "-"
 const RH_LABEL: Record<string, string> = { "1": "阴性", "2": "阳性", "3": "不详" };
 function rhLabel(code?: string) { return code ? (RH_LABEL[code] || code) : "-"; }
 
-
 async function fetchDetail() {
   if (!patientId.value) return;
   loading.value = true;
   try {
     const res = await PatientAPI.detailPatient(patientId.value, center.value);
     detail.value = res.data?.data ?? ({} as PatientDetail);
-    console.log(  detail.value )
   } catch (err: any) {
     // 404 / 网络错误等都提示出来，避免静默"暂无数据"
     const msg =
@@ -231,100 +221,7 @@ async function fetchDetail() {
 
 onMounted(fetchDetail);
 
-// --------------------------------------------------------------------------- //
-// 子组件：模态分组展示。按 _table 折叠面板分组，每条记录用 ElDescriptions 平铺字段
-// --------------------------------------------------------------------------- //
-const ModalityGroup = defineComponent({
-  name: "ModalityGroup",
-  props: {
-    rows: { type: Array as () => ModalityRow[], default: () => [] },
-    emptyText: { type: String, default: "暂无数据" },
-    /** ElDescriptions 列数；同时用作"独占整行 item 的 span"基数 */
-    column: { type: Number, default: 3 },
-  },
-  setup(props) {
-    // 按 _table 分组
-    const groups = computed(() => {
-      const map = new Map<string, ModalityRow[]>();
-      for (const r of props.rows) {
-        const key = r._table || "其他";
-        if (!map.has(key)) map.set(key, []);
-        map.get(key)!.push(r);
-      }
-      return Array.from(map.entries()).map(([name, rows]) => ({ name, rows }));
-    });
 
-    return () =>
-      props.rows.length === 0
-        ? h(ElEmpty, { description: props.emptyText })
-        : h(
-            ElCollapse,
-            { modelValue: groups.value.map((_, i) => i.toString()) },
-            () =>
-              groups.value.map((g, gi) =>
-                h(ElCollapseItem, { title: `${g.name}（${g.rows.length}）`, name: gi.toString() }, () =>
-                  g.rows.map((row, ri) =>
-                    h(
-                      "div",
-                      { class: "record-card", key: ri },
-                      [
-                        h(
-                          ElDescriptions,
-                          {
-                            column: props.column,
-                            border: true,
-                            size: "small",
-                            title: `记录 ${ri + 1}`,
-                          },
-                          () => renderRowFields(row, props.column),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          );
-  },
-});
-
-// 把一行记录的字段平铺为 DescriptionsItem。
-//  - 标量：span=1（默认），与同行其他字段平铺
-//  - object/array（FieldRenderer）：span=column，独占整行，避免挤压旁列
-//    show-title=false：DescriptionsItem label 已提供语义，避免与卡片标题重复
-function renderRowFields(row: ModalityRow, column: number) {
-  const items: any[] = [];
-  for (const [k, v] of Object.entries(row)) {
-    if (k === "_table" || k === "_modality") continue;
-    if (v === null || v === undefined) continue;
-    if (typeof v === "object") {
-        items.push(
-          h(ElDescriptionsItem,
-            { label: fieldLabel(k), span: column },
-            () => h(FieldRenderer, { keyName: k, value: v, showTitle: false })),
-        );
-    } else {
-      items.push(
-        h(ElDescriptionsItem, { label: fieldLabel(k) },
-          () => formatScalar(v)),
-      );
-    }
-  }
-  return items;
-}
-
-/** 标量格式化（与原 formatValue 标量分支一致，长文本 >200 字折叠 + 字数提示） */
-function formatScalar(v: unknown): string {
-  if (v === null || v === undefined || v === "") return "-";
-  if (typeof v === "boolean") return v ? "是" : "否";
-  const s = String(v);
-  return s.length > 200 ? `${s.slice(0, 200)}…（共 ${s.length} 字）` : s;
-}
-
-// 字段名 → 中文 label（已迁出至 @/components/medical/field-renderer/field-labels）。
-// 保留 FIELD_LABELS 引用以兼容旧调用；新增字段请直接改那边。
-function fieldLabel(k: string): string {
-  return getFieldLabel(k);
-}
 </script>
 
 <style scoped>

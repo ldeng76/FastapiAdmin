@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "i": "pnpm install",
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --port 5610",
     "dev:force": "vite --force",
     "prod": "vite --mode prod",
     "build": "vue-tsc --noEmit && vite build",

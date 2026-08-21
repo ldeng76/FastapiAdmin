@@ -60,10 +60,9 @@ export default ({ mode }: { mode: string }) => {
     },
     base: env.VITE_BASE_URL,
     server: {
+      // dev 端口(也由 pnpm dev --host 0.0.0.0 --port 5610 显式声明)
       host: true,
       port: Number(env.VITE_PORT),
-      open: true,
-      // 通过 nginx 反向代理访问时，Host 为自定义域名，需加入白名单否则被 Vite 拦截。
       // 默认已含 localhost；这里放行 .h1963 后缀的内网域名及其子域。
       // 正则按 Host 匹配；字面串也可直接写 "lnrs.h1963"。
       allowedHosts: [/\.h1963$/, "lnrs.h1963"],

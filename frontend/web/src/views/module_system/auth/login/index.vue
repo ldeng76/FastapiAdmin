@@ -114,41 +114,6 @@
             :class="panelAlign === 'center' && 'login-page-footer--floating-layout'"
           >
             <div class="login-footer-text text-sm">
-              <a
-                :href="configStore.configData?.sys_git_code?.config_value || '#'"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="login-page-footer__link"
-              >
-                {{ configStore.configData?.tenant_copyright?.config_value || "" }}
-              </a>
-              <span class="login-page-footer__sep">|</span>
-              <a
-                :href="configStore.configData?.tenant_help_doc?.config_value || '#'"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="login-page-footer__link"
-              >
-                帮助
-              </a>
-              <span class="login-page-footer__sep">|</span>
-              <a
-                :href="configStore.configData?.tenant_privacy?.config_value || '#'"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="login-page-footer__link"
-              >
-                隐私
-              </a>
-              <span class="login-page-footer__sep">|</span>
-              <a
-                :href="configStore.configData?.tenant_clause?.config_value || '#'"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="login-page-footer__link"
-              >
-                条款
-              </a>
               <span
                 v-if="configStore.configData?.tenant_keep_record?.config_value"
                 class="login-page-footer__record"
@@ -353,7 +318,7 @@ const demoAccountKey = ref<AccountKey>("super");
 const userStore = useUserStore();
 const router = useRouter();
 const route = useRoute();
-const isPassing = ref(import.meta.env.DEV);
+const isPassing = ref(false);
 const isClickPass = ref(false);
 
 const accountFormRef = ref<InstanceType<typeof FaLoginAccountForm> | null>(null);

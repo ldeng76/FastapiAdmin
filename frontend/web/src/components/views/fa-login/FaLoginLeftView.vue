@@ -17,11 +17,6 @@
       <FaThemeSvg :src="loginIcon" size="100%" />
     </div>
 
-    <div class="text-wrap">
-      <h1>{{ $t("login.leftView.title") }}</h1>
-      <p>{{ $t("login.leftView.subTitle") }}</p>
-    </div>
-
     <!-- 几何装饰元素 -->
     <div class="geometric-decorations">
       <!-- 基础几何形状 -->

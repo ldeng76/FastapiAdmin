@@ -528,7 +528,7 @@ function resolveRedirectTarget(query: LocationQuery): RouteLocationRaw {
 }
 
 onMounted(async () => {
-  setupAccount("super");
+
   await configStore.getConfig(true);
   await tryConsumeOAuthCallback();
   if (userStore.isLogin) {

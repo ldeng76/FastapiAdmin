@@ -68,3 +68,19 @@ async def get_file_stream_controller(
         filename=file_name,
         media_type="application/octet-stream",
     )
+
+
+@MedFilesRouter.get(
+    "/study-uid/{file_id}",
+    summary="按文件ID获取 StudyInstanceUID",
+    response_model=ResponseSchema[str],
+)
+async def get_study_instance_uid_controller(
+    file_id: Annotated[int, FastPath(description="文件ID", ge=1)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+) -> JSONResponse:
+    """按文件ID读取 DICOM 文件并返回 StudyInstanceUID。"""
+    uid = await MedFilesService.get_study_instance_uid_service(
+        auth=auth, file_id=file_id
+    )
+    return SuccessResponse(data=uid, msg="获取 StudyInstanceUID 成功")

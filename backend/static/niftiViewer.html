@@ -30,13 +30,36 @@
     document.getElementById("gl").height = size
     document.getElementById("gl").width =  size
     //hot
-    let volumeList = [
-      { url: "/api/v1/medical/nifti/file?file_path=mni152.nii", colormap: 'gray'},
-    ];
     let nv = new Niivue({ isResizeCanvas: false,logLevel:"error",show3Dcrosshair:true,crosshairWidth:1});
     await nv.attachTo("gl");
-    await nv.loadVolumes(volumeList);
+    function geToken(){
+      let isRememberMe = localStorage.getItem('remember_me') === "true";
+      return isRememberMe
+        ? localStorage.getItem('access_token') || ""
+        : sessionStorage.getItem('access_token') || "";
+    }
+    async function loadVolumeFromApi() {
+      let file_id = new URLSearchParams(location.search).get("file_id")
+      if(!file_id){
+        return;
+      }
+      try {
+        const response = await fetch('/api/v1/medical/nifti/file?file_id='+file_id,{
+          method: 'GET',
+          headers: {
+            'Authorization': 'Bearer '+geToken(),
+          }
+        });
+        if (!response.ok) throw new Error(`请求失败: ${response.status}`);
 
+        const arrayBuffer = await response.arrayBuffer();
+        await nv.loadVolumes([{ name:"dsdf3.nii",url: arrayBuffer, colormap: 'gray'}]);
 
+      } catch (err) {
+        console.error('加载体数据失败:', err);
+      }
+    }
+
+    loadVolumeFromApi()
   </script>
 </html>

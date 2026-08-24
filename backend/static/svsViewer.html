@@ -141,11 +141,23 @@
       }
     }
   }
-
+  function geToken(){
+    let isRememberMe = localStorage.getItem('remember_me') === "true";
+    return isRememberMe
+      ? localStorage.getItem('access_token') || ""
+      : sessionStorage.getItem('access_token') || "";
+  }
   async function initViewer() {
-    // 1. 调用后端接口打开 SVS 文件
-    const filePath = '';
-    const response = await fetch(`/api/v1/medical/svs/slides/open?file_id=${filePath}`);
+    let file_id = new URLSearchParams(location.search).get("file_id")
+    if(!file_id){
+      return;
+    }
+    const response = await fetch(`/api/v1/medical/svs/slides/open?file_id=${file_id}`,{
+      method: 'GET', // 或 'POST', 'PUT' 等请求方法
+      headers: {
+        'Authorization': 'Bearer '+geToken(),
+      }
+    });
     const info = await response.json();
     const pixelsPerMeter = calculatePixelsPerMeter(info.mm_x, info.magnification);
     // 用于坐标换算：像素 → 微米

@@ -555,9 +555,19 @@ const handleSubmit = async () => {
     await getCaptcha();
     if (!(error instanceof HttpError)) {
       console.error("[Login] Unexpected error:", error);
+      let errorMsg:any = error instanceof Error ? error.message : error;
+      if(errorMsg != null && typeof errorMsg === 'object'){
+        for(let key in errorMsg){
+          errorMsg = errorMsg[key]?.[0]?.message || ''
+          break;
+        }
+      } else {
+        errorMsg = String(errorMsg)
+      }
+
       ElNotification({
         title: "提示",
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMsg,
         type: "error",
       });
     }

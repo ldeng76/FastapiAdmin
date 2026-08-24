@@ -18,7 +18,7 @@
       <template #default="{ row }" >
         <ElButton type="primary" size="small">查看原始数据</ElButton>
         <div v-if="tableName === '影像'" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
-        <div v-else-if="tableName === '基因'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因</ElButton></div>
+        <div v-else-if="tableName === '基因'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因数据</ElButton></div>
       </template>
     </ElTableColumn>
     <ElTableColumn v-if="getIsVisit()" prop="anon_visit_id" :label="getFieldLabel('anon_visit_id')"  width="200" />
@@ -120,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref, watch,nextTick} from "vue";
+import {computed, ref} from "vue";
 import {ElLoading, ElTable, ElTableColumn} from "element-plus";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
@@ -138,7 +138,7 @@ const loadingCt = ref()
 const showCt = ref(false);
 const showFsq = ref(false);
 // const fsq = ref(``);
-const expandTableList = ref<TableItem[][]>([])
+
 const props = defineProps<Props>();
 function isObjectKey(value:any,key:string){
   return typeof value === 'object' && value !== null && !['report_text'].includes(key)
@@ -156,6 +156,38 @@ const isShowExpand = computed(()=>{
     }
   })
   return bool
+})
+const expandTableList = computed(()=>{
+ let arr:TableItem[][] = [];
+  (props.rows || []).forEach(function (row:any,index:number){
+    for (const key in row){
+      let value = row[key];
+      if(isObjectKey(value,key)){
+        if(arr[index] === undefined){
+          arr[index] = []
+        }
+        let valueFirst = value;
+        let tableData:any[] = [];
+        if(value instanceof Array && value.length > 0){
+          valueFirst = value[0]
+          tableData = tableData.concat(value)
+        } else {
+          tableData = [valueFirst]
+        }
+        let cols = getTableColumn(valueFirst)
+        if(cols.length > 0){
+
+          arr[index].push({
+            tableName:key,
+            tableData:tableData,
+            tableColumn:cols
+          })
+        }
+      }
+    }
+  });
+
+  return arr;
 })
 function getIsVisit(){
   let tableName = props.tableName
@@ -221,40 +253,7 @@ function ctToggle(){
 function fsqToggle(){
   showFsq.value = true
 }
-watch(props.rows,(newRows)=>{
-  if(!isShowExpand.value){
-    return;
-  }
-  let arr:TableItem[][] = [];
-  newRows.forEach(function (row:any,index:number){
-    for (const key in row){
-      let value = row[key];
-      if(isObjectKey(value,key)){
-        if(arr[index] === undefined){
-          arr[index] = []
-        }
-        let valueFirst = value;
-        let tableData:any[] = [];
-        if(value instanceof Array && value.length > 0){
-          valueFirst = value[0]
-          tableData = tableData.concat(value)
-        } else {
-          tableData = [valueFirst]
-        }
-        let cols = getTableColumn(valueFirst)
-        if(cols.length > 0){
 
-          arr[index].push({
-            tableName:key,
-            tableData:tableData,
-            tableColumn:cols
-          })
-        }
-      }
-    }
-  })
-  expandTableList.value = arr
-},{immediate : true})
 </script>
 <style>
 .mdDialogDetailBody{

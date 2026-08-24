@@ -6,9 +6,12 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query, Response
+from fastapi import APIRouter, Depends, Path, Query, Response
 from fastapi.responses import JSONResponse
-from app.config.setting import settings
+
+from app.api.v1.module_system.auth.schema import AuthSchema
+from app.core.dependencies import AuthPermission
+from app.plugin.module_medical.files.service import MedFilesService
 from .service import SVSService
 
 # SVS 专用路由
@@ -17,12 +20,16 @@ SVSRouter = APIRouter(tags=["SVS"])
 
 @SVSRouter.get(
     "/svs/slides/open",
-    summary="打开 SVS 文件",
-    description="打开指定路径的 SVS/SLD/NDPI 文件，返回切片元信息",
+    summary="按文件ID打开 SVS 文件",
+    description="按 med_files 表的 file_id 打开 SVS/SLD/NDPI 文件，返回切片元信息",
 )
-async def open_slide() -> JSONResponse:
-    """打开 SVS 文件并返回元信息。"""
-    result = SVSService.open_slide(f"{settings.SVS_DATA_DIR}/WSI_sample/B1229048-2.svs")
+async def open_slide(
+    file_id: Annotated[int, Query(description="med_files 表的文件ID", ge=1)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+) -> JSONResponse:
+    """按文件ID打开 SVS 文件并返回元信息。"""
+    path, _ = await MedFilesService.get_file_stream_service(auth=auth, file_id=file_id)
+    result = SVSService.open_slide(str(path))
     return JSONResponse(content=result)
 
 

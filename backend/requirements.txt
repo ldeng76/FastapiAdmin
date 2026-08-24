@@ -33,6 +33,7 @@ prometheus-client==0.22.1              # Prometheus Python 客户端（由 instr
 psutil==6.1.0                          # 系统信息
 psycopg==3.3.2                         # PostgreSQL 异步操作数据库
 psycopg-binary==3.3.2                  # PostgreSQL 异步操作数据库二进制版本
+pydantic>=2.12.5
 pydantic-settings==2.5.2               # 配置设置
 pydantic-validation-decorator==0.1.4   # 模型验证
 pyjwt==2.9.0                           # OAuth2

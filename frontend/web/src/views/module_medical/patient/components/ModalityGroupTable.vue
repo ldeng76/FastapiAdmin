@@ -14,9 +14,9 @@
         </div>
       </template>
     </ElTableColumn>
-    <ElTableColumn label="操作" width="110" :align="'center'">
+    <ElTableColumn label="操作" width="120" :align="'center'">
       <template #default="{ row }" >
-        <ElButton type="primary" size="small">查看原始值</ElButton>
+        <ElButton type="primary" size="small">查看原始数据</ElButton>
         <div v-if="tableName === '影像'" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
         <div v-else-if="tableName === '基因'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因</ElButton></div>
       </template>
@@ -216,9 +216,7 @@ function closeCtLoading(){
 }
 function ctToggle(){
   showCt.value = true
-  nextTick(()=>{
-    loadingCt.value = ElLoading.service()
-  })
+  loadingCt.value = ElLoading.service()
 }
 function fsqToggle(){
   showFsq.value = true

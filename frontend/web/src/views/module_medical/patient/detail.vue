@@ -17,16 +17,16 @@
 
       <ElDescriptions v-loading="loading" :column="4" border size="small">
         <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('sex')">{{ sexLabel(patient?.sex) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('sex')">{{ dictStore.getDictItemLabel('med_sex',patient?.sex) }}</ElDescriptionsItem>
         <ElDescriptionsItem :label="getFieldLabel('birth_date')">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('ethnicity')">{{ ethnicityLabel(patient?.ethnicity) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('ethnicity')">{{ dictStore.getDictItemLabel('med_ethnicity',patient?.ethnicity) }}</ElDescriptionsItem>
         <ElDescriptionsItem :label="getFieldLabel('native_place')">{{ patient?.native_place || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('abo_blood_type')">{{ aboLabel(patient?.abo_blood_type) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ rhLabel(patient?.rh_blood_type) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ smokingLabel(patient?.smoking_status) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('abo_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_abo',patient?.abo_blood_type) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_rh',patient?.rh_blood_type) }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
         <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
         <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
-<!--        <ElDescriptionsItem v-for="n in getExtRow(detail.patient)" :key="n.key" :label="n.key">{{ n.value }}</ElDescriptionsItem>-->
+        <ElDescriptionsItem v-for="n in getExtRow(detail.patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
       </ElDescriptions>
     </ElCard>
 
@@ -67,12 +67,13 @@ import { ElMessage } from "element-plus";
 import PatientAPI, {  type PatientDetail } from "@/api/module_medical/patient";
 import ModalityGroup from "@views/module_medical/patient/components/ModalityGroup.vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
+import {useDictStore} from "@/store";
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
 const props = defineProps<{
   data:{detail : string ,center:string},
   goBack:()=> void
 }>()
-
+const dictStore = useDictStore();
 const loading = ref(false);
 const activeTab = ref("clinical");
 const detail = ref<PatientDetail>({
@@ -92,26 +93,6 @@ function fmtDate(v?: string): string {
   return v.length > 10 ? v.slice(0, 10) : v;
 }
 
-// 国标码翻译（2026-07-24 改 anon 体系后用）
-const SEX_LABEL: Record<string, string> = { "0": "未知", "1": "男", "2": "女", "9": "未说明" };
-function sexLabel(code?: string) { return code ? (SEX_LABEL[code] || code) : "-"; }
-
-const ETHNICITY_LABEL: Record<string, string> = { "01": "汉族", "99": "其他" };
-function ethnicityLabel(code?: string) { return code ? (ETHNICITY_LABEL[code] || code) : "-"; }
-
-const SMOKING_LABEL: Record<string, string> = { "1": "从不", "2": "既往", "3": "现在", "9": "未知" };
-function smokingLabel(code?: string) { return code ? (SMOKING_LABEL[code] || code) : "-"; }
-
-// HQMS RC030 ABO 血型：1=A型, 2=B型, 3=O型, 4=AB型, 5=不详, 6=未查
-const ABO_LABEL: Record<string, string> = {
-  "1": "A型", "2": "B型", "3": "O型", "4": "AB型", "5": "不详", "6": "未查",
-};
-function aboLabel(code?: string) { return code ? (ABO_LABEL[code] || code) : "-"; }
-
-// HQMS RC031 Rh 血型：1=阴性, 2=阳性, 3=不详
-const RH_LABEL: Record<string, string> = { "1": "阴性", "2": "阳性", "3": "不详" };
-function rhLabel(code?: string) { return code ? (RH_LABEL[code] || code) : "-"; }
-
 async function fetchDetail() {
   if (!patientId.value) return;
   loading.value = true;
@@ -129,6 +110,44 @@ async function fetchDetail() {
   } finally {
     loading.value = false;
   }
+}
+const FIXED_BASIC_KEYS = new Set([
+  "patient_id",
+  "center_code",
+  "sex",
+  "birth_date",
+  "ethnicity",
+  "native_place",
+  "abo_blood_type",
+  "rh_blood_type",
+  "smoking_status",
+  "first_nodule_date",
+  "raw_text",
+]);
+const PRIORITY_EXT_KEYS = ["demographics", "medical_history"];
+function isEmpty(v: unknown): boolean {
+  if (v === null || v === undefined || v === "") return true;
+  return typeof v === "object" && Object.keys(v).length === 0;
+}
+function getExtRow(patient:any){
+  const p = patient || {};
+  const rows: { key: string; value: unknown }[] = [];
+
+  // 优先项
+  for (const k of PRIORITY_EXT_KEYS) {
+    if (p[k] && !isEmpty(p[k])) rows.push({ key: k, value: p[k] });
+  }
+  // 自动枚举其余非空、非固定的 key
+  for (let [k, v] of Object.entries(p)) {
+    if (PRIORITY_EXT_KEYS.includes(k)) continue;
+    if (FIXED_BASIC_KEYS.has(k)) continue;
+    if (isEmpty(v)) continue;
+    if (typeof v === "boolean"){
+       v = v ? "是" : "否"
+    }
+    rows.push({ key: k, value: v });
+  }
+  return rows;
 }
 
 onMounted(fetchDetail);
@@ -153,37 +172,5 @@ onMounted(fetchDetail);
 }
 .ml-8 {
   margin-left: 8px;
-}
-.ext-block {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 24px;
-}
-.ext-item {
-  font-size: 13px;
-  color: #606266;
-}
-.ext-label {
-  color: #909399;
-}
-.ext-value {
-  color: #303133;
-}
-:deep(.record-card) {
-  margin-bottom: 10px;
-}
-:deep(.el-collapse-item__header) {
-  font-weight: 600;
-}
-.imaging-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.imaging-hint {
-  font-size: 13px;
-  color: #909399;
 }
 </style>

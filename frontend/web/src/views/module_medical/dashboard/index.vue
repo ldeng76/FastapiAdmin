@@ -133,22 +133,22 @@
                 <ElTableColumn prop="age" label="年龄" />
                 <ElTableColumn prop="sex" label="性别">
                   <template #default="{ row: row }">
-                    {{ getDictLabel('med_sex', row.sex) }}
+                    {{ dictStore.getDictItemLabel('med_sex', row.sex) }}
                   </template>
                 </ElTableColumn>
                 <ElTableColumn prop="smoking_status" label="吸烟情况">
                   <template #default="{ row: row }">
-                    {{ getDictLabel('med_smoking_status', row.smoking_status) }}
+                    {{ dictStore.getDictItemLabel('med_smoking_status', row.smoking_status) }}
                   </template>
                 </ElTableColumn>
                 <ElTableColumn prop="abo_blood_type" label="ABO血型">
                   <template #default="{ row: row }">
-                    {{ getDictLabel('med_blood_type_abo', row.abo_blood_type) }}
+                    {{ dictStore.getDictItemLabel('med_blood_type_abo', row.abo_blood_type) }}
                   </template>
                 </ElTableColumn>
                  <ElTableColumn prop="rh_blood_type" label="RH血型">
                   <template #default="{ row: row }">
-                    {{ getDictLabel('med_blood_type_rh', row.rh_blood_type) }}
+                    {{ dictStore.getDictItemLabel('med_blood_type_rh', row.rh_blood_type) }}
                   </template>
                 </ElTableColumn>
                 <ElTableColumn prop="native_place" label="籍贯"/>
@@ -162,7 +162,7 @@
     </el-container>
   </el-container>
   <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showPatientDetail" fullscreen>
-    <PatientDetail v-if="showPatientDetail" :data="showPatientDetailData" :getDictLabel="getDictLabel" />
+    <PatientDetail v-if="showPatientDetail" :data="showPatientDetailData" />
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="showPatientDetail = false" type="primary"  plain>关闭</el-button>
@@ -193,7 +193,7 @@ import {
 } from "@/types/module_medical/hospital.ts";
 import type {LineDataItem} from "@/types/component/chart.ts";
 import { ElLoading } from 'element-plus'
-
+const dictStore = useDictStore();
 const asideWidth = 300;
 const searchConfig = ref(filterConfig);
 const overviewCount = ref<StatsKpi[]>([]);
@@ -321,14 +321,6 @@ function chartSelect(obj:any){
   }
 }
 
-function getDictLabel(key:string,value:any){
-  let item = dictStore.getDictLabel(key, value)
-  if(typeof item !== "string" && item?.dict_label){
-    return item.dict_label
-  } else {
-    return value
-  }
-}
 function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
   overviewCount.value = overview.kpis || []
   overviewCount.value.forEach(function (n){
@@ -404,7 +396,7 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
   }
   patientList.setData(newPatientData);
 }
-const dictStore = useDictStore();
+
 onMounted(async function () {
   const dictKeyArr = [
     "med_sex",

@@ -193,6 +193,104 @@ WHERE e.created_batch_id = '<batch_id>' AND p.sex <> '0' LIMIT 3;
 
 耗时参考：97k exam + 66.6k 占位患者约 1.5 分钟。
 
+## Step 8 —（可选）同步到 h59（192.168.1.59 PG15）
+
+导入 dev 后若需推送 1.59：**不要用全量脚本**（`migrate_dev_to_h59.sh` 会 DROP 整个 schema），用定向增量脚本 `scripts/migrate_dev_to_h59_zhujiang0814.sh`：
+
+- 只搬本次批次足迹（`B1`/`B2` batch id 环境变量可覆盖）：ingest_batch / patient(center) / exam / report_text / exam_detail / phi_audit / med_dict_mapping 七张表
+- 全程 ON CONFLICT upsert（phi_audit 先删后插保 audit_id 对齐），不删 h59 任何既有行，幂等可重跑
+- 末尾自动 setval 校准 `lnrs_anon_patient_seq` 与 phi_audit 序列（防撞号）
+- 验证：两端同过滤条件 count 对比 + 内容 md5 抽查（含 patient_meta.raw_text、detail_json）
+- 坑：UNION ALL 验证 SQL 要 `ORDER BY 1`（两端行序不同会误报）；序列只验证 `>= max(PT号)`（dev 端探测性 nextval 有空洞，等值会误报）；`$TEMP` 需 `cygpath -m` 转正斜杠供 psql \copy 使用
+
+## Step 5.5 —（强烈建议）导入前备份 4 张表
+
+> 任何"会覆盖 report_text / exam_detail"的导入前，**先备份**。否则回滚需用 `scripts/migrate_h59_to_dev.sh` 全 schema 重建（破坏其他中心/字典/批次），代价大。
+
+```bash
+./scripts/backup_dev_zhujiang_ct.sh zhujiang CT
+# 输出末尾打印 BACKUP_DIR 绝对路径（Windows TEMP/lnrs_backup_zhujiang_CT_<TS>/）
+# 包含 4 个 CSV: report_text.csv / exam_detail.csv / phi_audit.csv / patient.csv
+# + checksums.md5 + phi_audit_backup_batches.txt
+```
+
+- **4 张表范围**（`scripts/backup_dev_zhujiang_ct.sh`）：
+  - `report_text` + `exam_detail` 按 `exam JOIN (center_code=X, exam_type=Y)` 过滤（不用 batch_id 以避免漏掉 0719 重跑行）
+  - `phi_audit` 按 `batch_id IN (center_code=X 全部 batch UUID)` 过滤
+  - `patient` 按 `center_code=X` 全量
+- 验证：CSV 行数 = 库内 `count(*)`（脚本自动核对） + md5sum
+- **不要备份** `lnrs_anon_exam`：导入对 exam 表只 `last_seen/exam_date` 刷新，不重建；FK CASCADE 一旦删 exam 会炸掉 finding/series/uid_map/report/detail
+
+## Step 9 —（条件触发）回滚
+
+导入后立刻跑 V1-V10 验证 SQL（见下面"导入后 10 条验证 SQL"）。任一不通过即触发：
+
+```bash
+./scripts/rollback_dev_ct0820.sh "$BACKUP_DIR"
+# 单事务 DELETE report_text+exam_detail → \copy 灌回 → count+md5 验证
+```
+
+回滚脚本**只回滚 2 张表**（report_text + exam_detail）。`phi_audit` 增量与 `patient` 占位的清理**手动决策**（列在脚本末尾 SQL 模板），避免误删其他批次。
+
+## 导入后 10 条验证 SQL（V1-V10）
+
+```sql
+-- V1: body_clean 非空率（应 100%）
+SELECT count(*) FILTER (WHERE body_clean IS NOT NULL AND body_clean != '') AS non_empty,
+       count(*) AS total
+FROM lnrs.lnrs_anon_report_text rt
+WHERE rt.anon_exam_id IN (SELECT anon_exam_id FROM lnrs.lnrs_anon_exam
+                          WHERE center_code='zhujiang' AND exam_type='CT');
+-- V2: detail_json != '{}' 非空率（应 100%）
+SELECT count(*) FILTER (WHERE detail_json != '{}'::jsonb) AS non_empty,
+       count(*) AS total
+FROM lnrs.lnrs_anon_exam_detail ed
+WHERE ed.anon_exam_id IN (SELECT anon_exam_id FROM lnrs.lnrs_anon_exam
+                          WHERE center_code='zhujiang' AND exam_type='CT');
+-- V3: phi_audit 本次 batch 行数（应 ≈ 29 万 ±5%）
+SELECT count(*) FROM lnrs.lnrs_anon_phi_audit WHERE batch_id='<本次>';
+-- V4: exam 行数（应不变）
+SELECT count(*) FROM lnrs.lnrs_anon_exam
+WHERE center_code='zhujiang' AND exam_type='CT';
+-- V5: 新占位 patient（应 ≈ 12k ~ 16k ±10%）
+SELECT count(*) FROM lnrs.lnrs_anon_patient
+WHERE center_code='zhujiang' AND sex='0' AND created_batch_id='<本次>';
+-- V6: clean_method 分布（应全 'regex_only'）
+SELECT clean_method, count(*) FROM lnrs.lnrs_anon_report_text rt
+WHERE rt.anon_exam_id IN (SELECT anon_exam_id FROM lnrs.lnrs_anon_exam
+                          WHERE center_code='zhujiang' AND exam_type='CT')
+GROUP BY clean_method;
+-- V7: review_status 分布（应全 'pending'）
+SELECT review_status, count(*) FROM lnrs.lnrs_anon_report_text rt
+WHERE rt.anon_exam_id IN (SELECT anon_exam_id FROM lnrs.lnrs_anon_exam
+                          WHERE center_code='zhujiang' AND exam_type='CT')
+GROUP BY review_status;
+-- V8: batch 状态
+SELECT status, row_counts::text FROM lnrs.lnrs_anon_ingest_batch
+WHERE center_code='zhujiang' AND source_locator LIKE '%ct0820%'
+ORDER BY started_at DESC LIMIT 1;
+-- V9: 抽样 5 条 body_clean md5（备查）
+SELECT md5(body_clean) FROM lnrs.lnrs_anon_report_text rt
+WHERE rt.anon_exam_id IN (SELECT anon_exam_id FROM lnrs.lnrs_anon_exam
+                          WHERE center_code='zhujiang' AND exam_type='CT')
+ORDER BY rt.anon_exam_id LIMIT 5;
+-- V10: FK 孤儿检查（应 0）
+SELECT 'orphan_rt', count(*) FROM lnrs.lnrs_anon_report_text rt
+  LEFT JOIN lnrs.lnrs_anon_exam e ON e.anon_exam_id = rt.anon_exam_id
+  WHERE e.anon_exam_id IS NULL
+UNION ALL
+SELECT 'orphan_ed', count(*) FROM lnrs.lnrs_anon_exam_detail ed
+  LEFT JOIN lnrs.lnrs_anon_exam e ON e.anon_exam_id = ed.anon_exam_id
+  WHERE e.anon_exam_id IS NULL;
+```
+
+> **编码坑**：body_clean 含 GBK 字节时，psql 报"无效的 UTF8 编码字节顺序"。**所有 V1-V10 SQL 必须加 `PGCLIENTENCODING=SQL_ASCII` 环境变量**（`SQL_ASCII` 在 PG18 上强制按字节流通过，不做合法性校验）：
+
+```bash
+PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
+  /c/Program\ Files/PostgreSQL/18/bin/psql.exe -h 127.0.0.1 -U postgres -d postgres -tAc "<SQL>"
+```
+
 ## 注意事项（踩过的坑）
 
 - **raw_text/自由文本含 PHI**（姓名、住址）：入 `patient_meta` 时无 `review_status` 标记，后续清洗/人工抽检计划需覆盖此位置。
@@ -202,14 +300,31 @@ WHERE e.created_batch_id = '<batch_id>' AND p.sex <> '0' LIMIT 3;
 - **database schema_hash() 有 lru_cache**：改 DDL 后需重启进程才生效。
 - **engine 会按目录内容自动连导**：specs 里所有 src_table 只要 parquet 存在就会导入——staging 目录只放本次要导的文件。
 - **pathology_specimen 的患者 ID 可能是独立体系**（如珠江 'B1600039'，与 patient 表 '001321' 无交集）：这类患者会被占位发号（sex='0'），属预期行为。
-- **未完事项（截至 2026-08-14）**：`data/zhujiang/pathology_specimen.parquet`（12,093 行全量病理，B 编号体系、0 患者交集）仍未导入，库内 Pathology 仅 39 条 sample；导入方式同全量 CT（复制单文件到独立 staging）。
+- **同一中心的 sample 与全量文件 schema 可能不同**（0719 全量 CT 实证：sample 有 nodule_* 结构列，全量只有 `findings`/`impression` 文本列）：引擎 `_CENTER_PARQUET_SPECS` 按 sample 写死 `body_fields: []` + detail_fields，导致全量导入后 report_text.body_clean 为空、detail_json 全 `{}`，**报告正文被静默丢弃**。导入 exam 类文件前先 `DESCRIBE` 核对列，与 spec 不符时需调整 spec 或适配文件。
+- **DuckDB REGEXP 默认不开 s 标志**：跨多行匹配必须显式 `'s'` flag（如 `regexp_extract(s, 'A\n(.*?)\nB', 1, 's')`），否则 `.` 不匹配换行返回 NULL。
+- **DuckDB f-string 内正则/JSON 字面量**：花括号 `{...}` 与 `\r\n` 会被 Python f-string 误解析。复杂正则/字典字面量先在 Python 侧用 raw string 拼好再 `f"..."` 嵌入；或用 `to_json(struct_pack(...))` 替代 `to_json({...})`。
+- **ct0820 nodules[] 嵌套 struct**：`nodules` 是 LIST of STRUCT，其中 `nodule_location` 自身是 STRUCT(lobe, segment)。取首结节 lob 需要 `list_extract(nodules, 1).nodule_location.lobe`，不能直接 `.lobe`。
+- **psql \copy CSV 行数 ≠ wc -l**：CSV 里 `body_clean` 字段含 `\r\n` 时 `wc -l` 算错行数。用 `\copy` 输出末尾的 `COPY NNNN` 行精确读取，或在 export 时不开 HEADER。备份脚本已统一改用 `psql -tA` + `grep -oE 'COPY [0-9]+'`。
+- **psql 输出 CRLF**（Windows 本机 psql）：写入文本文件后用 `tr -d '\r'` 去掉 CR，否则 `IN ('uuid1','uuid2',...)` 解析失败。
+- **psql `\copy` 不支持跨行多行字符串**：必须单行调用（参考 0814 同步脚本风格）。多表导出用多次 `psql -c` 而不是 heredoc 文件。
+- **ENGINE 配置错读 MySQL**：ETL2 CLI 必须设 `ENVIRONMENT=dev`（否则读不到 .env.dev，连接错驱动）。Command：`ENVIRONMENT=dev PYTHONPATH=. ./.venv/Scripts/python.exe -m app.plugin.module_medical.hospital.anon_etl --centers X --data-root ../data_X`。
+- **未完事项（截至 2026-08-20）**：
+  - `data/zhujiang/pathology_specimen.parquet`（12,093 行全量病理，B 编号体系、0 患者交集）仍未导入，库内 Pathology 仅 39 条 sample；导入方式同 ct0820（写 ETL1 适配脚本 + staging 隔离 + 导入前备份）。
+  - **ct0820 已完成切换**（2026-08-20）：替代 `docs/zhujiang_xinqiao_parq/nodule_imaging.parquet` 作为珠江全量 CT 源。适配后 97,039 行全部解析 findings/impression、detail_json 包含完整 nodules[] 数组（`nodule_morphology` 字段）+ ct0820 独有字段（`exam_meta.lung_rads`/`vs_prior` 等）。重跑产生 batch `4ba87bae-...`，已并入 h59 同步脚本 `BATCH_IDS`。
 
 ## 产物清单（历史批次先例，可仿照）
 
 | 产物 | 路径 |
 |---|---|
 | 适配脚本（0814 patient） | `backend/etl1_adapt_zhujiang0814.py` |
+| 适配脚本（ct0820 nodule_imaging） | `backend/etl1_adapt_zhujiang_ct0820.py` |
 | 映射种子 SQL（0814） | `backend/sql/postgres/0011-zhujiang-dict-seed-0814.sql` |
+| 备份脚本 | `scripts/backup_dev_zhujiang_ct.sh` |
+| 回滚脚本 | `scripts/rollback_dev_ct0820.sh` |
+| 同步 h59 脚本（0814+CT） | `scripts/migrate_dev_to_h59_zhujiang0814.sh` |
+| 同步 h59 脚本（0814+CT+ct0820） | `scripts/migrate_dev_to_h59_zhujiang_ct0820.sh` |
 | staging 0814 patient（gitignore） | `data_0814/zhujiang/patient.parquet` |
 | staging 0719 全量 CT（gitignore） | `data_ct/zhujiang/nodule_imaging.parquet` |
+| staging ct0820 全量 CT（gitignore） | `data_ct0820/zhujiang/nodule_imaging.parquet` |
 | 导入日志 | `/tmp/zhujiang0814_run.log`、`/tmp/zhujiang_ct_run.log` |
+| 导入前备份（dev） | `$TEMP/lnrs_backup_zhujiang_CT_<TS>/{report_text,exam_detail,phi_audit,patient}.csv` |

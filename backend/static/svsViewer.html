@@ -3,30 +3,182 @@
 <head>
   <title></title>
   <style>
-    html,
+    html, body {
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      margin: 0;
+      overflow: hidden;
+    }
     #svs-viewer {
       width: 100%;
       height: 100%;
       padding: 0;
       margin: 0;
+      position: relative;
     }
+    /* ===== 右下角鼠标坐标 / 像素值信息面板 ===== */
+    #svs-info-panel {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      padding: 6px 12px;
+      background-color: rgba(80, 80, 80, 0.7);
+      color: #ffffff;
+      font-family: Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 100;
+      white-space: nowrap;
+    }
+    #svs-info-panel .dim { color: #d0d0d0; }
   </style>
   <!-- OpenSeadragon 本地静态资源 -->
   <script src="/api/v1/static/openslide/openseadragon.js"></script>
+  <script src="/api/v1/static/openslide/openseadragon-scalebar.js"></script>
 </head>
-<body id="svs-viewer">
+<body>
+<div id="svs-viewer"></div>
 <script>
+  /**
+   * 将 mmPerPixel（每像素毫米数）换算为 scalebar 插件需要的 pixelsPerMeter
+   * 并处理元数据缺失的情况
+   */
+  function calculatePixelsPerMeter(mmPerPixel, magnification) {
+    // 优先使用真实的像素物理标定
+    if (mmPerPixel && mmPerPixel > 0) {
+      const metersPerPixel = mmPerPixel / 1000; // 毫米 → 米
+      return 1 / metersPerPixel;                // 像素 / 米
+    }
+    // 兜底：使用放大倍数(magnification)粗略推算（20× ≈ 0.5 μm/pixel, 40× ≈ 0.25 μm/pixel）
+    // 注意：这只是近似值，真实比例尺必须依赖 mpp / mm_x
+    if (magnification && magnification > 0) {
+      const approxMicronsPerPixel = 10 / magnification; // 经验估算
+      const metersPerPixel = approxMicronsPerPixel * 1e-6;
+      return 1 / metersPerPixel;
+    }
+    // 无标定数据：返回 null，比例尺不显示
+    return null;
+  }
+
+  /**
+   * 创建右下角信息面板
+   */
+  function createInfoPanel(viewer, info, micronsPerPixel) {
+    const container = document.getElementById('svs-viewer');
+    const panel = document.createElement('div');
+    panel.id = 'svs-info-panel';
+    panel.innerHTML = `
+      <div><span class="dim">X, Y:</span> <span id="svs-pos">- , -</span></div>
+      <div><span class="dim">RGB:</span> <span id="svs-rgb">- , - , -</span></div>
+    `;
+    container.appendChild(panel);
+
+    const posEl = document.getElementById('svs-pos');
+    const rgbEl = document.getElementById('svs-rgb');
+
+    // 取色用的离屏 canvas
+    const pickCanvas = document.createElement('canvas');
+    const pickCtx = pickCanvas.getContext('2d', { willReadFrequently: true });
+
+    viewer.addHandler('canvas-drag', e => updateInfo(e.position));
+    viewer.addHandler('canvas-scroll', e => updateInfo(e.position));
+    viewer.addHandler('canvas-move',   e => updateInfo(e.position));
+    viewer.addHandler('canvas-enter',  e => updateInfo(e.position));
+    viewer.addHandler('canvas-leave',  () => {
+      posEl.textContent = '- , -';
+      rgbEl.textContent = '- , - , -';
+    });
+
+    function updateInfo(screenPoint) {
+      if (!screenPoint) return;
+      const tiledImage = viewer.world.getItemAt(0);
+      if (!tiledImage) return;
+
+      // 屏幕像素 → viewport 坐标 → 图像像素坐标（level 0）
+      const vpPoint = viewer.viewport.pointFromPixel(screenPoint);
+      const imgPoint = tiledImage.viewportToImageCoordinates(vpPoint);
+      const px = Math.floor(imgPoint.x);
+      const py = Math.floor(imgPoint.y);
+
+      // 边界检查
+      if (px < 0 || py < 0 || px >= info.width || py >= info.height) {
+        posEl.textContent = '- , -';
+        rgbEl.textContent = '- , - , -';
+        return;
+      }
+
+      // 1. 物理坐标（μm），无标定则显示像素坐标
+      let posText;
+      if (micronsPerPixel > 0) {
+        const xUm = (px * micronsPerPixel).toFixed(2);
+        const yUm = (py * micronsPerPixel).toFixed(2);
+        posText = `${xUm}, ${yUm} μm`;
+      } else {
+        posText = `${px}, ${py} px`;
+      }
+      posEl.textContent = posText;
+
+      // 2. 像素颜色（从 viewer canvas 直接取）
+      const canvas = viewer.drawer.canvas;
+      if (canvas) {
+        try {
+          pickCanvas.width = 1;
+          pickCanvas.height = 1;
+          pickCtx.drawImage(
+            canvas,
+            Math.floor(screenPoint.x), Math.floor(screenPoint.y), 1, 1,
+            0, 0, 1, 1
+          );
+          const pixel = pickCtx.getImageData(0, 0, 1, 1).data;
+          rgbEl.textContent = `${pixel[0]}, ${pixel[1]}, ${pixel[2]}`;
+        } catch (err) {
+          // 跨域等原因取色失败时静默
+          rgbEl.textContent = '- , - , -';
+        }
+      }
+    }
+  }
+  function geToken(){
+    let isRememberMe = localStorage.getItem('remember_me') === "true";
+    return isRememberMe
+      ? localStorage.getItem('access_token') || ""
+      : sessionStorage.getItem('access_token') || "";
+  }
   async function initViewer() {
-    // 1. 调用后端接口打开 SVS 文件
-    const filePath = '';
-    const response = await fetch(`/api/v1/medical/svs/slides/open?file_id=${filePath}`);
+    let file_id = new URLSearchParams(location.search).get("file_id")
+    if(!file_id){
+      return;
+    }
+    const response = await fetch(`/api/v1/medical/svs/slides/open?file_id=${file_id}`,{
+      method: 'GET', // 或 'POST', 'PUT' 等请求方法
+      headers: {
+        'Authorization': 'Bearer '+geToken(),
+      }
+    });
     const info = await response.json();
+    const pixelsPerMeter = calculatePixelsPerMeter(info.mm_x, info.magnification);
+    // 用于坐标换算：像素 → 微米
+    const micronsPerPixel = pixelsPerMeter ? (1e6 / pixelsPerMeter) : 0;
 
     // 2. 使用 OpenSeadragon 显示
     const viewer = OpenSeadragon({
       id: 'svs-viewer',
       prefixUrl: '/api/v1/static/openslide/images/',
-      showFullPageControl:false,
+      showFullPageControl: false,
+      showHomeControl: true,
+      showZoomControl: true,
+      zoomInButton: 'zoom-in',
+      zoomOutButton: 'zoom-out',
+      // ===== 缩略图小地图（Navigator）配置 =====
+      showNavigator: true,
+      navigatorPosition: 'TOP_RIGHT',   // 位置：TOP_LEFT / TOP_RIGHT / BOTTOM_LEFT / BOTTOM_RIGHT
+      navigatorSizeRatio: 0.2,          // 小地图占主视口的比例（0 ~ 1）
+      navigatorAutoFade: true,          // 鼠标移开时自动淡出
+      navigatorAutoFadeSpeed: 'DEFAULT',
+      // ===== 瓦片源 =====
       tileSources: {
         width: info.width,
         height: info.height,
@@ -45,6 +197,29 @@
       }
     });
 
+    // ===== 比例尺配置 =====
+    // 只有当 pixelsPerMeter 有有效值时才显示比例尺
+    if (pixelsPerMeter !== null) {
+      viewer.scalebar({
+        type: OpenSeadragon.ScalebarType.MICROSCOPY,
+        pixelsPerMeter: pixelsPerMeter,
+        minWidth: '120px',
+        color: '#000000',
+        fontColor: '#000000',
+        backgroundColor: 'rgba(255, 255, 255, 0.5)',  // 背景透明，对齐截图风格
+        barThickness: 2,
+        location: OpenSeadragon.ScalebarLocation.BOTTOM_LEFT,
+        xOffset: 20,
+        yOffset: 20,
+        stayInsideImage: true,
+        fontSize: '14px',
+        // 使用公制长度渲染器（自动在 μm / mm / m 间切换）
+        sizeAndTextRenderer: OpenSeadragon.ScalebarSizeAndTextRenderer.METRIC_LENGTH
+      });
+    }
+
+    // ===== 右下角坐标/像素信息面板 =====
+    createInfoPanel(viewer, info, micronsPerPixel);
   }
 
   initViewer().catch(console.error);

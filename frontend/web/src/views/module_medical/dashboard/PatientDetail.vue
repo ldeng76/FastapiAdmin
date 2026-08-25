@@ -28,21 +28,21 @@
     <el-col :span="20">
       <div class="flex flex-col h-full">
         <ElDescriptions class="patientDetail-elDescriptions" :column="6" border>
-          <ElDescriptionsItem label="患者编号">{{ data?.patient_id }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="性别">{{ getDictLabel('med_sex',data?.sex ) }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="出生日期">{{ data?.birth_date }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="年龄">{{ data?.age }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="籍贯">{{ data?.native_place }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="吸烟情况">{{ getDictLabel('med_smoking_status', data?.smoking_status) }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="ABO血型">{{ getDictLabel('med_blood_type_abo', data?.abo_blood_type) }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="RH血型">{{ getDictLabel('med_blood_type_rh', data?.rh_blood_type)  }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="BMI">{{ data?.bmi }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="首次发现结节日期">{{ data?.first_nodule_date }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ data?.patient_id }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('sex')">{{ dictStore.getDictItemLabel('med_sex',data?.sex ) }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('birth_date')">{{ data?.birth_date }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('age')">{{ data?.age }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('native_place')">{{ data?.native_place }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status', data?.smoking_status) }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('abo_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_abo', data?.abo_blood_type) }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_rh', data?.rh_blood_type)  }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('bmi')">{{ data?.bmi }}</ElDescriptionsItem>
+          <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ data?.first_nodule_date }}</ElDescriptionsItem>
         </ElDescriptions>
         <div class="flex-1">
-          <iframe v-if="currImageType == 'dicom'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
-          <iframe v-if="currImageType == 'nii'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/niftiViewer.html"></iframe>
-          <iframe v-if="currImageType == 'svs'" @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/svsViewer.html"></iframe>
+          <iframe v-if="currImageType == 'dicom'" allowfullscreen  @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
+          <iframe v-if="currImageType == 'nii'" allowfullscreen  @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/niftiViewer.html?file_id=2"></iframe>
+          <iframe v-if="currImageType == 'svs'" allowfullscreen  @load="closeLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/static/svsViewer.html?file_id=3"></iframe>
         </div>
       </div>
     </el-col>
@@ -53,10 +53,12 @@ import {ElDescriptions, ElDescriptionsItem} from "element-plus";
 import {ref ,onMounted} from 'vue';
 import { ElLoading } from 'element-plus'
 import {PatientListItem} from "@/types/module_medical/hospital.ts";
+import {useDictStore} from "@/store";
+import {getFieldLabel} from "@/components/medical/field-renderer";
 const loadingInstance = ref()
+const dictStore = useDictStore();
 defineProps<{
-  data:PatientListItem | undefined,
-  getDictLabel:(key:string,value:any) => string
+  data:PatientListItem | undefined
 }>()
 interface FileName {
   fileName: string

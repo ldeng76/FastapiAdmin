@@ -316,6 +316,101 @@ class DicomIndexer:
             return None
 
     # ------------------------------------------------------------------ #
+    # 手动注册单文件（不依赖目录扫描）
+    # ------------------------------------------------------------------ #
+    def register_file(self, file_path: Path) -> dict[str, Any] | None:
+        """手动注册单个 DICOM 文件到内存索引。
+
+        适用于文件不在 DICOM_DATA_DIR 下、但需要被 OHIF 预览的场景。
+        已注册同一 SOPInstanceUID 时视为幂等成功，直接返回。
+        返回 {"study_uid", "series_uid", "sop_uid"}；失败返回 None。
+        """
+        try:
+            ds = pydicom.dcmread(
+                str(file_path), stop_before_pixels=True,
+                specific_tags=_SPECIFIC_TAGS, force=True,
+            )
+        except Exception:
+            return None
+
+        sop_class = getattr(ds, "SOPClassUID", "")
+        modality = getattr(ds, "Modality", "") or ""
+        if modality in _NON_IMAGE_MODALITIES:
+            return None
+        if sop_class and sop_class not in _IMAGE_SOP_CLASSES:
+            return None
+
+        study_uid = str(getattr(ds, "StudyInstanceUID", "") or "")
+        series_uid = str(getattr(ds, "SeriesInstanceUID", "") or "")
+        sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
+        if not study_uid or not series_uid or not sop_uid:
+            return None
+
+        with self._scan_lock:
+            idx = self._studies.get(study_uid)
+            if idx is None:
+                idx = _StudyIndex(study_uid, file_path.parent)
+                idx.study_uid = study_uid
+                idx.study_meta = {
+                    "patient_id": getattr(ds, "PatientID", None) or file_path.name,
+                    "patient_name": _person_name(getattr(ds, "PatientName", None)) or file_path.name,
+                    "study_uid": study_uid,
+                    "study_description": getattr(ds, "StudyDescription", None),
+                    "study_date": getattr(ds, "StudyDate", None),
+                    "modality": modality or None,
+                }
+                idx.series = {}
+                idx.sop_to_path = {}
+                idx.sop_to_index = {}
+                self._studies[study_uid] = idx
+
+            # 幂等：已注册直接返回
+            if sop_uid in idx.sop_to_path:
+                return {"study_uid": study_uid, "series_uid": series_uid, "sop_uid": sop_uid}
+
+            # 构建 instance 记录
+            position_z = None
+            ipp = getattr(ds, "ImagePositionPatient", None)
+            if ipp is not None and len(ipp) >= 3:
+                try:
+                    position_z = float(ipp[2])
+                except (TypeError, ValueError):
+                    position_z = None
+            instance_number = getattr(ds, "InstanceNumber", None)
+            wc = _first_window_value(getattr(ds, "WindowCenter", None))
+            ww = _first_window_value(getattr(ds, "WindowWidth", None))
+            pixel_spacing = getattr(ds, "PixelSpacing", None)
+            if pixel_spacing is not None:
+                pixel_spacing = [float(x) for x in pixel_spacing]
+
+            inst = {
+                "sop_uid": sop_uid,
+                "instance_number": str(instance_number) if instance_number is not None else None,
+                "position_z": position_z,
+                "window_width": ww,
+                "window_center": wc,
+                "modality": modality,
+                "series_description": getattr(ds, "SeriesDescription", None),
+                "rows": getattr(ds, "Rows", None),
+                "columns": getattr(ds, "Columns", None),
+                "slice_thickness": _safe_float(getattr(ds, "SliceThickness", None)),
+                "pixel_spacing": pixel_spacing,
+                "filepath": str(file_path),
+            }
+
+            idx.series.setdefault(series_uid, []).append(inst)
+            idx.series[series_uid].sort(key=_sort_key)
+            # 重建该 series 的 sop_to_index
+            for i, it in enumerate(idx.series[series_uid]):
+                idx.sop_to_index[it["sop_uid"]] = (series_uid, i + 1)
+            idx.sop_to_path[sop_uid] = file_path
+
+            # 反向索引
+            self._study_uid_to_id[study_uid] = study_uid
+
+        return {"study_uid": study_uid, "series_uid": series_uid, "sop_uid": sop_uid}
+
+    # ------------------------------------------------------------------ #
     # UID 反向索引
     # ------------------------------------------------------------------ #
     def _find_study_by_uid(self, study_uid: str) -> _StudyIndex | None:

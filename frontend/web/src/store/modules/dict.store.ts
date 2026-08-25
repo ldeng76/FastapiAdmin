@@ -123,6 +123,14 @@ export const useDictStore = defineStore(
       };
       return dict_data;
     }
+    function getDictItemLabel(type: string, value: any){
+        const item = getDictLabel(type, value)
+        if(typeof item !== "string" && item?.dict_label){
+          return item.dict_label
+        } else {
+          return value
+        }
+    }
 
     /**
      * 清空字典数据
@@ -138,6 +146,7 @@ export const useDictStore = defineStore(
       getDictArray,
       getDict,
       getDictLabel,
+      getDictItemLabel,
       clearDictData,
     };
   },

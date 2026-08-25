@@ -37,6 +37,7 @@ dependencies = [
     "psutil==6.1.0",                            # 系统信息
     "psycopg==3.3.2",                           # postgresql 同步操作数据库基于 psycopg是psycopg2升级版：psycopg2 是一个 pure-Python PostgreSQL 适配器。
     "psycopg-binary==3.3.2",                    # postgresql 异步操作数据库基于 psycopg2：asyncpg 是 psycopg2 的异步版本，psycopg2 是一个 pure-Python PostgreSQL 数据库适配器。
+    "pydantic>=2.12.5",
     "pydantic-settings==2.5.2",                 # 配置设置
     "pydantic-validation-decorator==0.1.4",     # 模型验证
     "pyjwt==2.9.0",                             # OAuth2

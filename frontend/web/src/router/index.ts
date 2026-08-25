@@ -1,6 +1,6 @@
 import type { App } from "vue";
 import { createRouter, createWebHashHistory } from "vue-router";
-import { HOME_ROUTE_NAME, ROOT_LAYOUT_ROUTE_NAME, staticRoutes } from "./staticRoutes";
+import { HOME_ROUTE_NAME, ROOT_LAYOUT_ROUTE_NAME ,HOME_PAGE_PATH, staticRoutes } from "./staticRoutes";
 import { setupAfterEachGuard } from "./afterEach";
 import "@utils/ui";
 
@@ -44,10 +44,7 @@ export async function initRouter(app: App<Element>): Promise<void> {
   app.use(router);
 }
 
-/** 须与 `staticRoutes` 首页子路由 path 一致 */
-export const HOME_PAGE_PATH = "/home";
-
-export { HOME_ROUTE_NAME, ROOT_LAYOUT_ROUTE_NAME };
+export { HOME_ROUTE_NAME, ROOT_LAYOUT_ROUTE_NAME ,HOME_PAGE_PATH };
 
 /** 动态路由注册与菜单转换（一般从 `@/router` 按需导入） */
 export { RouteRegistry, ComponentLoader, RouteTransformer, RouteValidator } from "./dynamicRoutes";

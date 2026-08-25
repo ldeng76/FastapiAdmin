@@ -13,6 +13,8 @@ import type { RouteRecordRaw } from "vue-router";
 import { RouterView, useRoute } from "vue-router";
 import { t } from "@wangeditor-next/editor";
 
+export const HOME_PAGE_PATH = "/medical/patient";
+
 /** 首页 / 仪表盘父级 meta（侧栏、静态子路由共用） */
 export const HOME_MENU_META: RouteMeta = {
   title: "menus.home.title",
@@ -294,12 +296,9 @@ export function mergeShellRoutesIntoMenu(menuList: AppRouteRecord[]): AppRouteRe
     }
   };
 
-  tryPush(mergeShellHomeMenu);
-
   if (additions.length === 0) return menuList;
   return [...additions, ...menuList];
 }
-
 /**
  * 静态路由配置（不需要权限就能访问的路由）
  *
@@ -362,7 +361,7 @@ export const staticRoutes: AppRouteRecordRaw[] = [
   {
     path: "/",
     name: ROOT_LAYOUT_ROUTE_NAME,
-    redirect: "/home",
+    redirect: HOME_PAGE_PATH,
     component: Layout,
     children: [
       /** 首页（侧栏补入逻辑见同文件 `mergeShellRoutesIntoMenu`） */

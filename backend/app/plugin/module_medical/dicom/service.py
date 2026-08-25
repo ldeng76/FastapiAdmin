@@ -27,6 +27,18 @@ class DicomService:
     """DICOMweb 服务（OHIF Viewer 对接层）。"""
 
     # ------------------------------------------------------------------ #
+    # 文件注册（供外部模块调用，把单个 DICOM 文件注册到 indexer 内存索引）
+    # ------------------------------------------------------------------ #
+    @classmethod
+    def register_file(cls, file_path: Path) -> dict[str, Any] | None:
+        """注册单个 DICOM 文件到 indexer 内存索引。
+
+        注册后即可通过 StudyInstanceUID 走 DICOMweb 接口预览。
+        返回 {"study_uid", "series_uid", "sop_uid"}；失败返回 None。
+        """
+        return indexer.register_file(file_path)
+
+    # ------------------------------------------------------------------ #
     # QIDO-RS：查询接口（返回 DICOM JSON 数组）
     # ------------------------------------------------------------------ #
     @classmethod

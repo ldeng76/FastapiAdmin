@@ -10,23 +10,7 @@
       :validate-on-rule-change="false"
       @keyup.enter="$emit('submit')"
     >
-      <ElFormItem>
-        <ElSelect
-          :model-value="demoAccountKey"
-          class="w-full"
-          :placeholder="$t('login.quickSelectAccount')"
-          @update:model-value="$emit('setupAccount', $event as AccountKey)"
-        >
-          <ElOption
-            v-for="account in accounts"
-            :key="account.key"
-            :label="account.label"
-            :value="account.key"
-          >
-            <span>{{ account.label }}</span>
-          </ElOption>
-        </ElSelect>
-      </ElFormItem>
+
 
       <ElFormItem prop="username">
         <ElInput
@@ -149,25 +133,8 @@
             {{ $t("login.btnText") }}
           </ElButton>
         </div>
-
-        <div class="login-secondary-actions grid grid-cols-2 gap-2">
-          <ElButton class="login-secondary-btn" plain @click="$emit('openMobile')">
-            {{ $t("login.mobileLogin") }}
-          </ElButton>
-          <ElButton class="login-secondary-btn" plain @click="$emit('openQr')">
-            {{ $t("login.qrLogin") }}
-          </ElButton>
-        </div>
       </div>
     </ElForm>
-
-    <FaLoginThirdPartySection @oauth="$emit('oauth', $event)" />
-
-    <FaLoginAuthLinkRow
-      :hint="$t('login.noAccount')"
-      :link-text="$t('login.register')"
-      @link="$emit('register')"
-    />
   </div>
 </template>
 

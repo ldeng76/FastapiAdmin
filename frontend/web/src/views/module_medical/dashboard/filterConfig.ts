@@ -46,12 +46,12 @@ const config: Array<FilterConfigType> = [
     name :"smoking_status",
     children: [],
   },
-  {
-    dict_label: "检查模态",
-    dict_type:"med_exam_type",
-    name :"modality",
-    children: [],
-  }
+  // {
+  //   dict_label: "检查模态",
+  //   dict_type:"med_exam_type",
+  //   name :"modality",
+  //   children: [],
+  // }
 ]
 
 addConfigKey(config, null);

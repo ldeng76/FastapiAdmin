@@ -73,21 +73,13 @@ const showSearchBar = ref(true);
 
 const patientSearchItems = computed<SearchFormItem[]>(() => [
   {
-    key: "center",
-    label: "来源中心",
-    type: "select",
-    options: centerOptions.value as unknown as Record<string, any>,
-    span: 6,
-  },
-  {
     key: "keyword",
     label: "关键词",
     type: "input",
-    placeholder: "患者编号 / 中心",
+    placeholder: "患者编号",
     span: 6,
   },
 ]);
-
 
 // 跳转多模态详情（独立隐藏路由，patient_id/center 走 query 参数）
 function goDetail(row: PatientTable) {

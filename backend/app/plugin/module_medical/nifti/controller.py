@@ -5,10 +5,13 @@
 """
 
 from typing import Annotated
-from app.config.setting import settings
-from fastapi import APIRouter, Query, Response
+
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 
+from app.api.v1.module_system.auth.schema import AuthSchema
+from app.core.dependencies import AuthPermission
+from app.plugin.module_medical.files.service import MedFilesService
 from .service import NIfTIService
 
 # NIfTI 专用路由
@@ -17,26 +20,29 @@ NIfTIRouter = APIRouter(tags=["NIfTI"])
 
 @NIfTIRouter.get(
     "/nifti/file",
-    summary="获取 NIfTI 文件内容",
-    description="获取指定路径的 NIfTI (.nii, .nii.gz) 文件内容，返回二进制数据供前端解析",
+    summary="按文件ID获取 NIfTI 文件内容",
+    description="按 med_files 表的 file_id 获取 NIfTI (.nii, .nii.gz) 文件内容，返回二进制数据供前端解析",
 )
 async def get_nifti_file(
-    file_path: Annotated[str, Query(description="NIfTI 文件的绝对路径")],
+    file_id: Annotated[int, Query(description="med_files 表的文件ID", ge=1)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
 ) -> Response:
-    """获取 NIfTI 文件内容。"""
-    file_path =f"{settings.NII_DATA_DIR}/case_5.nii"
-    content = NIfTIService.read_file(file_path)
+    """按文件ID获取 NIfTI 文件内容。"""
+    path, _ = await MedFilesService.get_file_stream_service(auth=auth, file_id=file_id)
+    content = NIfTIService.read_file(str(path))
     return Response(content=content, media_type="application/octet-stream")
 
 
 @NIfTIRouter.get(
     "/nifti/file/info",
-    summary="获取 NIfTI 文件信息",
-    description="获取指定路径的 NIfTI 文件元信息（大小、修改时间等）",
+    summary="按文件ID获取 NIfTI 文件信息",
+    description="按 med_files 表的 file_id 获取 NIfTI 文件元信息（大小、修改时间等）",
 )
 async def get_nifti_file_info(
-    file_path: Annotated[str, Query(description="NIfTI 文件的绝对路径")],
+    file_id: Annotated[int, Query(description="med_files 表的文件ID", ge=1)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
 ) -> JSONResponse:
-    """获取 NIfTI 文件信息。"""
-    info = NIfTIService.get_file_info(file_path)
+    """按文件ID获取 NIfTI 文件信息。"""
+    path, _ = await MedFilesService.get_file_stream_service(auth=auth, file_id=file_id)
+    info = NIfTIService.get_file_info(str(path))
     return JSONResponse(content=info)

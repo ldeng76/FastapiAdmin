@@ -410,3 +410,14 @@ html.dark {
     }
   }
 }
+
+@font-face{
+  font-family: "text-security-disc";
+  src: url("fonts/text-security-disc.woff");
+}
+.text-security-disc{
+  font-family: "text-security-disc",serif;
+}
+.text-security-disc::placeholder{
+  font-family: 'Microsoft YaHei', serif;
+}

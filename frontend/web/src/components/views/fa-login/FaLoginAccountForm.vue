@@ -7,6 +7,7 @@
       :rules="rules"
       :key="formKey"
       class="login-page-form"
+      autocomplete="off"
       :validate-on-rule-change="false"
       @keyup.enter="$emit('submit')"
     >
@@ -28,11 +29,8 @@
       <ElTooltip :visible="isCapsLock" :content="$t('login.capsLock')" placement="right">
         <ElFormItem prop="password">
           <ElInput
-            class="custom-height"
+            class="custom-height text-security-disc"
             v-model.trim="loginForm.password"
-            type="password"
-            autocomplete="off"
-            show-password
             clearable
             :placeholder="$t('login.placeholder.password')"
             @keyup="checkCapsLock"
@@ -109,9 +107,6 @@
         </div>
 
         <div class="login-options-row flex-cb text-sm">
-          <ElCheckbox v-model="loginForm.remember" class="login-remember">
-            {{ $t("login.rememberPwd") }}
-          </ElCheckbox>
           <ElLink
             type="primary"
             underline="never"

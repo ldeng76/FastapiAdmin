@@ -835,7 +835,6 @@ const rules = reactive({
     { required: true, message: "请输入菜单名称", trigger: "blur" },
     { min: 2, max: 50, message: "长度 2 到 50 个字符", trigger: "blur" },
   ],
-  parent_id: [{ required: true, message: "请选择父级菜单", trigger: "blur" }],
   type: [{ required: true, message: "请选择菜单类型", trigger: "blur" }],
   order: [{ required: true, message: "请输入排序", trigger: "blur" }],
   permission: [{ required: true, message: "请输入权限标识", trigger: "blur" }],

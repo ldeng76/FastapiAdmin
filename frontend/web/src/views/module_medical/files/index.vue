@@ -1,7 +1,7 @@
 <template>
   <el-container class="files-container">
-    <el-aside width="200px" style="border-right: 1px solid var(--el-collapse-border-color);">
-      <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']" style="padding:0 10px;">
+    <el-aside width="200px" style="padding: 30px 20px;">
+      <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
         <el-collapse-item title="模态类型" name="examType">
           <el-checkbox-group v-model="selectedExamType">
             <el-checkbox class="checkbox-block" v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />

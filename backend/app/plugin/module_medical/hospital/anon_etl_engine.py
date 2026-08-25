@@ -1077,17 +1077,21 @@ async def _import_exam_text_table(
             if v:
                 parts.append(str(v))
         body = truncate_body("\n\n".join(parts))
-        report_rows.append(
-            {
-                "anon_exam_id": anon_exam_id,
-                "body_clean": body,
-                "pii_replaced_count": 0,
-                "clean_method": CLEAN_METHOD_REGEX_ONLY,
-                "llm_model": None,
-                "review_status": "pending",
-                "created_batch_id": batch_id,
-            }
-        )
+        # 正文非空才写 report 行：report_text PK=anon_exam_id 跨 exam_type 唯一，
+        # 空正文 upsert 会覆盖已有非空正文（IHC 与 Pathology 共享 specimen id，
+        # 0825 批次 6,698 条病理正文会被空 IHC body 冲掉）
+        if body:
+            report_rows.append(
+                {
+                    "anon_exam_id": anon_exam_id,
+                    "body_clean": body,
+                    "pii_replaced_count": 0,
+                    "clean_method": CLEAN_METHOD_REGEX_ONLY,
+                    "llm_model": None,
+                    "review_status": "pending",
+                    "created_batch_id": batch_id,
+                }
+            )
 
         # PHI 审计：exam/specimen id HMAC + 正文 llm_replace(confidence=0 占位)
         audit_records.append(
@@ -1766,6 +1770,9 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
                 # Rev 2026-07-24: 补 specimen_type（肺叶/穿刺/淋巴结）+ sampling_site（解剖部位），
                 # 这两个标量列非空率分别 15/39、29/39，是病理核心结构化字段，原遗漏未落库
                 "specimen_type", "sampling_site",
+                # Rev 2026-08-25 (0825 批次): 全量病理文件为 exam 级 + specimens[] 数组，
+                # 完整标本数组原样落库（同 ct0820 nodule_morphology 模式）
+                "specimens",
             ],
         },
         # 医疗宽表直入扩展：基因检测 / 免疫组化 / 手术记录
@@ -1793,7 +1800,13 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
                 "ki67_pct", "pdl1_tps_pct", "pdl1_clone", "pdl1_cps",
                 "alk_ihc", "ttf1", "napsina", "p40", "p53",
             ],
-            "date_field": "",  # ihc 无日期列，反查同 specimen_id 的 pathology exam 日期
+            "date_field": "exam_date",  # 0825 全量文件自带日期列（反查方案会丢弃 25 条无病理匹配行）
+        },
+        # 住院记录（0825 批次）：通用 visit_detail，chief_complaint/present_illness/
+        # diagnoses[]/raw_text 原样进 visit_detail_json
+        {
+            "src_table": "inpatient", "kind": "visit_detail",
+            "id_field": "inpatient_id", "date_field": "inpatient_date",
         },
         {
             "src_table": "surgery_record",

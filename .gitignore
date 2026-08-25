@@ -106,6 +106,8 @@ backend/data/
 # ETL-2 临时 staging（etl1_adapt_zhujiang0814.py 产物，可重新生成），不入库
 /data_0814/
 /data_ct/
+# 珠江 0825 批次 staging（etl1_adapt_zhujiang0825_*.py 产物，可重新生成），不入库
+/data_zj0825/
 *.png
 ui_*.png
 login.png

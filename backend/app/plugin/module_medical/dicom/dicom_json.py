@@ -34,9 +34,27 @@ def _tag_to_key(tag: int) -> str:
 
 
 def _encode_value(elem: pydicom.DataElement) -> dict[str, Any] | None:
-    """将单个 DataElement 编码为 DICOM JSON 值对象。"""
+    """将单个 DataElement 编码为 DICOM JSON 值对象。
+
+    按 DICOMweb 标准（PS3.18 Annex F.2.7）：
+    - 二进制 VR (OB/OD/OF/OL/OW/OV/UN) 用 InlineBinary 字段
+    - 其他 VR 用 Value 数组
+    """
     vr = elem.VR
     val = elem.value
+
+    # 二进制 VR：必须用 InlineBinary（base64），不能用 Value
+    if vr in _BINARY_VRS:
+        if val is None:
+            return {"vr": vr}
+        import base64
+        if isinstance(val, (bytes, bytearray)):
+            return {"vr": vr, "InlineBinary": base64.b64encode(val).decode("ascii")}
+        # 多值字节流
+        if isinstance(val, (list, tuple, MultiValue)):
+            merged = b"".join(bytes(v) for v in val if isinstance(v, (bytes, bytearray)))
+            return {"vr": vr, "InlineBinary": base64.b64encode(merged).decode("ascii")}
+        return {"vr": vr}
 
     # Sequence 类型递归编码
     if vr == "SQ":

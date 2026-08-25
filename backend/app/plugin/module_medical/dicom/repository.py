@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import threading
-import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,10 @@ import pydicom
 from pydicom.errors import InvalidDicomError
 
 from app.config.setting import settings
+from app.core.logger import log
+
+# 内存中最多保留的 Study 数量，超过时按 LRU 淘汰
+_MAX_STUDIES = 50
 
 # 读头时只取这些 tag（含像素尺寸/窗/位置），其余忽略以提速
 _SPECIFIC_TAGS = [
@@ -161,9 +165,12 @@ class DicomIndexer:
     def __new__(cls) -> DicomIndexer:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._studies: dict[str, _StudyIndex] = {}  # type: ignore[attr-defined]
+            # LRU 有序字典：末尾为最近访问，头部为最久未访问
+            cls._instance._studies: OrderedDict[str, _StudyIndex] = OrderedDict()  # type: ignore[attr-defined]
             cls._instance._scan_lock = threading.RLock()  # type: ignore[attr-defined]
             cls._instance._study_uid_to_id: dict[str, str] = {}  # type: ignore[attr-defined]
+            # file_path -> {"study_uid", "series_uid", "sop_uid"} 快速判定，避免重复 dcmread
+            cls._instance._path_to_uid: dict[str, dict[str, str]] = {}  # type: ignore[attr-defined]
             cls._instance._dir_mtimes: dict[str, float] = {}  # type: ignore[attr-defined]
             cls._instance._dirty_dirs: set[str] = set()  # type: ignore[attr-defined]
         return cls._instance
@@ -172,14 +179,10 @@ class DicomIndexer:
     # 对外查询
     # ------------------------------------------------------------------ #
     def list_studies(self) -> list[dict[str, Any]]:
-        """列出所有 Study（按 StudyInstanceUID 分组，每个 UID 独立一行）。"""
-        root = self._root()
-        if not root.exists():
-            return []
-        # 扫描所有子目录（若 mtime 变化则重新扫描）
-        for sub in sorted(p for p in root.iterdir() if p.is_dir()):
-            self._scan_dir_if_stale(sub)
-        # 返回所有有效 study
+        """列出所有已注册的 Study（按 StudyInstanceUID 分组）。
+
+        仅返回通过 register_file 注册的记录，不再扫描目录。
+        """
         results: list[dict[str, Any]] = []
         for idx in self._studies.values():
             if not idx.series:
@@ -190,6 +193,24 @@ class DicomIndexer:
             meta["series_count"] = len(idx.series)
             results.append(meta)
         return results
+
+    # ------------------------------------------------------------------ #
+    # LRU 管理
+    # ------------------------------------------------------------------ #
+    def _touch(self, study_uid: str) -> None:
+        """将指定 study 移到 LRU 末尾（标记为最近访问）。"""
+        if study_uid in self._studies:
+            self._studies.move_to_end(study_uid)
+
+    def _evict_if_needed(self) -> None:
+        """超过 _MAX_STUDIES 时淘汰最久未访问的 Study。"""
+        while len(self._studies) > _MAX_STUDIES:
+            evict_uid, evict_idx = self._studies.popitem(last=False)
+            # 清理反向索引
+            self._study_uid_to_id.pop(evict_uid, None)
+            for sop_uid, fpath in evict_idx.sop_to_path.items():
+                self._path_to_uid.pop(str(fpath), None)
+            log.info("DICOM LRU 淘汰 study: %s (instances=%d)", evict_uid, len(evict_idx.sop_to_path))
 
     def list_instances(self, series_uid: str) -> list[dict[str, Any]]:
         """某 Series 所有切片（已按 Z 轴排序）。"""
@@ -216,7 +237,6 @@ class DicomIndexer:
         """
         if not sop_uid or "/" in sop_uid or "\\" in sop_uid or ".." in sop_uid:
             return None
-        self.list_studies()  # 确保已扫描
         for idx in self._studies.values():
             if sop_uid in idx.sop_to_path:
                 p = idx.sop_to_path[sop_uid]
@@ -287,7 +307,6 @@ class DicomIndexer:
         path = self.get_instance_path(sop_uid)
         if path is None:
             return None
-        self.list_studies()
         for idx in self._studies.values():
             if sop_uid in idx.sop_to_index:
                 series_uid, index = idx.sop_to_index[sop_uid]
@@ -322,28 +341,52 @@ class DicomIndexer:
         """手动注册单个 DICOM 文件到内存索引。
 
         适用于文件不在 DICOM_DATA_DIR 下、但需要被 OHIF 预览的场景。
-        已注册同一 SOPInstanceUID 时视为幂等成功，直接返回。
+        已注册同一 file_path 或 SOPInstanceUID 时视为幂等成功，直接返回。
         返回 {"study_uid", "series_uid", "sop_uid"}；失败返回 None。
         """
+        # 快速判定：file_path 已注册则直接返回，避免重复 dcmread
+        path_key = str(file_path)
+        cached = self._path_to_uid.get(path_key)
+        if cached:
+            return dict(cached)
+
         try:
             ds = pydicom.dcmread(
                 str(file_path), stop_before_pixels=True,
                 specific_tags=_SPECIFIC_TAGS, force=True,
             )
-        except Exception:
+        except Exception as e:
+            log.warning(f"register_file dcmread 失败: {file_path}, error={e}")
             return None
 
-        sop_class = getattr(ds, "SOPClassUID", "")
-        modality = getattr(ds, "Modality", "") or ""
+        sop_class = str(getattr(ds, "SOPClassUID", "") or "")
+        modality = str(getattr(ds, "Modality", "") or "")
         if modality in _NON_IMAGE_MODALITIES:
+            log.warning(f"register_file 跳过非图像模态: {file_path}, modality={modality}")
             return None
+        # SOPClassUID 不在白名单时，若包含 Rows/Columns 则视为可显示图像放行
         if sop_class and sop_class not in _IMAGE_SOP_CLASSES:
-            return None
+            rows = getattr(ds, "Rows", None)
+            cols = getattr(ds, "Columns", None)
+            if not rows or not cols:
+                log.warning(
+                    f"register_file 不可显示（SOPClassUID 不在白名单且无 Rows/Columns）: "
+                    f"{file_path}, sop_class={sop_class}, modality={modality}"
+                )
+                return None
+            log.info(
+                f"register_file 放行（SOPClassUID 不在白名单但有 Rows={rows}/Columns={cols}）: "
+                f"{file_path}, sop_class={sop_class}, modality={modality}"
+            )
 
         study_uid = str(getattr(ds, "StudyInstanceUID", "") or "")
         series_uid = str(getattr(ds, "SeriesInstanceUID", "") or "")
         sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
         if not study_uid or not series_uid or not sop_uid:
+            log.warning(
+                f"register_file 缺少必要 UID: {file_path}, "
+                f"study_uid={study_uid}, series_uid={series_uid}, sop_uid={sop_uid}"
+            )
             return None
 
         with self._scan_lock:
@@ -364,9 +407,12 @@ class DicomIndexer:
                 idx.sop_to_index = {}
                 self._studies[study_uid] = idx
 
-            # 幂等：已注册直接返回
+            # 幂等：SOPInstanceUID 已注册直接返回
             if sop_uid in idx.sop_to_path:
-                return {"study_uid": study_uid, "series_uid": series_uid, "sop_uid": sop_uid}
+                result = {"study_uid": study_uid, "series_uid": series_uid, "sop_uid": sop_uid}
+                self._path_to_uid[path_key] = dict(result)
+                self._touch(study_uid)
+                return result
 
             # 构建 instance 记录
             position_z = None
@@ -407,20 +453,25 @@ class DicomIndexer:
 
             # 反向索引
             self._study_uid_to_id[study_uid] = study_uid
+            result = {"study_uid": study_uid, "series_uid": series_uid, "sop_uid": sop_uid}
+            self._path_to_uid[path_key] = dict(result)
+            self._touch(study_uid)
 
-        return {"study_uid": study_uid, "series_uid": series_uid, "sop_uid": sop_uid}
+            # LRU 淘汰
+            self._evict_if_needed()
+
+        return result
 
     # ------------------------------------------------------------------ #
     # UID 反向索引
     # ------------------------------------------------------------------ #
     def _find_study_by_uid(self, study_uid: str) -> _StudyIndex | None:
         """按 StudyInstanceUID 查找 Study 索引。"""
-        # 确保所有 study 已扫描
-        self.list_studies()
         study_id = self._study_uid_to_id.get(study_uid)
         if study_id:
             idx = self._studies.get(study_id)
             if idx and idx.series:
+                self._touch(study_uid)
                 return idx
         return None
 
@@ -435,21 +486,18 @@ class DicomIndexer:
         if not study_id or "/" in study_id or "\\" in study_id or ".." in study_id:
             from app.core.exceptions import CustomException
             raise CustomException(msg="非法的 study_id")
-        self.list_studies()  # 确保已扫描
         idx = self._studies.get(study_id)
         if idx is None or not idx.series:
             from app.core.exceptions import CustomException
             raise CustomException(msg="Study 不存在")
+        self._touch(study_id)
         return idx
 
     def _find_study_by_series(self, series_uid: str) -> _StudyIndex | None:
-        for idx in list(self._studies.values()):
+        """按 SeriesInstanceUID 查找所属 Study。"""
+        for study_uid, idx in self._studies.items():
             if series_uid in idx.series:
-                return idx
-        # 可能是新数据，全量刷新一次再查
-        self.list_studies()
-        for idx in self._studies.values():
-            if series_uid in idx.series:
+                self._touch(study_uid)
                 return idx
         return None
 

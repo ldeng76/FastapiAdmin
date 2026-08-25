@@ -168,11 +168,30 @@ class DicomService:
 
     @classmethod
     def get_instance_metadata(cls, sop_uid: str) -> dict[str, Any] | None:
-        """获取 Instance 的 DICOM JSON 元数据（WADO-RS /metadata）。"""
+        """获取 Instance 的 DICOM JSON 元数据（WADO-RS /metadata）。
+
+        若 RGB 图像的 PlanarConfiguration=1，会被改为 0
+        （与 frames 接口实际返回的字节布局保持一致，供 OHIF/cornerstone 正确解析）。
+        """
         ds = indexer.get_instance_dataset(sop_uid)
         if ds is None:
             return None
-        return dataset_to_dicom_json(ds)
+        result = dataset_to_dicom_json(ds)
+        # 若已转成按像素交错，同步把 PlanarConfiguration 改为 0
+        try:
+            samples_per_pixel = int(getattr(ds, "SamplesPerPixel", 1) or 1)
+            planar = int(getattr(ds, "PlanarConfiguration", 0) or 0)
+            photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
+        except Exception:
+            samples_per_pixel = 1
+            planar = 0
+            photometric = ""
+        if samples_per_pixel >= 3 and planar == 1 and photometric in (
+            "RGB", "RGBA", "YBR_FULL", "YBR_FULL_422", "YBR_PARTIAL_422"
+        ):
+            # 00280106 = PlanarConfiguration
+            result["00280106"] = {"vr": "US", "Value": [0]}
+        return result
 
     @classmethod
     def get_series_metadata(cls, series_uid: str) -> list[dict[str, Any]]:
@@ -182,7 +201,7 @@ class DicomService:
         for inst in instances:
             ds = indexer.get_instance_dataset(inst["sop_uid"])
             if ds is not None:
-                results.append(dataset_to_dicom_json(ds))
+                results.append(cls.get_instance_metadata(inst["sop_uid"]))
         return results
 
     @classmethod
@@ -195,7 +214,7 @@ class DicomService:
             for inst in instances:
                 ds = indexer.get_instance_dataset(inst["sop_uid"])
                 if ds is not None:
-                    results.append(dataset_to_dicom_json(ds))
+                    results.append(cls.get_instance_metadata(inst["sop_uid"]))
         return results
 
     @classmethod
@@ -310,6 +329,9 @@ class DicomService:
     ) -> tuple[bytes, str]:
         """获取指定帧的原始像素数据（WADO-RS /frames/{frameNumber}）。
 
+        优先用 pixel_array 解码（兼容多格式：RGB/MONO/PALETTE 等），
+        解码失败时回退到 PixelData 按字节切分（返回原始压缩/未压缩字节）。
+
         返回 (multipart_bytes, content_type)。
         """
         ds = indexer.get_instance_dataset(sop_uid)
@@ -320,41 +342,49 @@ class DicomService:
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        if not hasattr(ds, "pixel_array"):
+        if not hasattr(ds, "PixelData") or not ds.PixelData:
             raise CustomException(
                 msg="Instance 无像素数据",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        pixel_array = ds.pixel_array
-
-        # 多帧提取
-        if pixel_array.ndim >= 3:
-            if frame_number <= 0 or frame_number > pixel_array.shape[0]:
-                raise CustomException(
-                    msg=f"Frame {frame_number} 不存在",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                )
-            frame_data = pixel_array[frame_number - 1]
-        else:
-            if frame_number != 1:
-                raise CustomException(
-                    msg=f"Frame {frame_number} 不存在（单帧图像）",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                )
-            frame_data = pixel_array
-
-        # 将帧数据编码为原始字节
-        buf = io.BytesIO()
+        # 优先尝试 pixel_array 解码（支持 RGB/MONO/PALETTE 等多格式）
         try:
-            import numpy as np
-            np.save(buf, frame_data, allow_pickle=False)
-        except Exception:
-            # 回退：直接 tobytes
-            raw_bytes = frame_data.tobytes() if hasattr(frame_data, "tobytes") else bytes(frame_data)
-            buf.write(raw_bytes)
+            pixel_array = ds.pixel_array
+            if pixel_array.ndim >= 3:
+                if frame_number <= 0 or frame_number > pixel_array.shape[0]:
+                    raise CustomException(
+                        msg=f"Frame {frame_number} 不存在",
+                        status_code=status.HTTP_404_NOT_FOUND,
+                    )
+                frame_data = pixel_array[frame_number - 1]
+            else:
+                if frame_number != 1:
+                    raise CustomException(
+                        msg=f"Frame {frame_number} 不存在（单帧图像）",
+                        status_code=status.HTTP_404_NOT_FOUND,
+                    )
+                frame_data = pixel_array
 
-        return buf.getvalue(), "application/octet-stream"
+            # PlanarConfiguration=1 转 0（按像素交错）
+            frame_data = cls._normalize_planar_configuration(ds, frame_data)
+
+            buf = io.BytesIO()
+            try:
+                import numpy as np
+                np.save(buf, frame_data, allow_pickle=False)
+            except Exception:
+                raw_bytes = frame_data.tobytes() if hasattr(frame_data, "tobytes") else bytes(frame_data)
+                buf.write(raw_bytes)
+            return buf.getvalue(), "application/octet-stream"
+        except CustomException:
+            raise
+        except Exception as e:
+            log.warning(f"pixel_array 解码失败，回退到 PixelData 字节切分: {e}")
+
+        # 回退：直接从 PixelData 按字节切分（不经解码）
+        raw_bytes = cls._extract_frame_bytes_from_pixel_data(ds, frame_number)
+        return raw_bytes, "application/octet-stream"
 
     @classmethod
     def get_instance_frame_multipart(
@@ -363,6 +393,9 @@ class DicomService:
         frame_number: int,
     ) -> tuple[bytes, str]:
         """获取指定帧的 multipart/related 响应（WADO-RS frames 完整路径）。
+
+        优先用 pixel_array 解码（兼容多格式：RGB/MONO/PALETTE 等），
+        解码失败时回退到 PixelData 按字节切分（返回原始压缩/未压缩字节）。
 
         返回 (body_bytes, content_type)。
         """
@@ -379,31 +412,40 @@ class DicomService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        if not hasattr(ds, "pixel_array"):
+        if not hasattr(ds, "PixelData") or not ds.PixelData:
             raise CustomException(
                 msg="Instance 无像素数据",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        pixel_array = ds.pixel_array
+        # 优先尝试 pixel_array 解码（支持 RGB/MONO/PALETTE 等多格式）
+        try:
+            pixel_array = ds.pixel_array
+            if pixel_array.ndim >= 3:
+                if frame_number <= 0 or frame_number > pixel_array.shape[0]:
+                    raise CustomException(
+                        msg=f"Frame {frame_number} 不存在 (共 {pixel_array.shape[0]} 帧)",
+                        status_code=status.HTTP_404_NOT_FOUND,
+                    )
+                frame_data = pixel_array[frame_number - 1]
+            else:
+                if frame_number != 1:
+                    raise CustomException(
+                        msg=f"Frame {frame_number} 不存在（单帧图像）",
+                        status_code=status.HTTP_404_NOT_FOUND,
+                    )
+                frame_data = pixel_array
 
-        # 提取指定帧
-        if pixel_array.ndim >= 3:
-            if frame_number <= 0 or frame_number > pixel_array.shape[0]:
-                raise CustomException(
-                    msg=f"Frame {frame_number} 不存在 (共 {pixel_array.shape[0]} 帧)",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                )
-            frame_data = pixel_array[frame_number - 1]
-        else:
-            if frame_number != 1:
-                raise CustomException(
-                    msg=f"Frame {frame_number} 不存在（单帧图像）",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                )
-            frame_data = pixel_array
+            # PlanarConfiguration=1 转 0（按像素交错）
+            frame_data = cls._normalize_planar_configuration(ds, frame_data)
 
-        raw_bytes = frame_data.tobytes() if hasattr(frame_data, "tobytes") else bytes(frame_data)
+            raw_bytes = frame_data.tobytes() if hasattr(frame_data, "tobytes") else bytes(frame_data)
+        except CustomException:
+            raise
+        except Exception as e:
+            log.warning(f"pixel_array 解码失败，回退到 PixelData 字节切分: {e}")
+            raw_bytes = cls._extract_frame_bytes_from_pixel_data(ds, frame_number)
+
         boundary = b"--dicom-frame-boundary"
         body = (
             boundary + b"\r\n"
@@ -414,6 +456,129 @@ class DicomService:
         )
         content_type = "multipart/related; type=application/octet-stream; boundary=dicom-frame-boundary"
         return body, content_type
+
+    @classmethod
+    def _normalize_planar_configuration(cls, ds: "pydicom.Dataset", frame_data: Any) -> Any:
+        """将 RGB/RGBA 帧数据从 PlanarConfiguration=1 转成 0（按像素交错）。
+
+        OHIF/cornerstone 默认期望 PlanarConfiguration=0。
+        - 0: 按像素交错 RGBRGBRGB...
+        - 1: 按平面存储 RRR...GGG...BBB...
+
+        仅对 SamplesPerPixel>=3 且 PlanarConfiguration=1 的图像生效，其他原样返回。
+        """
+        try:
+            samples_per_pixel = int(getattr(ds, "SamplesPerPixel", 1) or 1)
+            planar = int(getattr(ds, "PlanarConfiguration", 0) or 0)
+            photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
+        except Exception:
+            return frame_data
+
+        if samples_per_pixel < 3 or planar != 1:
+            return frame_data
+        if photometric not in ("RGB", "RGBA", "YBR_FULL", "YBR_FULL_422", "YBR_PARTIAL_422"):
+            return frame_data
+
+        try:
+            import numpy as np
+            arr = np.frombuffer(frame_data.tobytes(), dtype=np.uint8)
+            rows = int(getattr(ds, "Rows", 0) or 0)
+            cols = int(getattr(ds, "Columns", 0) or 0)
+            if rows == 0 or cols == 0:
+                return frame_data
+            # 按平面存储: [R plane][G plane][B plane]，每个 plane = rows * cols
+            plane_size = rows * cols
+            if arr.size < plane_size * samples_per_pixel:
+                return frame_data
+            planes = []
+            for i in range(samples_per_pixel):
+                plane = arr[i * plane_size:(i + 1) * plane_size].reshape(rows, cols)
+                planes.append(plane)
+            # 按像素交错: shape=(rows, cols, samples)
+            interleaved = np.stack(planes, axis=-1)
+            return interleaved.tobytes()
+        except Exception as e:
+            log.warning(f"PlanarConfiguration 转换失败，返回原始数据: {e}")
+            return frame_data
+
+    @classmethod
+    def _extract_frame_bytes_from_pixel_data(
+        cls, ds: "pydicom.Dataset", frame_number: int
+    ) -> bytes:
+        """从 PixelData 按字节切分指定帧，不触发像素解码。
+
+        - 碎片封装（Encapsulated）：用 pydicom.encaps 解包
+        - 原始未封装：按 BitsAllocated * Rows * Columns * SamplesPerPixel 计算每帧字节数
+        """
+        import pydicom
+        from pydicom.encaps import get_frame_offsets
+
+        pixel_data = ds.PixelData
+        if isinstance(pixel_data, (bytes, bytearray)):
+            pixel_bytes = bytes(pixel_data)
+        else:
+            pixel_bytes = bytes(pixel_data)  # fallback
+
+        # 判断是否碎片封装（多帧通常封装）
+        transfer_syntax = str(getattr(ds, "file_meta", None).TransferSyntaxUID
+                              if hasattr(ds, "file_meta") and ds.file_meta
+                              else "")
+        is_encapsulated = (
+            transfer_syntax == "1.2.840.10008.1.2.4.50"  # JPEG Baseline
+            or transfer_syntax == "1.2.840.10008.1.2.4.51"  # JPEG Extended
+            or transfer_syntax == "1.2.840.10008.1.2.4.57"  # JPEG Lossless
+            or transfer_syntax == "1.2.840.10008.1.2.4.70"  # JPEG Lossless SV
+            or transfer_syntax == "1.2.840.10008.1.2.5"      # RLE Lossless
+            or transfer_syntax.startswith("1.2.840.10008.1.2.4.")  # 其他 JPEG/JPEG-LS/JPEG2000
+        )
+
+        number_of_frames = getattr(ds, "NumberOfFrames", 1) or 1
+
+        if is_encapsulated:
+            # 碎片封装：用 encaps 解包
+            try:
+                from pydicom.encaps import decode_data_sequence
+                frames = decode_data_sequence(pixel_bytes)
+                if frame_number < 1 or frame_number > len(frames):
+                    raise CustomException(
+                        msg=f"Frame {frame_number} 不存在（共 {len(frames)} 帧）",
+                        status_code=status.HTTP_404_NOT_FOUND,
+                    )
+                return bytes(frames[frame_number - 1])
+            except CustomException:
+                raise
+            except Exception as e:
+                log.warning("封装帧解析失败，回退到整段 PixelData: %s", e)
+                return pixel_bytes
+
+        # 未封装：按字节数切分
+        bits_allocated = int(getattr(ds, "BitsAllocated", 8) or 8)
+        rows = int(getattr(ds, "Rows", 0) or 0)
+        cols = int(getattr(ds, "Columns", 0) or 0)
+        samples_per_pixel = int(getattr(ds, "SamplesPerPixel", 1) or 1)
+        bytes_per_frame = (bits_allocated // 8) * rows * cols * samples_per_pixel
+
+        if bytes_per_frame == 0:
+            # 无法计算，返回整个 PixelData
+            log.warning("无法计算帧字节数，返回整个 PixelData")
+            return pixel_bytes
+
+        if number_of_frames <= 1:
+            if frame_number != 1:
+                raise CustomException(
+                    msg=f"Frame {frame_number} 不存在（单帧图像）",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+            return pixel_bytes[:bytes_per_frame]
+
+        if frame_number < 1 or frame_number > number_of_frames:
+            raise CustomException(
+                msg=f"Frame {frame_number} 不存在（共 {number_of_frames} 帧）",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        start = (frame_number - 1) * bytes_per_frame
+        end = start + bytes_per_frame
+        return pixel_bytes[start:end]
 
     @classmethod
     def get_thumbnail(

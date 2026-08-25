@@ -11,7 +11,6 @@
 <script setup lang="ts">
 import {ref} from 'vue';
 import {ElLoading} from "element-plus";
-import {Auth} from "@utils";
 const showToggle = ref(false)
 const loading = ref()
 const src = ref()
@@ -24,14 +23,12 @@ const props = defineProps<params>()
 function open(obj:params){
   let file_id = obj && obj.file_id || props.file_id
   let file_type = obj && obj.file_type || props.file_type
-  let fileUrl = `/api/v1/medical/files/stream/${file_id}`
-
   if(file_type === 'nii'){
     src.value = `/api/v1/static/niftiViewer.html?file_id=${file_id}`
   } else if(file_type === 'svs'){
     src.value = `/api/v1/static/svsViewer.html?file_id=${file_id}`
-  } else if(file_type === 'dicom'){
-    src.value = `/api/v1/medical/dicom/viewer?StudyInstanceUIDs=${fileUrl}`
+  } else if(file_type === 'dcm'){
+    src.value = `/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6`
   }
   showToggle.value = true
   loading.value = ElLoading.service()

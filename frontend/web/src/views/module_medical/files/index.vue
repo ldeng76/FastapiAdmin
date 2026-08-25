@@ -44,7 +44,7 @@ const viewer = ref<any>(null)
 const selectedExamType = ref([])
 const selectedFileType= ref([])
 const fileTypeDict = ref([
-  {dict_value:"dicom",dict_label:"DICOM"},
+  {dict_value:"dcm",dict_label:"DCM"},
   {dict_value:"svs",dict_label:"SVS"},
   {dict_value:"nii",dict_label:"NII"},
 ])

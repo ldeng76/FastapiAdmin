@@ -18,6 +18,12 @@ const FilesApi = {
       params :params,
       method: "get",
     });
+  },
+  getStudyUid(file_id:any){
+    return request<ApiResponse<string[]>>({
+      url: `${API_PATH}files/study-uid/${file_id}`,
+      method: "get",
+    });
   }
 }
 export default FilesApi;

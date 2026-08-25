@@ -11,6 +11,7 @@
 <script setup lang="ts">
 import {ref} from 'vue';
 import {ElLoading} from "element-plus";
+import FilesApi from "@api/module_medical/files.ts";
 const showToggle = ref(false)
 const loading = ref()
 const src = ref()
@@ -23,15 +24,19 @@ const props = defineProps<params>()
 function open(obj:params){
   let file_id = obj && obj.file_id || props.file_id
   let file_type = obj && obj.file_type || props.file_type
+  loading.value = ElLoading.service()
   if(file_type === 'nii'){
     src.value = `/api/v1/static/niftiViewer.html?file_id=${file_id}`
+    showToggle.value = true
   } else if(file_type === 'svs'){
     src.value = `/api/v1/static/svsViewer.html?file_id=${file_id}`
+    showToggle.value = true
   } else if(file_type === 'dcm'){
-    src.value = `/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6`
+    FilesApi.getStudyUid(file_id).then(function (res){
+      src.value = `/api/v1/medical/dicom/viewer?StudyInstanceUIDs=${res?.data?.data}`
+      showToggle.value = true
+    })
   }
-  showToggle.value = true
-  loading.value = ElLoading.service()
 }
 
 defineExpose({

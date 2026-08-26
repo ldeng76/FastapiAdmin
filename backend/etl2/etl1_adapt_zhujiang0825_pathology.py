@@ -105,29 +105,47 @@ def main() -> int:
     # CROSS JOIN LATERAL 的等价改写: histology_class 等三列直接从
     # COALESCE(sm.specimens, []) 表达式计算, 语义一致且兼容性更好。
     # 注意: DuckDB 的 CTE 必须写在 COPY (...) 括号内部。
+    #
+    # 确定性 (2026-08-26 修复): 多行 exam 的取值原先依赖 FIRST()/扫描顺序,
+    # 同一源文件每次运行产出不同 staging (152 个跨行 exam 的 histology_class/
+    # raw_text 与 specimens 数组顺序漂移), 重导会静默改写已落库值。
+    # 现改为: src_rn = 行内容 md5 哈希的确定性序号; 可变列取"稳定序首个非空"
+    # (arg_min + FILTER); specimens 数组按"首现行 src_rn, 行内位置"排序。
     sql = f"""
         COPY (
-            WITH base AS (
+            WITH src AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           ORDER BY md5(to_json(struct_pack(
+                               patient_id, exam_id, pat_local_id, exam_date,
+                               frozen, multi_nodules, specimens, raw_text
+                           )))
+                       ) AS src_rn
+                FROM read_parquet('{src_posix}')
+            ),
+            base AS (
                 SELECT s.exam_id,
-                       unnest(s.specimens) AS specimen,
-                       row_number() OVER (PARTITION BY s.exam_id ORDER BY s.exam_id) AS rn
-                FROM read_parquet('{src_posix}') s
+                       s.specimens[i]  AS specimen,
+                       s.src_rn,
+                       i               AS spec_pos
+                FROM src s,
+                     unnest(range(1, COALESCE(len(s.specimens), 0) + 1)) u(i)
             ),
             exam_attr AS (
                 SELECT exam_id,
-                       FIRST(patient_id)      AS patient_id,
-                       FIRST(pat_local_id)    AS pat_local_id,
-                       CAST(FIRST(exam_date) AS DATE) AS exam_date,
-                       FIRST(frozen)          AS frozen,
-                       FIRST(multi_nodules)   AS multi_nodules,
-                       FIRST(raw_text)        AS raw_text
-                FROM read_parquet('{src_posix}')
+                       arg_min(patient_id, src_rn)    AS patient_id,
+                       arg_min(pat_local_id, src_rn) FILTER (WHERE pat_local_id IS NOT NULL)  AS pat_local_id,
+                       CAST(arg_min(exam_date, src_rn) AS DATE)  AS exam_date,
+                       arg_min(frozen, src_rn)       FILTER (WHERE frozen IS NOT NULL)        AS frozen,
+                       arg_min(multi_nodules, src_rn) FILTER (WHERE multi_nodules IS NOT NULL) AS multi_nodules,
+                       arg_min(raw_text, src_rn)     FILTER (WHERE raw_text IS NOT NULL)      AS raw_text
+                FROM src
                 GROUP BY exam_id
             ),
             spec_merged AS (
-                SELECT exam_id, list(specimen ORDER BY rn) AS specimens
+                SELECT exam_id, list(specimen ORDER BY first_key) AS specimens
                 FROM (
-                    SELECT exam_id, MIN(rn) AS rn, specimen
+                    SELECT exam_id, MIN(src_rn * 1000000 + spec_pos) AS first_key, specimen
                     FROM base
                     GROUP BY exam_id, specimen
                 ) g

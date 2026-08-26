@@ -45,10 +45,13 @@ start_frontend() {
     return
   fi
   echo "[frontend] 启动中... (log: $FRONTEND_LOG)"
-  ( cd "$FRONTEND_DIR" \
+  (
+    cd "$FRONTEND_DIR" \
     && export PATH="$NODE_ENV_DIR/bin:$PATH" \
-    && export LD_LIBRARY_PATH="$NODE_ENV_DIR/lib" \
-    && nohup pnpm dev --host --no-open > "$FRONTEND_LOG" 2>&1 & )
+    && export LD_LIBRARY_PATH="$NODE_ENV_DIR/lib:$LD_LIBRARY_PATH" \
+    && pnpm install \
+    && nohup pnpm dev --host --no-open > "$FRONTEND_LOG" 2>&1 &
+  )
 }
 
 wait_http() {  # $1=url  $2=名称

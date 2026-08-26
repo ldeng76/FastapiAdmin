@@ -32,6 +32,7 @@
         ref="faTableRef"
         :loading="loading"
         :data="data"
+        :header-cell-style="{ backgroundColor: '#f5f7fa' }"
         :columns="columns"
         :pagination="pagination"
         @pagination:size-change="handleSizeChange"
@@ -149,7 +150,7 @@ const {
         formatter: (row) =>
           h(
             ElButton,
-            { type: "primary", link: true, onClick: () => goDetail(row) },
+            { type: "primary",size:"small", onClick: () => goDetail(row) },
             () => "多模态查看",
           ),
       },

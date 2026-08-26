@@ -378,6 +378,7 @@ export const FIELD_LABELS: Record<string, string> = {
   gene_name: "基因名称",
   sample_source: "检测样本来源",
   method: "检测方法",
+  raw_text: "原始数据",
   panel_size: "Panel基因数",
   variant_result: "变异结果",
   variant_desc: "变异描述",

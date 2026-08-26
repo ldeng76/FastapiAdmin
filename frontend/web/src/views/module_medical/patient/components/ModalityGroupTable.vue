@@ -1,12 +1,13 @@
 <template>
-  <ElTable :data="rows" border size="small" :header-cell-style="{ backgroundColor: '#eef0ff' }">
+  <ElTable :data="rows" border size="small" :stripe="true" :header-cell-style="{ backgroundColor: '#eef0ff' }">
     <ElTableColumn type="expand" v-if="isShowExpand">
       <template #default="{ row }" >
         <div v-if="expandTableList[rows.indexOf(row)] !== undefined" style="padding: 20px">
           <ElTable v-for="(table,index) in expandTableList[rows.indexOf(row)]" style="margin-bottom: 20px" border :header-cell-style="{ backgroundColor: '#f5f7fa' }" :key="index" :data="table.tableData" size="small">
-            <ElTableColumn v-for="(col,index) in table.tableColumn" :key="index" :prop="col.prop" :label="col.label">
+            <ElTableColumn v-for="(col,index) in table.tableColumn" :width="col.prop === 'raw_text' ? 600 : undefined" :key="index" :prop="col.prop" :label="col.label">
               <template #default="{ row }" >
-                <div v-if="typeof row[col.prop] !== 'object' || row[col.prop] == null">{{row[col.prop]}}</div>
+                <div v-if="col.prop === 'raw_text'" class="marked-content"  v-html="marked(row[col.prop] || '')"></div>
+                <div v-else-if="typeof row[col.prop] !== 'object' || row[col.prop] == null">{{row[col.prop]}}</div>
                 <div v-else>{{JSON.stringify(row[col.prop])}}</div>
               </template>
             </ElTableColumn>
@@ -14,9 +15,8 @@
         </div>
       </template>
     </ElTableColumn>
-    <ElTableColumn label="操作" width="120" :align="'center'">
+    <ElTableColumn v-if="tableName === '影像' || tableName === '基因'" label="操作" width="120" :align="'center'">
       <template #default="{ row }" >
-        <ElButton type="primary" size="small">查看原始数据</ElButton>
         <div v-if="tableName === '影像'" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
         <div v-else-if="tableName === '基因'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因数据</ElButton></div>
       </template>
@@ -78,7 +78,11 @@
     </template>
     <template v-else-if="tableName === '基因'">
       <ElTableColumn prop="exam_date" :label="getFieldLabel('exam_date')" />
-      <ElTableColumn prop="exam_type" :label="getFieldLabel('exam_type')" />
+      <ElTableColumn prop="exam_type" :label="getFieldLabel('exam_type')">
+        <template  #default="{ row }" >
+          {{dictStore.getDictItemLabel("med_exam_type",  row.exam_type)}}
+        </template>
+      </ElTableColumn>
     </template>
     <template v-else-if="tableName === '免疫组化'">
       <ElTableColumn prop="exam_date" :label="getFieldLabel('exam_date')" />
@@ -96,7 +100,11 @@
     <template v-else-if="tableName === '影像' ">
       <ElTableColumn prop="exam_date" :label="getFieldLabel('exam_date')" width="120" />
       <ElTableColumn prop="nodule_no" :label="getFieldLabel('nodule_no')" width="120" />
-      <ElTableColumn prop="report_text.body_clean" :label="getFieldLabel('body_clean')" />
+      <ElTableColumn prop="report_text.body_clean" :label="getFieldLabel('body_clean')">
+        <template #default="{ row }" >
+          <div class="marked-content" v-html="marked(row?.report_text?.body_clean)"></div>
+        </template>
+      </ElTableColumn>
     </template>
   </ElTable>
   <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showCt" fullscreen>
@@ -124,6 +132,8 @@ import {computed, ref} from "vue";
 import {ElLoading, ElTable, ElTableColumn} from "element-plus";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
+import {marked} from "marked";
+import {useDictStore} from "@/store";
 
 interface Props {
   rows: any[];
@@ -134,6 +144,7 @@ interface TableItem<T = any> {
   tableData: T[];
   tableColumn: { prop:string,label:string }[];
 }
+const dictStore = useDictStore()
 const loadingCt = ref()
 const showCt = ref(false);
 const showFsq = ref(false);
@@ -176,7 +187,6 @@ const expandTableList = computed(()=>{
         }
         let cols = getTableColumn(valueFirst)
         if(cols.length > 0){
-
           arr[index].push({
             tableName:key,
             tableData:tableData,
@@ -232,7 +242,7 @@ function onLoadSample() {
 function getTableColumn(obj:any){
   let arr = []
   for (const key in obj){
-    if(key.indexOf("_") > 0 && !['review_status'].includes(key)){
+    if(key.indexOf("_") > 0 && !['review_status','pat_local_id'].includes(key)){
       arr.push({
         prop:key,
         label:getFieldLabel(key)
@@ -258,5 +268,8 @@ function fsqToggle(){
 <style>
 .mdDialogDetailBody{
   height: calc(100% - 80px);
+}
+.marked-content p + p{
+  margin-top: 10px;
 }
 </style>

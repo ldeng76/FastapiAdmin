@@ -11,6 +11,7 @@ description: 将医院新批次 parquet 数据（如珠江 zhujiang0814.parquet�
 - 0814 珠江批次（zhujiang0814.parquet 单表 patient，6,714 人，新列名需适配）
 - 0719 珠江全量 CT（data/zhujiang/nodule_imaging.parquet，97,039 条 exam，引擎兼容格式直接导入）
 - 0825 珠江 extracted_tables 批次（7 表一次导：patient/ct/genetics/ihc/pathology/operation/inpatient；含引擎空正文守卫修复 + zhujiang spec 追加 inpatient(visit_detail) + IHC 日期改用自带列；batch `8aff203f-...`）
+- 0825r2 raw_text 补录批次（batch `ce93eaaf-...`：CT/IHC/病理 3 表 detail_json 补 `raw_text` 顶层键，源文件原始报告全文逐字符落库）
 
 ## 流水线全景
 
@@ -323,6 +324,7 @@ PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
 - **report_text PK=anon_exam_id 跨 exam_type 唯一**（0723 sample 实证：IHC 与病理共享 specimen id，IHC 空 body upsert 把 14 条病理正文覆写为 ""；exam_type 覆盖 bug 2026-07-24 修过但 report_text 漏了）。2026-08-25 引擎已修：`_import_exam_text_table` 正文空则不写 report 行（`if body:`）。共享 id 的 IHC 现在只挂 detail（detail PK 含 detail_type，共存无冲突）。
 - **exam 级文件可能一行多标本/多行同 exam**（0825 pathology 实证：15,542 行 / 15,382 唯一 exam，152 个 exam 跨多行且各行 specimens[] 是独立标本，另有 75 行空数组 + 49 行 NULL + 数组内部自重复）：适配必须 `unnest` 后按 exam 合并 + struct 去重再落库，"首标本"标量字段（histology_class/specimen_type/sampling_site）取"各字段首个非空"；完整数组加进 spec detail_fields（如 `"specimens"`）原样落 JSONB。合并前后总数要打印核对。
 - **DuckDB 两个语法坑**（0825 适配实测）：① CTE 必须写在 `COPY (WITH ... SELECT ...)` 括号内部，`WITH ... COPY (...)` 报 Parser Error；② `FROM t, unnest(t.col) alias` 的 alias 是**表别名**，`SELECT alias` 得到包装 struct `STRUCT(unnest <实际struct>)` 导致字段查找失败——改用 SELECT 列表内 `unnest(t.col) AS x`。
+- **psql 输出经 Python `subprocess` 捕获会丢 `\r`**（2026-08-26 实证：`text=True` 默认通用换行转换把 `\r\n`→`\n`，误判库内 detail_json 丢了 CR，实际数据完好）：捕获 psql 输出必须 `capture_output=True` 字节模式 + `stdout.decode('utf-8')`，再做逐字符比对。
 - **DuckDB REGEXP 默认不开 s 标志**：跨多行匹配必须显式 `'s'` flag（如 `regexp_extract(s, 'A\n(.*?)\nB', 1, 's')`），否则 `.` 不匹配换行返回 NULL。
 - **DuckDB f-string 内正则/JSON 字面量**：花括号 `{...}` 与 `\r\n` 会被 Python f-string 误解析。复杂正则/字典字面量先在 Python 侧用 raw string 拼好再 `f"..."` 嵌入；或用 `to_json(struct_pack(...))` 替代 `to_json({...})`。
 - **ct0820 nodules[] 嵌套 struct**：`nodules` 是 LIST of STRUCT，其中 `nodule_location` 自身是 STRUCT(lobe, segment)。取首结节 lob 需要 `list_extract(nodules, 1).nodule_location.lobe`，不能直接 `.lobe`。
@@ -330,8 +332,9 @@ PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
 - **psql 输出 CRLF**（Windows 本机 psql）：写入文本文件后用 `tr -d '\r'` 去掉 CR，否则 `IN ('uuid1','uuid2',...)` 解析失败。
 - **psql `\copy` 不支持跨行多行字符串**：必须单行调用（参考 0814 同步脚本风格）。多表导出用多次 `psql -c` 而不是 heredoc 文件。
 - **ENGINE 配置错读 MySQL**：ETL2 CLI 必须设 `ENVIRONMENT=dev`（否则读不到 .env.dev，连接错驱动）。Command：`ENVIRONMENT=dev PYTHONPATH=. ./.venv/Scripts/python.exe -m app.plugin.module_medical.hospital.anon_etl --centers X --data-root ../data_X`。
-- **批次足迹（截至 2026-08-25）**：
+- **批次足迹（截至 2026-08-26）**：
   - 0825 批次已导入（batch `8aff203f-424c-40d4-a6d3-c0b887b72913`）：patient 6,714 刷新（=0814 同批人）/ CT 97,039 刷新（文本更新版）/ pathology 15,386 / genetic 1,088 / IHC exam 25（6,698 个共享 id 并入 Pathology exam 行，detail 6,723 条）/ inpatient visit 9,590 / surgery 18,058 / 新占位 patient 12,980。h59 未同步（待确认）。
+  - **raw_text 补录（2026-08-26，batch `ce93eaaf-2657-453d-b0d3-39ca4ee16b58`）**：引擎 spec 的 detail_fields 补 `raw_text`（CT/IHC/病理），CT/IHC 适配脚本同步保留该列；staging 独立目录 `data_zj0825raw/` 只放 3 个变更表，引擎按目录内容自动只导这 3 表。各文件 raw_text 最终落点：patient → `patient_meta->raw_text`；genetics → `exam_detail.detail_json->test_meta->raw_text`；inpatient → `visit_detail_json->raw_text`；CT/IHC/病理 → `exam_detail.detail_json->raw_text`（顶层键）；operation 源文件无 raw_text 列（无内容可导）。
   - 0723 sample 的 39 条病理中 26 条空正文，其中 14 条系 IHC 空 body 覆盖所致（引擎修复后不再发生；覆盖的正文源文件已删除，无法恢复）。
   - ct0820（2026-08-20）已作为珠江全量 CT 源；0825 的 ct.parquet 是其重抽取版，重导后库内 CT 正文以 0825 为准。
 
@@ -355,5 +358,6 @@ PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
 | staging 0719 全量 CT（gitignore） | `data_ct/zhujiang/nodule_imaging.parquet` |
 | staging ct0820 全量 CT（gitignore） | `data_ct0820/zhujiang/nodule_imaging.parquet` |
 | staging 0825 全 7 表（gitignore） | `data_zj0825/zhujiang/{patient,nodule_imaging,genetic_test,ihc_result,pathology_specimen,inpatient,surgery_record}.parquet` |
+| staging 0825r2 raw_text 补录 3 表（gitignore） | `data_zj0825raw/zhujiang/{nodule_imaging,ihc_result,pathology_specimen}.parquet` |
 | 导入日志 | `/tmp/zhujiang0814_run.log`、`/tmp/zhujiang_ct_run.log`、`/tmp/zhujiang_0825_run.log` |
 | 导入前备份（dev） | `$TEMP/lnrs_backup_zhujiang_CT_<TS>/{report_text,exam_detail,phi_audit,patient}.csv` |

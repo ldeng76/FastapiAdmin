@@ -142,7 +142,8 @@ def main() -> int:
                 ttf1,
                 napsina,
                 p40,
-                p53
+                p53,
+                raw_text
             FROM (
                 SELECT *,
                        ROW_NUMBER() OVER (

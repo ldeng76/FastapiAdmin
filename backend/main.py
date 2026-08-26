@@ -101,6 +101,7 @@ def run(
             reload=env.value == EnvironmentEnum.DEV.value,
             factory=True,
             log_config=None,
+            reload_dirs=["backend"]
         )
     finally:
         from app.core.logger import cleanup_logging

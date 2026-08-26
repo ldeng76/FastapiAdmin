@@ -1,6 +1,6 @@
 <template>
   <ElEmpty v-if="rows.length === 0" :description="`暂无${getFieldLabel(name)}`" />
-  <ElCollapse v-else :model-value="expandedNames">
+  <ElCollapse :expand-icon-position="'left'" v-else :model-value="expandedNames">
     <ElCollapseItem
       v-for="(group, index) in groups"
       :key="index"

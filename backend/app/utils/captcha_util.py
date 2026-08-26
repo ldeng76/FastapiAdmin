@@ -82,14 +82,14 @@ class CaptchaUtil:
     @classmethod
     def captcha_arithmetic(cls, difficulty: str = "medium") -> tuple[str, int]:
         """
-        创建算术验证码图片（加减乘运算）；浅色底、居中算式，无旋转与干扰线/噪点。
+          创建算术验证码图片（加减乘运算）；浅色底、居中算式，有旋转与干扰线/噪点。
 
-        参数:
-        - difficulty (str): 难度级别（easy / medium / hard），控制数字范围与可用运算符。
+          参数:
+          - difficulty (str): 难度级别（easy / medium / hard），控制数字范围与可用运算符。
 
-        返回:
-        - tuple[str, int]: base64 编码的 PNG 图片字符串与正确答案（整数）。
-        """
+          返回:
+          - tuple[str, int]: base64 编码的 PNG 图片字符串与正确答案（整数）。
+          """
         difficulty_config = {
             "easy": {"num_range": (1, 9), "operators": ["+", "-"]},
             "medium": {"num_range": (1, 15), "operators": ["+", "-", "*"]},
@@ -130,6 +130,30 @@ class CaptchaUtil:
         x = (width - tw) // 2
         y = (height - th) // 2 - tb[1]
         draw.text((x, y), text, fill=(55, 65, 81), font=font)
+
+        # ---------- 新增代码，绘制干扰线 ----------
+        line_count = 5  # 干扰线数量
+        for _ in range(line_count):
+            start = (random.randint(0, width), random.randint(0, height))
+            end = (random.randint(0, width), random.randint(0, height))
+            color = (
+                random.randint(100, 150),
+                random.randint(100, 150),
+                random.randint(100, 150),
+            )  # 灰色系干扰线
+            draw.line([start, end], fill=color, width=1)
+
+        # ---------- 新增代码，添加随机噪点 ----------
+        noise_count = 100  # 噪点数量
+        for _ in range(noise_count):
+            nx = random.randint(0, width - 1)
+            ny = random.randint(0, height - 1)
+            noise_color = (
+                random.randint(150, 200),
+                random.randint(150, 200),
+                random.randint(150, 200),
+            )
+            draw.point((nx, ny), fill=noise_color)
 
         buffer = BytesIO()
         image.save(buffer, format="PNG", optimize=True)

@@ -318,7 +318,7 @@ const demoAccountKey = ref<AccountKey>("super");
 const userStore = useUserStore();
 const router = useRouter();
 const route = useRoute();
-const isPassing = ref(false);
+const isPassing = ref(import.meta.env.DEV);
 const isClickPass = ref(false);
 
 const accountFormRef = ref<InstanceType<typeof FaLoginAccountForm> | null>(null);
@@ -493,14 +493,16 @@ function resolveRedirectTarget(query: LocationQuery): RouteLocationRaw {
 }
 
 onMounted(async () => {
-
   await configStore.getConfig(true);
   await tryConsumeOAuthCallback();
   if (userStore.isLogin) {
     await router.replace(resolveRedirectTarget(route.query));
     return;
   }
-  getCaptcha();
+  await getCaptcha();
+  if(captchaState.enable){
+    isPassing.value = true
+  }
 });
 
 onActivated(() => {

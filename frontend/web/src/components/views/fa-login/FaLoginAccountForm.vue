@@ -82,7 +82,7 @@
       </ElFormItem>
 
       <div class="login-form-tail flex flex-col gap-[1.1rem]">
-        <div class="relative pb-3">
+        <div class="relative pb-3" v-if="!captchaState.enable">
           <div
             class="relative z-2 overflow-hidden select-none rounded-lg border border-transparent tad-300"
             :class="{ 'border-[#FF4E4F]!': !isPassing && isClickPass }"

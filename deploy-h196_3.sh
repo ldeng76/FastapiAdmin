@@ -15,14 +15,14 @@
 # 用法:
 #   ./deploy-h196_3.sh status                          查看 service / 端口 / 日志
 #   ./deploy-h196_3.sh restart                         仅重启后端 (代码不变)
-#   ./deploy-h196_3.sh deploy                          pull main + 后端同步 + restart
+#   ./deploy-h196_3.sh deploy                          pull main + 后端同步 + 清 redis 缓存 + restart
 #   ./deploy-h196_3.sh deploy --frontend               同时重建前端 dist
 #   ./deploy-h196_3.sh deploy --frontend --force       强制重建前端 (忽略新鲜度判断)
 #   ./deploy-h196_3.sh deploy --no-proxy               关闭代理环境变量 (内网/离线场景)
 #   ./deploy-h196_3.sh deploy --no-net-on              不自动调 net-on (代理已自启)
 #   ./deploy-h196_3.sh deploy --branch=feature/x
 #   ./deploy-h196_3.sh deploy --commit=<sha>
-#   ./deploy-h196_3.sh rollback <sha>                  回滚后端代码
+#   ./deploy-h196_3.sh rollback <sha>                  回滚后端代码 (同清 redis 缓存)
 #   ./deploy-h196_3.sh build-frontend [--force]        仅构建前端 (不动代码/不重启)
 #   ./deploy-h196_3.sh logs [-n 200]                   tail 后端日志
 #   ./deploy-h196_3.sh doctor                          环境自检
@@ -57,6 +57,15 @@ PROBE_TIMEOUT=5
 NO_PROXY=0                                              # --no-proxy 显式关闭
 NO_NET_ON=0                                              # --no-net-on 跳过自动启通道
 # --------------------------------------------------------------------------
+
+# ---- redis 缓存 (deploy 清本应用 db, 值解析自 env 文件与后端同源) -------------
+ENV_FILE="${BACKEND_DIR}/env/.env.${ENV_NAME}"
+
+env_val() {  # env_val <KEY> [默认值]  从 ${ENV_FILE} 读取 KEY = "value"
+  local v
+  v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "${ENV_FILE}" 2>/dev/null | head -1 | tr -d '"')
+  printf '%s' "${v:-${2:-}}"
+}
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 die() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2; exit 1; }
@@ -156,6 +165,36 @@ svc_restart() {
     return 1
   }
   log ">>> 重启完成"
+}
+
+# ---- service 停止 (deploy 专用: 先停旧进程, 防止其在清缓存前写回旧数据) ----
+svc_stop() {
+  need_root
+  log ">>> systemctl stop ${SERVICE_NAME}"
+  sudo systemctl stop "${SERVICE_NAME}"
+  for _ in $(seq 1 15); do
+    ss -tln 2>/dev/null | grep -q ":${BACKEND_PORT}\b" || return 0
+    sleep 1
+  done
+  die "端口 ${BACKEND_PORT} 在 stop 后 15s 未释放, 旧进程可能仍在写缓存, 终止"
+}
+
+# ---- redis 缓存清理 (deploy/rollback 专用) ----
+# 只 flush 本应用的 db (env 文件 REDIS_DB_NAME), 不动同实例其他 db.
+flush_redis() {
+  command -v redis-cli >/dev/null 2>&1 || die "redis-cli 未安装, 无法清理 redis 缓存"
+  [ -f "${ENV_FILE}" ] || die "env 文件不存在: ${ENV_FILE}"
+  local redis_host redis_port redis_db redis_auth out
+  redis_host=$(env_val REDIS_HOST "127.0.0.1")
+  redis_port=$(env_val REDIS_PORT "6379")
+  redis_db=$(env_val REDIS_DB_NAME "0")
+  redis_auth=$(env_val REDIS_PASSWORD "")
+  log ">>> 清理 redis 缓存: ${redis_host}:${redis_port} db=${redis_db}"
+  out=$(REDISCLI_AUTH="${redis_auth}" redis-cli -h "${redis_host}" -p "${redis_port}" \
+          -n "${redis_db}" FLUSHDB 2>/dev/null) \
+    || die "redis FLUSHDB 执行失败 (${redis_host}:${redis_port})"
+  [ "${out}" = "OK" ] || die "redis FLUSHDB 响应异常: ${out}"
+  log "    redis 缓存已清理 (db=${redis_db})"
 }
 
 # ---- 等待端口 / HTTP -----------------------------------------------------
@@ -279,6 +318,8 @@ do_deploy() {
     build_frontend
     log ">>> 前端已构建, 重启后端使 FastAPI 重新挂载 dist/"
   fi
+  svc_stop                # 先停旧后端, 防止其在清缓存前写回旧数据
+  flush_redis             # 清缓存, 避免新代码读到旧缓存结构
   svc_restart
   log ">>> 部署完成"
 }
@@ -293,6 +334,8 @@ do_rollback() {
   git fetch --all --quiet
   git checkout --quiet "${target}"
   sync_backend_deps
+  svc_stop
+  flush_redis
   svc_restart
   log ">>> 回滚完成, 当前 HEAD=$(git rev-parse --short HEAD)"
 }

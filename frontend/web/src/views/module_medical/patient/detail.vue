@@ -1,63 +1,41 @@
 <!-- 医学数据 · 患者多模态详情：基本信息 + 临床/基因/病理/影像 四模态 Tab -->
 <template>
-  <div class="medical-detail">
-    <!-- 顶部：返回 + 患者基本信息 -->
-    <ElCard shadow="never" class="mb-12">
-      <template #header>
-        <div class="detail-header">
-          <ElButton :icon="ArrowLeft" link @click="goBack">返回列表</ElButton>
-          <span class="patient-title">
-            患者多模态数据 · {{ patient?.patient_id }}
-            <ElTag v-if="patient?.center_code" type="info" effect="plain" class="ml-8">
-              {{ patient.center_code }}
-            </ElTag>
-          </span>
-        </div>
-      </template>
-
-      <ElDescriptions v-loading="loading" :column="4" border size="small">
-        <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('sex')">{{ dictStore.getDictItemLabel('med_sex',patient?.sex) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('birth_date')">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('ethnicity')">{{ dictStore.getDictItemLabel('med_ethnicity',patient?.ethnicity) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('native_place')">{{ patient?.native_place || "-" }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('abo_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_abo',patient?.abo_blood_type) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_rh',patient?.rh_blood_type) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
-        <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
-        <ElDescriptionsItem v-for="n in getExtRow(patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
-      </ElDescriptions>
-    </ElCard>
-
+  <hr/>
+  <div class="medical-detail" v-loading="loading" style="height: 100%;overflow: auto">
+    <ElDescriptions :column="4" border size="small" class="mb-5">
+      <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('sex')">{{ dictStore.getDictItemLabel('med_sex',patient?.sex) }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('birth_date')">{{ fmtDate(patient?.birth_date) }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('ethnicity')">{{ dictStore.getDictItemLabel('med_ethnicity',patient?.ethnicity) }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('native_place')">{{ patient?.native_place || "-" }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('abo_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_abo',patient?.abo_blood_type) }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_rh',patient?.rh_blood_type) }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
+      <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
+      <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
+      <ElDescriptionsItem v-for="n in getExtRow(patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
+    </ElDescriptions>
     <!-- 四模态 Tab -->
-    <ElCard shadow="never" v-loading="loading">
-      <ElTabs v-model="activeTab">
-        <ElTabPane v-for="[key, value] in [...detail.entries()]"
-          :label="getFieldLabel(key)"
-          :name="key"
-          :key="key"
-        >
-          <ModalityGroup :rows="value" :name="key" />
-        </ElTabPane>
-      </ElTabs>
-    </ElCard>
-
+    <ElTabs v-model="activeTab">
+      <ElTabPane v-for="[key, value] in [...detail.entries()]"
+        :label="getFieldLabel(key)"
+        :name="key"
+        :key="key"
+      >
+        <ModalityGroup :rows="value" :name="key" />
+      </ElTabPane>
+    </ElTabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import {
-  ElCard,
-  ElButton,
-  ElTag,
   ElDescriptions,
   ElDescriptionsItem,
   ElTabs,
   ElTabPane,
 } from "element-plus";
-import { ArrowLeft } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PatientAPI, { ModalityRowData, type PatientDetail} from "@/api/module_medical/patient";
 import ModalityGroup from "@views/module_medical/patient/components/ModalityGroup.vue";
@@ -65,8 +43,7 @@ import {getFieldLabel} from "@/components/medical/field-renderer";
 import {useDictStore} from "@/store";
 defineOptions({ name: "MedicalPatientDetail", inheritAttrs: false });
 const props = defineProps<{
-  data:{detail : string ,center:string},
-  goBack:()=> void
+  data:{detail : string ,center:string}
 }>()
 const dictStore = useDictStore();
 const loading = ref(false);
@@ -173,19 +150,8 @@ onMounted(fetchDetail);
 .medical-detail {
   padding: 12px;
 }
-.mb-12 {
-  margin-bottom: 12px;
-}
-.detail-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.patient-title {
-  font-weight: 600;
-  font-size: 15px;
-}
-.ml-8 {
-  margin-left: 8px;
+hr{
+  border: 1px solid transparent;
+  border-bottom-color: var(--default-border)
 }
 </style>

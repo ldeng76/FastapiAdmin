@@ -30,8 +30,9 @@ class PatientService:
     async def list_patients_service(
         cls,
         auth: AuthSchema,
-        center: str | None,
         keyword: str | None,
+        sex: str | None,
+        smoking_status: str | None,
         page: PaginationQueryParam,
     ) -> dict[str, Any]:
         """患者分页列表。
@@ -42,8 +43,9 @@ class PatientService:
         """
         items, total = await anon_list_patients(
             auth.db,
-            center=center,
             keyword=keyword,
+            sex=sex,
+            smoking_status=smoking_status,
             offset=page.offset,
             limit=page.limit,
         )

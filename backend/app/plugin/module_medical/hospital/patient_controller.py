@@ -42,24 +42,32 @@ async def list_centers_controller(
 @PatientRouter.get(
     "/patients",
     summary="患者分页列表",
-    description="支持按中心/关键词筛选，按 center_code + patient_id 排序",
+    description="支持按性别/吸烟情况/关键词筛选，按 patient_id 排序",
     response_model=ResponseSchema[dict],
 )
 async def list_patients_controller(
     page: Annotated[PaginationQueryParam, Depends()],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],
-    center: Annotated[
-        str | None,
-        Query(description="中心编码（精确匹配 center_code）"),
-    ] = None,
     keyword: Annotated[
         str | None,
         Query(description="患者编号/中心 关键词（ILIKE 模糊匹配）"),
     ] = None,
+    sex: Annotated[
+        str | None,
+        Query(description="性别（精确匹配 sex：如 男/女/未知）"),
+    ] = None,
+    smoking_status: Annotated[
+        str | None,
+        Query(description="吸烟情况（精确匹配 smoking_status）"),
+    ] = None,
 ) -> JSONResponse:
     """患者分页列表。"""
     result = await PatientService.list_patients_service(
-        auth=auth, center=center, keyword=keyword, page=page,
+        auth=auth,
+        keyword=keyword,
+        sex=sex,
+        smoking_status=smoking_status,
+        page=page,
     )
     return SuccessResponse(data=result, msg="获取患者列表成功")
 

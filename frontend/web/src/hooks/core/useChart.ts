@@ -67,16 +67,14 @@ export const useChartOps = (): ChartThemeConfig => ({
   themeColor: getCssVar("--el-color-primary-light-1"),
   /** 颜色组 */
   colors: [
-    getCssVar("--el-color-primary-light-1"),
+    getCssVar("--el-color-primary"),
     "#4ABEFF",
-    "#c5d3ff",
+    "#FA8A6C",
     "#14DEBA",
     "#FFAF20",
-    "#FA8A6C",
-    "#FFAF20",
+    "#c5d3ff",
   ],
 });
-
 // 常量定义
 const RESIZE_DELAYS = [50, 100, 200, 350] as const;
 const MENU_RESIZE_DELAYS = [50, 100, 200] as const;

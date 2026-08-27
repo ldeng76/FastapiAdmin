@@ -2,14 +2,6 @@
   <el-container class="layout-container">
     <el-header class="top-header flex">
       <el-text size="large" :style="'width: '+asideWidth+'px'">肺结节/肺癌科研数据管理仪表板</el-text>
-<!--      <div style="position: relative">-->
-<!--        <el-tabs style="position: absolute;bottom:0;margin-bottom: -15px" :default-value="'first'" @tab-click="function(){}">-->
-<!--          <el-tab-pane label="数据概览" name="first"></el-tab-pane>-->
-<!--          <el-tab-pane label="影像特征" name="second"></el-tab-pane>-->
-<!--          <el-tab-pane label="病理与分子" name="third"></el-tab-pane>-->
-<!--          <el-tab-pane label="生存随访" name="fourth"></el-tab-pane>-->
-<!--        </el-tabs>-->
-<!--      </div>-->
     </el-header>
     <el-container class="layout-body">
       <!-- 2. 左侧侧边栏 -->

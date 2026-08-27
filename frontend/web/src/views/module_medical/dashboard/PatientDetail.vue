@@ -99,8 +99,11 @@ onMounted(function (){
 </script>
 <style>
 .patientDetail-collapse-table .success-row{
-  --el-table-tr-bg-color: rgb(231 255 223)
+  --el-table-tr-bg-color: var(--el-color-primary);
+  --el-table-row-hover-bg-color: var(--el-color-primary);
+  color:#fff
 }
+
 </style>
 <style scoped>
 .patientDetail{

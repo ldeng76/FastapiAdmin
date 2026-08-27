@@ -11,9 +11,10 @@
       :show-reset="true"
       :show-search="true"
       :disabled-search="false"
+      :buttonLeftLimit="10"
       :default-expanded="false"
       @search="handleSearchBarSearch"
-      @reset="onResetSearch"
+      @reset="resetSearchParams"
     />
 
     <ElCard
@@ -40,7 +41,13 @@
       />
     </ElCard>
   </div>
-  <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showDetail" fullscreen>
+  <el-dialog class="flex flex-col" v-model="showDetail" fullscreen>
+    <template #title>
+      <ElButton :icon="ArrowLeft" link @click="showDetail = false">返回列表</ElButton>
+      <span class="patient-title">
+        患者多模态数据 ·  <el-tag type="primary" round>{{ showPatientId }}</el-tag>
+      </span>
+    </template>
     <Detail v-if="showDetail" :data="showDetailData" :goBack="()=>{showDetail = false}" />
   </el-dialog>
 </template>
@@ -53,16 +60,17 @@ import type { ColumnOption } from "@/types/component";
 import { useTable } from "@/hooks/core/useTable";
 import PatientAPI, { type PatientTable } from "@/api/module_medical/patient";
 import Detail from "./detail.vue";
-
+import {useDictStore} from "@/store";
+import {ArrowLeft} from "@element-plus/icons-vue";
 defineOptions({ name: "MedicalPatient", inheritAttrs: false });
-
+const dictStore = useDictStore()
+const showPatientId = ref('')
 const showDetail = ref(false);
 const showDetailData = ref({
   detail: '',
   center: ""
 });
-// 中心选项：从后端动态枚举（数据当前为「珠江」单中心）
-const centerOptions = ref<{ label: string; value: string }[]>([{ label: "全部", value: "" }]);
+
 
 // 搜索表单
 interface PatientSearchForm {
@@ -78,12 +86,39 @@ const patientSearchItems = computed<SearchFormItem[]>(() => [
     label: "关键词",
     type: "input",
     placeholder: "患者编号",
-    span: 6,
+    span: 4,
+  },
+  {
+    label: "性别",
+    key: "sex",
+    type: "select",
+    props: {
+      placeholder: "请选择",
+      options: dictStore.getDictArray('med_sex').map(function (n){
+        return {value:n.dict_value,label:n.dict_label}
+      }),
+      clearable: true,
+    },
+    span: 4,
+  },
+  {
+    label: "吸烟状态",
+    key: "smoking_status",
+    type: "select",
+    props: {
+      placeholder: "请选择",
+      options: dictStore.getDictArray('med_smoking_status').map(function (n){
+        return {value:n.dict_value,label:n.dict_label}
+      }),
+      clearable: true,
+    },
+    span: 4,
   },
 ]);
 
 // 跳转多模态详情（独立隐藏路由，patient_id/center 走 query 参数）
 function goDetail(row: PatientTable) {
+  showPatientId.value = row.patient_id
   showDetailData.value = { detail: row.patient_id, center: row.center_code || "" }
   showDetail.value = true
 }
@@ -95,7 +130,6 @@ const {
   loading,
   pagination,
   getData,
-  replaceSearchParams,
   resetSearchParams,
   handleSizeChange,
   handleCurrentChange,
@@ -116,7 +150,7 @@ const {
         prop: "sex",
         label: "性别",
         minWidth: 80,
-        formatter: (row) => sexLabel(row.sex),
+        formatter: (row) => dictStore.getDictItemLabel("med_sex",row.sex),
       },
       {
         prop: "birth_date",
@@ -134,7 +168,7 @@ const {
         prop: "smoking_status",
         label: "吸烟状态",
         minWidth: 110,
-        formatter: (row) => smokingLabel(row.smoking_status),
+        formatter: (row) => dictStore.getDictItemLabel("med_smoking_status",row.smoking_status),
       },
       {
         prop: "first_nodule_date",
@@ -166,59 +200,9 @@ function fmtDate(v?: string): string {
 
 // 搜索
 function handleSearchBarSearch() {
-  replaceSearchParams({
-    center: searchForm.value.center || undefined,
-    keyword: searchForm.value.keyword || undefined,
-  });
-  getData();
+  getData(searchForm.value);
 }
 
-function onResetSearch() {
-  searchForm.value = { center: "", keyword: "" };
-  resetSearchParams();
-  getData();
-}
-
-// 拉取来源中心枚举，填充下拉
-async function loadCenters() {
-  try {
-    const res = await PatientAPI.listCenters();
-    const list = res.data?.data || [];
-    centerOptions.value = [
-      { label: "全部", value: "" },
-      ...list.map((c: string) => ({ label: c, value: c })),
-    ];
-  } catch {
-    centerOptions.value = [{ label: "全部", value: "" }];
-  }
-}
-
-onMounted(loadCenters);
-
-// 枚举值翻译（国标码 → 中文）—— 2026-07-24 改 anon 体系后，原生是国标码
-
-const SEX_LABEL: Record<string, string> = {
-  "0": "未知",
-  "1": "男",
-  "2": "女",
-  "9": "未说明",
-};
-function sexLabel(code?: string) {
-  if (!code) return "-";
-  return SEX_LABEL[code] || code;
-}
-
-// 1=从不, 2=既往, 3=现在, 9=未知
-const SMOKING_LABEL: Record<string, string> = {
-  "1": "从不",
-  "2": "既往",
-  "3": "现在",
-  "9": "未知",
-};
-function smokingLabel(code?: string) {
-  if (!code) return "-";
-  return SMOKING_LABEL[code] || code;
-}
 
 // 年龄（出生日期）合并显示：如 "62（1963-05）"
 function calcAge(birthIso?: string): number | null {
@@ -238,31 +222,15 @@ function fmtAgeBirthday(v?: string): string {
   return age !== null ? `${age}（${ym}）` : ym;
 }
 
-// HQMS RC030 ABO 血型：1=A型 2=B型 3=O型 4=AB型 5=不详 6=未查
-const ABO_LABEL: Record<string, string> = {
-  "1": "A型",
-  "2": "B型",
-  "3": "O型",
-  "4": "AB型",
-  "5": "不详",
-  "6": "未查",
-};
-// HQMS RC031 Rh 血型：1=阴性 2=阳性 3=不详 4=未查
-const RH_LABEL: Record<string, string> = {
-  "1": "阴性",
-  "2": "阳性",
-  "3": "不详",
-  "4": "未查",
-};
 // 血型合并显示：ABO/Rh，如 "A型/阳性"；缺失则单独显示已有项；都无则 "-"
 function bloodTypeLabel(row: PatientTable): string {
-  const a = row.abo_blood_type
-    ? ABO_LABEL[row.abo_blood_type] || row.abo_blood_type
-    : null;
-  const r = row.rh_blood_type
-    ? RH_LABEL[row.rh_blood_type] || row.rh_blood_type
-    : null;
+  const a = dictStore.getDictItemLabel("med_blood_type_abo",row.abo_blood_type);
+  const r = dictStore.getDictItemLabel("med_blood_type_rh",row.rh_blood_type);
   if (a && r) return `${a}/${r}`;
   return a || r || "-";
 }
+
 </script>
+<style>
+
+</style>

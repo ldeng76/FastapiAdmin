@@ -196,17 +196,17 @@ export default ({ mode }: { mode: string }) => {
       /** 自动按需导入 API */
       AutoImport({
         imports: ["vue", "vue-router", "pinia", "@vueuse/core", "vue-i18n"],
-        dts: "src/types/import/auto-imports.d.ts",
+        // dts 生成在部分 Windows 环境触发 EPERM（防病毒/文件锁），测试环境禁用文件写入
+        dts: false,
         resolvers: [ElementPlusResolver()],
+        // eslintrc 辅助文件写入在部分 Windows 环境会触发 EPERM，测试环境禁用
         eslintrc: {
-          enabled: true,
-          filepath: "./.auto-import.json",
-          globalsPropValue: true,
+          enabled: false,
         },
         vueTemplate: true,
       }),
       Components({
-        dts: "src/types/import/components.d.ts",
+        dts: false,
         resolvers: [ElementPlusResolver()],
       }),
       ElementPlus({

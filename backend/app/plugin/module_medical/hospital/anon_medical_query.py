@@ -135,15 +135,18 @@ async def anon_list_centers(db: AsyncSession) -> list[str]:
 
 async def anon_list_patients(
     db: AsyncSession,
-    center: str | None = None,
     keyword: str | None = None,
+    sex: str | None = None,
+    smoking_status: str | None = None,
     offset: int = 0,
     limit: int = 10,
 ) -> tuple[list[dict[str, Any]], int]:
     """患者分页列表（基于 AnonPatientModel）。返回 (行列表, 总数)。"""
     conditions = [AnonPatientModel.deleted_at.is_(None)]
-    if center:
-        conditions.append(AnonPatientModel.center_code == center)
+    if sex:
+        conditions.append(AnonPatientModel.sex == sex)
+    if smoking_status:
+        conditions.append(AnonPatientModel.smoking_status == smoking_status)
     if keyword:
         kw = f"%{keyword}%"
         conditions.append(

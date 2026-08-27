@@ -1,5 +1,5 @@
 <template>
-  <ElTable :data="rows" border size="small" :stripe="true" :header-cell-style="{ backgroundColor: '#eef0ff' }">
+  <ElTable :data="rows" border size="small" :stripe="true" :header-cell-style="{ color:'#333' }">
     <ElTableColumn type="expand" v-if="isShowExpand">
       <template #default="{ row }" >
         <div v-if="expandTableList[rows.indexOf(row)] !== undefined" style="padding: 20px">
@@ -126,7 +126,7 @@
 
 <script setup lang="ts">
 import {computed, ref} from "vue";
-import {ElLoading, ElTable, ElTableColumn} from "element-plus";
+import {ElTable, ElTableColumn} from "element-plus";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
 import {marked} from "marked";

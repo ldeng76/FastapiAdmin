@@ -65,7 +65,7 @@ export const SETTING_DEFAULT_CONFIG = {
   /** 语言 */
   language: LanguageEnum.ZH_CN,
   /** 主题颜色 */
-  themeColor: "#4080FF",
+  themeColor: "#00B5A5",
   /** 是否显示水印 */
   showWatermark: false,
   /** 水印内容 */
@@ -170,7 +170,7 @@ export function resetToDefaults(currentSettings: Record<string, any>) {
 // 注意：修改默认主题色时，需要同步修改 src/styles/variables.scss 中的 primary.base 值
 export const themeColorPresets = [
   // === 精选常用颜色 - 多样化色系 ===
-  "#4080FF", // Arco Design 蓝 - 现代感强
+  "#00B5A5", // 临床青 - 医疗科研主色（默认）
   "#52C41A", // 成功绿 - 活力清新
   "#722ED1", // 优雅紫 - 高端大气
   "#FA8C16", // 活力橙 - 温暖友好

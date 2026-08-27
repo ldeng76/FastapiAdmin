@@ -15,7 +15,7 @@
     "white": #ffffff,
     "black": #000000,
     "primary": (
-      "base": #4080ff,
+      "base": #00b5a5 ,
     ),
     "success": (
       "base": #13deb9,
@@ -36,6 +36,31 @@
 );
 
 :root {
+  // --- 品牌色令牌 ---
+  --lnrs-navy: #0a2540;
+  --lnrs-navy-2: #0f3358;
+  --lnrs-teal: #00b5a5;
+  --lnrs-teal-2: #0ac7b5;
+  --lnrs-teal-soft: #e0f7f4;
+  --lnrs-ink-2: #36456a;
+  --lnrs-ink-3: #5c6a88;
+  --lnrs-line: #cdd6e2;
+  --lnrs-line-2: #e3e8f0;
+  --lnrs-bg: #f1f4f9;
+
+
+
+   // --- Element Plus 主色 → 临床青 ---
+  --el-color-primary: #00c4b5 !important;
+  --el-color-primary-light-3: #33c4b7  !important;
+  --el-color-primary-light-5: #66d3c9  !important;
+  --el-color-primary-light-7: #99e1db  !important;
+  --el-color-primary-light-8: #b3e9e4 !important;
+  --el-color-primary-light-9: #ccf0ed !important;
+  --el-color-primary-dark-2: #009188 !important;
+
+
+
   @each $type in (success, warning, danger, error, info) {
     --el-color-#{$type}: #{map.get(ep.$colors, $type, "base")} !important;
 

@@ -1,7 +1,6 @@
 <!-- 医学数据 · 患者多模态详情：基本信息 + 临床/基因/病理/影像 四模态 Tab -->
 <template>
-  <hr/>
-  <div class="medical-detail" v-loading="loading" style="height: 100%;overflow: auto">
+  <div class="medical-detail" v-loading="loading">
     <ElDescriptions :column="4" border size="small" class="mb-5">
       <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
       <ElDescriptionsItem :label="getFieldLabel('sex')">{{ dictStore.getDictItemLabel('med_sex',patient?.sex) }}</ElDescriptionsItem>

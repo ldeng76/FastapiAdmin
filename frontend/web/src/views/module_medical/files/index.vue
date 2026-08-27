@@ -1,6 +1,6 @@
 <template>
   <el-container class="files-container">
-    <el-aside width="200px" style="padding: 30px 20px;">
+    <el-aside width="250px" style="padding: 30px 20px;">
       <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
         <el-collapse-item title="模态类型" name="examType">
           <el-checkbox-group v-model="selectedExamType">
@@ -136,6 +136,7 @@ const {
 <style scoped>
 .files-container{
   background-color: #fff;
+  height: 100%;
 }
 .checkbox-block{
   display: flex;

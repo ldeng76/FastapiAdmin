@@ -41,7 +41,7 @@
       />
     </ElCard>
   </div>
-  <el-dialog class="flex flex-col" v-model="showDetail" fullscreen>
+  <el-dialog :bodyClass="'patientDetailBody'" v-model="showDetail" fullscreen>
     <template #title>
       <ElButton :icon="ArrowLeft" link @click="showDetail = false">返回列表</ElButton>
       <span class="patient-title">
@@ -232,5 +232,8 @@ function bloodTypeLabel(row: PatientTable): string {
 
 </script>
 <style>
-
+.patientDetailBody{
+  height: calc(100% - 60px);
+  overflow: auto;
+}
 </style>

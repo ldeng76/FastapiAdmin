@@ -145,3 +145,5 @@ TCGA样例数据-临床-基因
 /docs/demodata/TCGA样例数据-临床+基因.zip
 /docs/demodata/zhujiang0814.parquet
 /docs/spec-wsi-slide-viewer-design.md
+# 珠江 0825 raw_text 补录 staging（3 表，可重新生成），不入库
+/data_zj0825raw/

@@ -1742,8 +1742,8 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             # 0723 sample 宽表则相反（无正文列，结节结构落 detail）。body_fields 同时
             # 覆盖两者：全量文件正文进 report_text，sample 缺列时 parts 为空、body=""。
             "body_fields": ["findings", "impression"],
-            # detail_fields 仅 sample 宽表生效（nodule_no 等 struct 列）；
-            # 全量文件缺这些列时 _build_detail_json 返回 {}（无害占位）。
+            # detail_fields：sample 宽表结构列 + 全量文件 raw_text（原始报告全文，
+            # 2026-08-25 补：与 findings/impression 提取正文并存，留档未加工原文）。
             # Rev 2026-07-24: ordinal_field=nodule_no 实现 1:N 展开
             #   同一 CT exam 下的 n1/n2/n3/n4 多结节各生成一行 detail
             #   标量字段（nodule_no/nodule_location/long_diameter/density_type）
@@ -1753,6 +1753,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
                 "nodule_no", "nodule_location", "long_diameter", "density_type",
                 "exam_meta", "nodule_morphology",
                 "nodule_quantitative", "follow_up_comparison",
+                "raw_text",
             ],
             "ordinal_field": "nodule_no",
         },
@@ -1773,6 +1774,8 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
                 # Rev 2026-08-25 (0825 批次): 全量病理文件为 exam 级 + specimens[] 数组，
                 # 完整标本数组原样落库（同 ct0820 nodule_morphology 模式）
                 "specimens",
+                # 2026-08-25: 原始报告全文落库（findings/impression 之外的未加工原文）
+                "raw_text",
             ],
         },
         # 医疗宽表直入扩展：基因检测 / 免疫组化 / 手术记录
@@ -1799,6 +1802,8 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "detail_fields": [
                 "ki67_pct", "pdl1_tps_pct", "pdl1_clone", "pdl1_cps",
                 "alk_ihc", "ttf1", "napsina", "p40", "p53",
+                # 2026-08-25: 原始报告全文落库（重复 exam 取结构化字段非空数最高行的 raw_text）
+                "raw_text",
             ],
             "date_field": "exam_date",  # 0825 全量文件自带日期列（反查方案会丢弃 25 条无病理匹配行）
         },

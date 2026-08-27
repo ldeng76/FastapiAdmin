@@ -125,7 +125,8 @@ def main() -> int:
                 to_json(nodules)                        AS nodule_morphology,
 
                 CAST(NULL AS VARCHAR)                   AS nodule_quantitative,
-                CAST(NULL AS VARCHAR)                   AS follow_up_comparison
+                CAST(NULL AS VARCHAR)                   AS follow_up_comparison,
+                raw_text
 
             FROM read_parquet('{src_posix}')
         ) TO '{dst_posix}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE)

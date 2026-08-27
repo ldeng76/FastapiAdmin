@@ -112,7 +112,13 @@ def main() -> int:
                        ki67_pct, pdl1_tps_pct, pdl1_clone, pdl1_cps,
                        alk_ihc, ttf1, napsina, p40, p53, src_rn
                 FROM (
-                    SELECT *, ROW_NUMBER() OVER () AS src_rn
+                    SELECT *, ROW_NUMBER() OVER (
+                        ORDER BY md5(to_json(struct_pack(
+                            patient_id, exam_id, pat_local_id, exam_date,
+                            ki67_pct, pdl1_tps_pct, pdl1_clone, pdl1_cps,
+                            alk_ihc, ttf1, napsina, p40, p53, raw_text
+                        )))
+                    ) AS src_rn
                     FROM read_parquet('{src_posix}')
                 )
                 WHERE exam_id = ?
@@ -126,7 +132,7 @@ def main() -> int:
             )
             for r in rows:
                 print(f"         {r}")
-            print("         取舍: 取非空数最高行, 平手取文件顺序首行")
+            print("         取舍: 取非空数最高行, 平手取稳定内容序首行 (src_rn)")
 
     sql = f"""
         COPY (
@@ -142,7 +148,8 @@ def main() -> int:
                 ttf1,
                 napsina,
                 p40,
-                p53
+                p53,
+                raw_text
             FROM (
                 SELECT *,
                        ROW_NUMBER() OVER (
@@ -150,7 +157,13 @@ def main() -> int:
                            ORDER BY {non_null_expr} DESC, src_rn ASC
                        ) AS pick_rn
                 FROM (
-                    SELECT *, ROW_NUMBER() OVER () AS src_rn
+                    SELECT *, ROW_NUMBER() OVER (
+                        ORDER BY md5(to_json(struct_pack(
+                            patient_id, exam_id, pat_local_id, exam_date,
+                            ki67_pct, pdl1_tps_pct, pdl1_clone, pdl1_cps,
+                            alk_ihc, ttf1, napsina, p40, p53, raw_text
+                        )))
+                    ) AS src_rn
                     FROM read_parquet('{src_posix}')
                 )
             )

@@ -96,7 +96,7 @@ export interface MenuForm extends BaseFormType {
   route_path?: string;
   component_path?: string;
   redirect?: string;
-  parent_id?: number;
+  parent_id?: number | null;
   keep_alive?: boolean;
   hidden?: boolean;
   always_show?: boolean;

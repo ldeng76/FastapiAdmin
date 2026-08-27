@@ -682,7 +682,7 @@ async function handleOpenDialog(type: "create" | "update" | "detail", id?: numbe
       detailFormData.value = response.data.data ?? {};
     } else if (type === "update") {
       dialogVisible.title = "修改字典数据";
-      Object.assign(formData, response.data.data);
+      formData.value = response.data.data
     }
   } else {
     dialogVisible.title = "新增字典数据";

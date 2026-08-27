@@ -125,6 +125,7 @@
               node-key="value"
               filterable
               check-strictly
+              clearable
               :render-after-expand="false"
               :disabled="createParentLocked"
             />
@@ -608,7 +609,7 @@ const formData = ref<MenuForm>({
   route_path: "",
   component_path: undefined,
   redirect: undefined,
-  parent_id: undefined,
+  parent_id: null,
   keep_alive: false,
   hidden: false,
   always_show: false,
@@ -891,7 +892,7 @@ const initialFormData: MenuForm = {
   route_path: "",
   component_path: "",
   redirect: "",
-  parent_id: undefined,
+  parent_id: null,
   keep_alive: false,
   hidden: false,
   always_show: false,
@@ -994,7 +995,11 @@ async function handleSubmit() {
     const id = formData.value.id;
     try {
       if (id) {
-        await MenuAPI.updateMenu(id, { id, ...formData.value });
+        let params = { id,parent_id:null, ...formData.value };
+        if(params.parent_id == null){
+          params.parent_id = null;
+        }
+        await MenuAPI.updateMenu(id, params);
       } else {
         await MenuAPI.createMenu(formData.value);
       }

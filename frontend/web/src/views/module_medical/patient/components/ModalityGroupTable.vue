@@ -15,10 +15,10 @@
         </div>
       </template>
     </ElTableColumn>
-    <ElTableColumn v-if="tableName === '影像' || tableName === '基因'" label="操作" width="120" :align="'center'">
+    <ElTableColumn v-if="getIsImage() || tableName === '基因检测'" label="操作" width="120" :align="'center'">
       <template #default="{ row }" >
-        <div v-if="tableName === '影像'" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
-        <div v-else-if="tableName === '基因'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因数据</ElButton></div>
+        <div v-if="getIsImage()" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
+        <div v-else-if="tableName === '基因检测'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因数据</ElButton></div>
       </template>
     </ElTableColumn>
     <ElTableColumn v-if="getIsVisit()" prop="anon_visit_id" :label="getFieldLabel('anon_visit_id')"  width="200" />
@@ -39,7 +39,7 @@
       <ElTableColumn prop="surgical_approach" :label="getFieldLabel('surgical_approach')" />
       <ElTableColumn prop="procedure_name" :label="getFieldLabel('procedure_name')" />
     </template>
-    <template v-else-if="tableName === '检验结果'">
+    <template v-else-if="tableName === '检查'">
       <ElTableColumn prop="item_name" :label="getFieldLabel('item_name')" />
       <ElTableColumn prop="item_result" :label="getFieldLabel('item_result')" />
       <ElTableColumn prop="item_result_value" :label="getFieldLabel('item_result_value')" />
@@ -76,7 +76,7 @@
       <ElTableColumn prop="stop_time" :label="getFieldLabel('stop_time')" />
       <ElTableColumn prop="visit_id" :label="getFieldLabel('visit_id')" />
     </template>
-    <template v-else-if="tableName === '基因'">
+    <template v-else-if="tableName === '基因检测'">
       <ElTableColumn prop="exam_date" :label="getFieldLabel('exam_date')" />
       <ElTableColumn prop="exam_type" :label="getFieldLabel('exam_type')">
         <template  #default="{ row }" >
@@ -97,7 +97,7 @@
       <ElTableColumn prop="sampling_site" :label="getFieldLabel('sampling_site')" />
       <ElTableColumn prop="specimen_type" :label="getFieldLabel('specimen_type')" />
     </template>
-    <template v-else-if="tableName === '影像' ">
+    <template v-else-if="getIsImage()">
       <ElTableColumn prop="exam_date" :label="getFieldLabel('exam_date')" width="120" />
       <ElTableColumn prop="nodule_no" :label="getFieldLabel('nodule_no')" width="120" />
       <ElTableColumn prop="report_text.body_clean" :label="getFieldLabel('body_clean')">
@@ -107,14 +107,7 @@
       </ElTableColumn>
     </template>
   </ElTable>
-  <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showCt" fullscreen>
-    <iframe v-if="showCt" allowfullscreen @load="closeCtLoading" class="border-0 w-full h-full p-0 m-0" src="/api/v1/medical/dicom/viewer?StudyInstanceUIDs=1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6"></iframe>
-    <template #footer>
-      <div class="dialog-footer">
-        <el-button @click="showCt = false" type="primary"  plain>关闭</el-button>
-      </div>
-    </template>
-  </el-dialog>
+
   <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showFsq" fullscreen>
     <div v-if="showFsq" style="height: 100%">
       <FastqRawView :text="onLoadSample()" colored />
@@ -125,6 +118,7 @@
       </div>
     </template>
   </el-dialog>
+  <Viewer ref="viewer" />
 </template>
 
 <script setup lang="ts">
@@ -134,6 +128,7 @@ import {getFieldLabel} from "@/components/medical/field-renderer";
 import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
 import {marked} from "marked";
 import {useDictStore} from "@/store";
+import Viewer from "@views/module_medical/viewer/index.vue";
 
 interface Props {
   rows: any[];
@@ -146,13 +141,13 @@ interface TableItem<T = any> {
 }
 const dictStore = useDictStore()
 const loadingCt = ref()
-const showCt = ref(false);
+const viewer = ref<any>(null)
 const showFsq = ref(false);
 // const fsq = ref(``);
 
 const props = defineProps<Props>();
 function isObjectKey(value:any,key:string){
-  return typeof value === 'object' && value !== null && !['report_text'].includes(key)
+  return (typeof value === 'object' && value !== null && !['report_text','nursing_days','pre_admission','post_admission'].includes(key))
 }
 const isShowExpand = computed(()=>{
   let bool = false
@@ -169,30 +164,59 @@ const isShowExpand = computed(()=>{
   return bool
 })
 const expandTableList = computed(()=>{
- let arr:TableItem[][] = [];
+  let arr:TableItem[][] = [];
+  function processing(arrTable:any,value:any,key:string){
+    let valueFirst = value;
+    let tableData:any[] = [];
+
+    if(value instanceof Array && value.length > 0){
+      valueFirst = value[0]
+      tableData = tableData.concat(value)
+    } else if(typeof value === 'object'){
+      let bool = true;
+      for (let subKey in valueFirst){
+        if(isObjectKey(valueFirst[subKey],subKey)){
+          bool = false
+          break;
+        }
+      }
+      if(!bool){
+        for (let subKey in valueFirst){
+          let subValue = valueFirst[subKey]
+          if(isObjectKey(subValue,subKey)){
+            processing(arrTable,subValue,subKey)
+          }
+        }
+      }
+      tableData = [valueFirst]
+    }
+
+    let cols = getTableColumn(valueFirst)
+
+    if(cols.length > 0){
+      if(props.tableName === '就诊'){
+          console.log(arrTable.length,{
+          tableName:key,
+          tableData:tableData,
+          tableColumn:cols
+        })
+      }
+      arrTable.push({
+        tableName:key,
+        tableData:tableData,
+        tableColumn:cols
+      })
+    }
+  }
   (props.rows || []).forEach(function (row:any,index:number){
+    let arrTable:any = [];
     for (const key in row){
       let value = row[key];
       if(isObjectKey(value,key)){
         if(arr[index] === undefined){
-          arr[index] = []
+          arr[index] = arrTable
         }
-        let valueFirst = value;
-        let tableData:any[] = [];
-        if(value instanceof Array && value.length > 0){
-          valueFirst = value[0]
-          tableData = tableData.concat(value)
-        } else {
-          tableData = [valueFirst]
-        }
-        let cols = getTableColumn(valueFirst)
-        if(cols.length > 0){
-          arr[index].push({
-            tableName:key,
-            tableData:tableData,
-            tableColumn:cols
-          })
-        }
+        processing(arrTable,value,key)
       }
     }
   });
@@ -203,7 +227,13 @@ function getIsVisit(){
   let tableName = props.tableName
   return tableName === '就诊' ||
     tableName === '手术' ||
-    tableName === '检验结果'
+    tableName === '检查'
+}
+function getIsImage(){
+  let tableName = props.tableName
+  return tableName === 'CT' ||
+    tableName === '影像' ||
+    tableName === '超声'
 }
 function onLoadSample() {
   // 3 条 read：1 对双端 + 1 单端（与 parser.spec.ts fixture 一致）
@@ -239,10 +269,12 @@ function onLoadSample() {
   }
   return arr.join("\n")
 }
+
 function getTableColumn(obj:any){
   let arr = []
   for (const key in obj){
-    if(key.indexOf("_") > 0 && !['review_status','pat_local_id'].includes(key)){
+    let value = obj[key];
+    if(key.indexOf("_") !== 0 && !['review_status','pat_local_id'].includes(key) && !isObjectKey(value,key)){
       arr.push({
         prop:key,
         label:getFieldLabel(key)
@@ -251,14 +283,14 @@ function getTableColumn(obj:any){
   }
   return arr
 }
-function closeCtLoading(){
-  if(loadingCt.value != null){
-    loadingCt.value.close()
-  }
-}
+
 function ctToggle(){
-  showCt.value = true
-  loadingCt.value = ElLoading.service()
+  if(viewer?.value){
+    viewer?.value.open({
+      file_type:'dcm',
+      file_id:1
+    })
+  }
 }
 function fsqToggle(){
   showFsq.value = true

@@ -87,15 +87,32 @@ export interface ModalityRow {
 }
 
 /** 患者多模态详情 */
-export interface PatientDetail {
-  /** 患者基本信息（含 patient_meta JSONB，替代原 demographics+medical_history） */
+export interface PatientDetail{
+    /** 患者基本信息（含 patient_meta JSONB，替代原 demographics+medical_history） */
   patient: Record<string, any>;
-  /** 临床模态：就诊/手术/其它 */
+  modal_data :ModalityRowData
+}
+
+/** 患者多模态详情 */
+export interface ModalityRowData {
+  /** 就诊 */
   clinical: ModalityRow[];
-  /** 基因模态：Genetic 检查 + detail */
+  /** 手术 */
+  surgery: ModalityRow[];
+  /** 遗嘱 */
+  order: ModalityRow[];
+  /** 检查结果 */
+  collection: ModalityRow[];
+  /** 基因 */
   genetic: ModalityRow[];
-  /** 病理模态：Pathology/IHC + detail + report_text */
+  /** 病理*/
   pathology: ModalityRow[];
-  /** 影像模态：CT 检查 + detail */
-  imaging: ModalityRow[];
+  /** 免疫组化*/
+  ihc: ModalityRow[];
+  /** 影像模态：CT */
+  ct: ModalityRow[];
+  /** 影像模态：radiology */
+  radiology: ModalityRow[];
+  /** 影像模态：radiology */
+  ultrasound: ModalityRow[];
 }

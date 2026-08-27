@@ -26,24 +26,19 @@
         <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
         <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
         <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
-        <ElDescriptionsItem v-for="n in getExtRow(detail.patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
+        <ElDescriptionsItem v-for="n in getExtRow(patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
       </ElDescriptions>
     </ElCard>
 
     <!-- 四模态 Tab -->
     <ElCard shadow="never" v-loading="loading">
       <ElTabs v-model="activeTab">
-        <ElTabPane :label="getFieldLabel('clinical')" name="clinical">
-          <ModalityGroup :rows="detail.clinical" name="clinical" />
-        </ElTabPane>
-        <ElTabPane :label="getFieldLabel('genetic')" name="genetic">
-          <ModalityGroup :rows="detail.genetic" name="genetic" />
-        </ElTabPane>
-        <ElTabPane :label="getFieldLabel('pathology')" name="pathology">
-          <ModalityGroup :rows="detail.pathology" name="pathology" />
-        </ElTabPane>
-        <ElTabPane :label="getFieldLabel('imaging')" name="imaging">
-          <ModalityGroup :rows="detail.imaging"  name="imaging" />
+        <ElTabPane v-for="[key, value] in [...detail.entries()]"
+          :label="getFieldLabel(key)"
+          :name="key"
+          :key="key"
+        >
+          <ModalityGroup :rows="value" :name="key" />
         </ElTabPane>
       </ElTabs>
     </ElCard>
@@ -64,7 +59,7 @@ import {
 } from "element-plus";
 import { ArrowLeft } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import PatientAPI, {  type PatientDetail } from "@/api/module_medical/patient";
+import PatientAPI, { ModalityRowData, type PatientDetail} from "@/api/module_medical/patient";
 import ModalityGroup from "@views/module_medical/patient/components/ModalityGroup.vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 import {useDictStore} from "@/store";
@@ -76,15 +71,22 @@ const props = defineProps<{
 const dictStore = useDictStore();
 const loading = ref(false);
 const activeTab = ref("clinical");
-const detail = ref<PatientDetail>({
-  patient: {},
-  clinical: [],
-  genetic: [],
-  pathology: [],
-  imaging: [],
-});
+const detail = ref<Map<string, ModalityRowData[]>>(
+  new Map<string, ModalityRowData[]>([
+    ['clinical', []],
+    ['surgery', []],
+    ['order', []],
+    ['collection', []],
+    ['genetic', []],
+    ['pathology', []],
+    ['ihc', []],
+    ['ct', []],
+    ['radiology', []],
+    ['ultrasound', []]
+  ])
+);
 
-const patient = computed(() => detail.value.patient);
+const patient = ref<Record<string, any>>({});
 const patientId = computed(() => (props.data.detail as string) || "");
 const center = computed(() => (props.data.center as string) || undefined);
 
@@ -98,7 +100,21 @@ async function fetchDetail() {
   loading.value = true;
   try {
     const res = await PatientAPI.detailPatient(patientId.value, center.value);
-    detail.value = res.data?.data ?? ({} as PatientDetail);
+    let data = res.data?.data ?? ({} as PatientDetail);
+    let modal_data = data.modal_data;
+    let mapData = new Map()
+    mapData.set("clinical",modal_data.clinical || [])
+    mapData.set("surgery",modal_data.surgery || [])
+    mapData.set("order",modal_data.order || [])
+    mapData.set("collection",modal_data.collection || [])
+    mapData.set("genetic",modal_data.genetic || [])
+    mapData.set("pathology",modal_data.pathology || [])
+    mapData.set("ihc",modal_data.ihc || [])
+    mapData.set("ct",modal_data.ct || [])
+    mapData.set("radiology",modal_data.radiology || [])
+    mapData.set("ultrasound",modal_data.ultrasound || [])
+    detail.value = mapData;
+    patient.value = data.patient
   } catch (err: any) {
     // 404 / 网络错误等都提示出来，避免静默"暂无数据"
     const msg =
@@ -106,7 +122,6 @@ async function fetchDetail() {
       err?.message ||
       "获取患者详情失败，请稍后重试";
     ElMessage.error(msg);
-    detail.value = {} as PatientDetail;
   } finally {
     loading.value = false;
   }

@@ -63,26 +63,29 @@ def _tag_row(row: dict[str, Any], table_label: str, modality: str) -> dict[str, 
     return row
 
 # 4 模态分组（与 med_* 一致，方便前端理解）
-MODALITIES = ("clinical", "genetic", "pathology", "imaging")
+MODALITIES = ("clinical","surgery", "ihc","ultrasound","radiology","collection","order","genetic", "pathology", "ct")
 
 # exam_type → 模态分组
 # 数据来源：lnrs_anon_exam.exam_type 列（ETL-2 写入，已规整为英文枚举）
 # 珠江用 CT/Pathology/Genetic；省医用 Radiology/Ultrasound（也归影像类）
 EXAM_TYPE_TO_MODALITY: dict[str, str] = {
-    "CT": "imaging",
-    "Radiology": "imaging",
-    "Ultrasound": "imaging",
+    "CT": "ct",
+    "Radiology": "radiology",
+    "Ultrasound": "ultrasound",
     "Pathology": "pathology",
-    "IHC": "pathology",
+    "IHC": "ihc",
     "Genetic": "genetic",
 }
 
 # 模态 → 中文标签（前端折叠面板标题）
 MODALITY_LABEL: dict[str, str] = {
-    "clinical": "临床模态（就诊/手术）",
+    "clinical": "临床模态（就诊）",
+    "surgery": "临床模态（手术）",
     "genetic": "基因模态（基因检测）",
+    "collection": "检验结果",
+    "order": "医嘱",
     "pathology": "病理模态（病理标本/免疫组化）",
-    "imaging": "影像模态（CT 检查）",
+    "ct": "影像模态（CT 检查）",
 }
 
 # AnonPatientModel 业务列（排除审计列 + center_code/anon_id/bmi/created_batch_id 等）
@@ -183,7 +186,7 @@ async def anon_get_patient_detail(
                           未映射 exam 类型的 exam 行(_table=exam_type 检查)],
             "genetic":   [exam 行],
             "pathology": [exam 行],
-            "imaging":   [exam 行],
+            "ct":   [exam 行],
         }
 
     每行：异构字段直平铺到顶层；JSONB 字段 (visit_detail_json / lab_detail_json /
@@ -260,7 +263,7 @@ async def anon_get_patient_detail(
         d = dict(row)
         if hasattr(d.get("surgery_date"), "isoformat"):
             d["surgery_date"] = d["surgery_date"].isoformat()
-        modalities["clinical"].append(_tag_row(d, "手术", "clinical"))
+        modalities["surgery"].append(_tag_row(d, "手术", "clinical"))
 
     # 4) 检验结果（省医扩展表，可缺）
     try:
@@ -284,7 +287,7 @@ async def anon_get_patient_detail(
             d = _flatten_jsonb(dict(row), "lab_detail_json")
             if hasattr(d.get("collection_time"), "isoformat"):
                 d["collection_time"] = d["collection_time"].isoformat()
-            modalities["clinical"].append(_tag_row(d, "检验结果", "clinical"))
+            modalities["collection"].append(_tag_row(d, "检验结果", "clinical"))
     except Exception:
         log.warning("检验查询失败（可能 AnonLabResultModel 未建表）", exc_info=True)
 
@@ -307,7 +310,7 @@ async def anon_get_patient_detail(
             d = _flatten_jsonb(dict(row), "order_detail_json")
             if hasattr(d.get("order_time"), "isoformat"):
                 d["order_time"] = d["order_time"].isoformat()
-            modalities["clinical"].append(_tag_row(d, "医嘱", "clinical"))
+            modalities["order"].append(_tag_row(d, "医嘱", "clinical"))
     except Exception:
         log.warning("医嘱查询失败（可能 AnonOrderModel 未建表）", exc_info=True)
 
@@ -351,6 +354,7 @@ async def anon_get_patient_detail(
         modality = EXAM_TYPE_TO_MODALITY.get(row["exam_type"] or "", "clinical")
         if modality not in modalities:
             modality = "clinical"
+
         exam_date = row["exam_date"]
         base = {
             "anon_exam_id": row["anon_exam_id"],
@@ -383,12 +387,9 @@ async def anon_get_patient_detail(
                     if det.detail_ordinal and det.detail_ordinal > 1
                     else det.detail_type
                 )
-                modalities[modality].append(_tag_row(merged, tbl, modality))
-
+                modal_key = tbl if tbl in modalities else modality
+                modalities[modal_key].append(_tag_row(merged, tbl, modality))
     return {
         "patient": patient,
-        "clinical": modalities["clinical"],
-        "genetic": modalities["genetic"],
-        "pathology": modalities["pathology"],
-        "imaging": modalities["imaging"],
+        "modal_data":modalities,
     }

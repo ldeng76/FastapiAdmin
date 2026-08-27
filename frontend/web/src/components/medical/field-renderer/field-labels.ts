@@ -11,11 +11,16 @@
 
 export const FIELD_LABELS: Record<string, string> = {
   // ───── 模态分类 ─────
-  clinical: "临床",
-  genetic: "基因",
+  clinical: "就诊",
+  surgery: "手术",
+  order: "医嘱",
+  collection: "检查",
+  genetic: "基因检测",
   pathology: "病理",
-  imaging: "影像",
   ihc: "免疫组化",
+  ct: "CT",
+  radiology: "影像",
+  ultrasound: "超声",
 
   // ───── 患者 / 基础 ─────
   patient_id: "患者编号",

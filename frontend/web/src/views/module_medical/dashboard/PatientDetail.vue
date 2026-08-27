@@ -55,6 +55,7 @@ import { ElLoading } from 'element-plus'
 import {PatientListItem} from "@/types/module_medical/hospital.ts";
 import {useDictStore} from "@/store";
 import {getFieldLabel} from "@/components/medical/field-renderer";
+import FilesApi from "@api/module_medical/files.ts";
 const loadingInstance = ref()
 const dictStore = useDictStore();
 defineProps<{
@@ -69,7 +70,15 @@ const currImageType = ref()
 function seeImage(row : any,type : string){
   if(type !== currImageType.value){
     loadingInstance.value = ElLoading.service()
-    currImageType.value = type
+    if(type === 'dicom'){
+      FilesApi.getStudyUid(1).then(function (res){
+        // src.value = `/api/v1/medical/dicom/viewer?StudyInstanceUIDs=${res?.data?.data}`
+        currImageType.value = type
+      })
+    } else {
+      currImageType.value = type
+    }
+
   }
 }
 function tableRowClassName({row}:{row :FileName}){

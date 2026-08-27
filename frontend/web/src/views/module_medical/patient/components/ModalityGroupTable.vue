@@ -3,15 +3,18 @@
     <ElTableColumn type="expand" v-if="isShowExpand">
       <template #default="{ row }" >
         <div v-if="expandTableList[rows.indexOf(row)] !== undefined" style="padding: 20px">
-          <ElTable v-for="(table,index) in expandTableList[rows.indexOf(row)]" style="margin-bottom: 20px" border :header-cell-style="{ backgroundColor: '#f5f7fa' }" :key="index" :data="table.tableData" size="small">
-            <ElTableColumn v-for="(col,index) in table.tableColumn" :width="col.prop === 'raw_text' ? 600 : undefined" :key="index" :prop="col.prop" :label="col.label">
-              <template #default="{ row }" >
-                <div v-if="col.prop === 'raw_text'" class="marked-content"  v-html="marked(row[col.prop] || '')"></div>
-                <div v-else-if="typeof row[col.prop] !== 'object' || row[col.prop] == null">{{row[col.prop]}}</div>
-                <div v-else>{{JSON.stringify(row[col.prop])}}</div>
-              </template>
-            </ElTableColumn>
-          </ElTable>
+          <template v-for="(table,index) in expandTableList[rows.indexOf(row)]" :key="index" >
+            <div class="mb-1 font-bold">{{table.tableName}}</div>
+            <ElTable  style="margin-bottom: 20px" border :header-cell-style="{ backgroundColor: '#f5f7fa' }" :data="table.tableData" size="small">
+              <ElTableColumn v-for="(col,index) in table.tableColumn" :width="col.prop === 'raw_text' ? 600 : undefined" :key="index" :prop="col.prop" :label="col.label">
+                <template #default="{ row }" >
+                  <div v-if="col.prop === 'raw_text'" class="marked-content"  v-html="marked(row[col.prop] || '')"></div>
+                  <div v-else-if="typeof row[col.prop] !== 'object' || row[col.prop] == null">{{row[col.prop]}}</div>
+                  <div v-else>{{JSON.stringify(row[col.prop])}}</div>
+                </template>
+              </ElTableColumn>
+            </ElTable>
+          </template>
         </div>
       </template>
     </ElTableColumn>
@@ -140,13 +143,15 @@ interface TableItem<T = any> {
   tableColumn: { prop:string,label:string }[];
 }
 const dictStore = useDictStore()
-const loadingCt = ref()
 const viewer = ref<any>(null)
 const showFsq = ref(false);
 // const fsq = ref(``);
 
 const props = defineProps<Props>();
 function isObjectKey(value:any,key:string){
+  if(value instanceof Array){
+    return value.length > 0 && typeof value[0] === 'object'
+  }
   return (typeof value === 'object' && value !== null && !['report_text','nursing_days','pre_admission','post_admission'].includes(key))
 }
 const isShowExpand = computed(()=>{
@@ -173,19 +178,10 @@ const expandTableList = computed(()=>{
       valueFirst = value[0]
       tableData = tableData.concat(value)
     } else if(typeof value === 'object'){
-      let bool = true;
       for (let subKey in valueFirst){
-        if(isObjectKey(valueFirst[subKey],subKey)){
-          bool = false
-          break;
-        }
-      }
-      if(!bool){
-        for (let subKey in valueFirst){
-          let subValue = valueFirst[subKey]
-          if(isObjectKey(subValue,subKey)){
-            processing(arrTable,subValue,subKey)
-          }
+        let subValue = valueFirst[subKey]
+        if(isObjectKey(subValue,subKey)){
+         processing(arrTable,subValue,subKey)
         }
       }
       tableData = [valueFirst]
@@ -194,15 +190,8 @@ const expandTableList = computed(()=>{
     let cols = getTableColumn(valueFirst)
 
     if(cols.length > 0){
-      if(props.tableName === '就诊'){
-          console.log(arrTable.length,{
-          tableName:key,
-          tableData:tableData,
-          tableColumn:cols
-        })
-      }
       arrTable.push({
-        tableName:key,
+        tableName:getFieldLabel(key),
         tableData:tableData,
         tableColumn:cols
       })

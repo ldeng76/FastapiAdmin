@@ -21,10 +21,11 @@
 
 from __future__ import annotations
 
+
 import logging
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Date, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .anon_model import (
@@ -233,7 +234,15 @@ async def anon_get_patient_detail(
                 AnonVisitDetailModel.anon_visit_id == AnonVisitModel.anon_visit_id,
             )
             .where(AnonVisitModel.patient_id == patient_id)
-            .order_by(AnonVisitModel.created_at.desc())
+            .order_by(
+                cast(
+                    AnonVisitDetailModel.visit_detail_json.op("->>")("admission_time"),
+                    Date,
+                )
+                .desc()
+                .nullslast(),
+                AnonVisitModel.created_at.desc(),
+            )
         )
         for row in (await db.execute(visit_stmt)).mappings():
             d = _flatten_jsonb(dict(row), "visit_detail_json")

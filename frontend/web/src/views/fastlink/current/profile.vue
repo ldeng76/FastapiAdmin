@@ -139,10 +139,10 @@
                   class="w-full"
                 >
                   <ElOption
-                    v-for="item in dictDataStore['sys_user_sex']"
+                    v-for="item in dictStore.getDictArray('sys_user_sex')"
                     :key="String(item.dict_value)"
                     :label="item.dict_label"
-                    :value="normalizeGenderValue(item.dict_value)"
+                    :value="item.dict_value"
                   />
                 </ElSelect>
               </ElFormItem>
@@ -267,9 +267,6 @@ const passwordChanging = ref(false);
 
 const isEdit = ref(false);
 const isEditPwd = ref(false);
-
-const dictDataStore = computed(() => dictStore.dictData);
-
 const greeting = ref("");
 
 const roleTagList = computed(() =>
@@ -340,16 +337,6 @@ async function onAvatarCropConfirm(dataURL: string) {
     ElMessage.error("头像上传失败，请重试");
   }
 }
-
-function normalizeGenderValue(v: string | number | undefined): number {
-  if (v === undefined || v === null || v === "") return 1;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 1;
-}
-
-const getOptions = async () => {
-  await dictStore.getDict(["sys_user_sex"]);
-};
 
 const rules = {
   name: [{ required: true, message: "请输入姓名", trigger: "blur" }],
@@ -584,8 +571,8 @@ async function onPasswordToggleSave() {
 
 onMounted(async () => {
   refreshGreeting();
-  await getOptions();
   initInfoForm();
+
 });
 </script>
 

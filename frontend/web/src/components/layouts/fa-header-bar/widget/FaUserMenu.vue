@@ -82,15 +82,6 @@
               <FaSvgIcon icon="ri:user-3-line" />
               <span>{{ $t("topBar.user.userCenter") }}</span>
             </li>
-            <li class="btn-item" @click="openParamConfig">
-              <FaSvgIcon icon="ri:settings-3-line" />
-              <span>{{ $t("topBar.user.paramConfig") }}</span>
-            </li>
-
-            <li class="btn-item" @click="lockScreen()">
-              <FaSvgIcon icon="ri:lock-line" />
-              <span>{{ $t("topBar.user.lockScreen") }}</span>
-            </li>
             <div class="w-full h-px my-2 bg-g-300/80"></div>
             <li class="btn-item btn-item--logout" @click="handleLogout">
               {{ $t("topBar.user.logout") }}

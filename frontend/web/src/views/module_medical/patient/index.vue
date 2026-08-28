@@ -53,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from "vue";
+import { computed, h, ref } from "vue";
 import { ElButton } from "element-plus";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
@@ -70,7 +70,6 @@ const showDetailData = ref({
   detail: '',
   center: ""
 });
-
 
 // 搜索表单
 interface PatientSearchForm {

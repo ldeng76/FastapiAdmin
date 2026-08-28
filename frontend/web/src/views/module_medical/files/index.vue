@@ -16,7 +16,7 @@
         </el-collapse>
       </ElCard>
     </el-aside>
-    <el-main class="p-0">
+    <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
         <FaTable
           :loading="loading"

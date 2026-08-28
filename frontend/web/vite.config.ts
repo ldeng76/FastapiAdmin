@@ -63,9 +63,6 @@ export default ({ mode }: { mode: string }) => {
       // dev 端口(也由 pnpm dev --host 0.0.0.0 --port 5610 显式声明)
       host: true,
       port: Number(env.VITE_PORT),
-      // 默认已含 localhost；这里放行 .h1963 后缀的内网域名及其子域。
-      // 正则按 Host 匹配；字面串也可直接写 "lnrs.h1963"。
-      allowedHosts: [/\.h1963$/, "lnrs.h1963"],
       proxy: {
         [env.VITE_APP_BASE_API]: {
           target: env.VITE_API_BASE_URL, // 代理目标地址：https://后端地址

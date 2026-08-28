@@ -1,12 +1,6 @@
 <!-- 登录页：1:1 复刻原型 01 —— 左暗「数据指挥中心」+ 右亮「账号密码表单卡」 -->
 <template>
   <div class="lnrs-login">
-    <!-- 右上：帮助/语言（对齐原型 top-links） -->
-    <div class="top-links">
-      <a href="#">帮助中心</a>
-      <a href="#">中文 ▾</a>
-    </div>
-
     <!-- ============ 左侧 数据指挥中心 ============ -->
     <section class="left">
       <div class="brand">

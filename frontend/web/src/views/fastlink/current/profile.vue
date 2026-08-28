@@ -5,11 +5,6 @@
       <!-- 左侧卡片 -->
       <div class="w-md mr-5 max-md:w-full max-md:mr-0">
         <div class="fa-card-sm relative p-9 pb-6 overflow-hidden text-center">
-          <img
-            class="absolute top-0 left-0 w-full h-50 object-cover"
-            src="@imgs/user/bg.webp"
-            alt=""
-          />
 
           <div class="relative z-10 mt-30 mx-auto">
             <div class="relative inline-block">
@@ -19,12 +14,7 @@
                 :src="infoFormState.avatar"
                 alt=""
               />
-              <img
-                v-else
-                class="w-20 h-20 object-cover border-2 border-white rounded-full"
-                src="@imgs/user/avatar.webp"
-                alt=""
-              />
+              <ElAvatar v-else icon="UserFilled" style="font-size: 40px" :size="'large'" />
               <ElUpload
                 ref="uploadRef"
                 v-model:file-list="fileList"
@@ -255,11 +245,11 @@
 </template>
 
 <script lang="ts" setup>
-import type { FormInstance, UploadRequestOptions, UploadFile } from "element-plus";
+import {FormInstance, UploadRequestOptions, UploadFile, ElAvatar} from "element-plus";
 import type { ElUpload } from "element-plus";
 import UserAPI, { type InfoFormState, type PasswordFormState } from "@/api/module_system/user";
 import { useUserStore, useDictStore } from "@stores";
-import { Camera } from "@element-plus/icons-vue";
+import {Camera, User, UserFilled} from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useI18n } from "vue-i18n";
 import { redirectToLogin, dataURLToFile } from "@utils";

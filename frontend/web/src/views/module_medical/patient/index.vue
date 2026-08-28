@@ -203,7 +203,6 @@ function handleSearchBarSearch() {
   getData(searchForm.value);
 }
 
-
 // 年龄（出生日期）合并显示：如 "62（1963-05）"
 function calcAge(birthIso?: string): number | null {
   if (!birthIso) return null;

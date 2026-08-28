@@ -1,21 +1,23 @@
 <template>
   <el-container class="files-container">
-    <el-aside width="250px" style="padding: 30px 20px;">
-      <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
-        <el-collapse-item title="模态类型" name="examType">
-          <el-checkbox-group v-model="selectedExamType">
-            <el-checkbox class="checkbox-block" v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />
-          </el-checkbox-group>
-        </el-collapse-item>
-        <el-collapse-item title="文件类型" name="fileType">
-          <el-checkbox-group v-model="selectedFileType">
-            <el-checkbox class="checkbox-block" v-for="item in fileTypeDict" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />
-          </el-checkbox-group>
-        </el-collapse-item>
-      </el-collapse>
+    <el-aside width="250px" style="margin-right: 10px;">
+      <ElCard class="fa-table-card" :bodyStyle="{overflow: 'auto'}" style="height: 100% ;margin-top : 0;">
+         <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
+          <el-collapse-item title="模态类型" name="examType">
+            <el-checkbox-group v-model="selectedExamType">
+              <el-checkbox class="checkbox-block" v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />
+            </el-checkbox-group>
+          </el-collapse-item>
+          <el-collapse-item title="文件类型" name="fileType">
+            <el-checkbox-group v-model="selectedFileType">
+              <el-checkbox class="checkbox-block" v-for="item in fileTypeDict" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />
+            </el-checkbox-group>
+          </el-collapse-item>
+        </el-collapse>
+      </ElCard>
     </el-aside>
-    <el-main>
-      <div class="fa-full-height" style="height: 100%">
+    <el-main class="p-0">
+      <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
         <FaTable
           :loading="loading"
           :data="data"
@@ -27,7 +29,7 @@
           @pagination:size-change="handleSizeChange"
           @pagination:current-change="handleCurrentChange"
         />
-      </div>
+      </ElCard>
     </el-main>
   </el-container>
   <Viewer ref="viewer" />
@@ -135,7 +137,6 @@ const {
 </script>
 <style scoped>
 .files-container{
-  background-color: #fff;
   height: 100%;
 }
 .checkbox-block{

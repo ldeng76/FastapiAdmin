@@ -319,7 +319,7 @@ watch(permFilterText, (val) => {
       const tree = permTreeRef.value as any;
       const store = tree?.store;
       if (!store) return;
-      walkTree(tableData.value, (node) => {
+      walkTree(tableData.value, (node:any) => {
         const treeNode = store.nodesMap[node.id];
         if (treeNode) treeNode.expanded = true;
       });

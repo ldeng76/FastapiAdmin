@@ -49,18 +49,6 @@
   --lnrs-bg: #f1f4f9;
 
 
-
-   // --- Element Plus 主色 → 临床青 ---
-  --el-color-primary: #00c4b5 !important;
-  --el-color-primary-light-3: #33c4b7  !important;
-  --el-color-primary-light-5: #66d3c9  !important;
-  --el-color-primary-light-7: #99e1db  !important;
-  --el-color-primary-light-8: #b3e9e4 !important;
-  --el-color-primary-light-9: #ccf0ed !important;
-  --el-color-primary-dark-2: #009188 !important;
-
-
-
   @each $type in (success, warning, danger, error, info) {
     --el-color-#{$type}: #{map.get(ep.$colors, $type, "base")} !important;
 

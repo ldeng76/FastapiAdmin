@@ -105,18 +105,6 @@
             {{ $t("login.placeholder.slider") }}
           </p>
         </div>
-
-        <div class="login-options-row flex-cb text-sm">
-          <ElLink
-            type="primary"
-            underline="never"
-            class="inline-flex items-center text-sm leading-[inherit]!"
-            @click="$emit('forget')"
-          >
-            {{ $t("login.forgetPwd") }}
-          </ElLink>
-        </div>
-
         <div>
           <ElButton
             class="h-11 w-full rounded-lg! text-base font-medium"

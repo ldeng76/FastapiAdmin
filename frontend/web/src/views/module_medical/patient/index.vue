@@ -82,7 +82,7 @@ const showSearchBar = ref(true);
 const patientSearchItems = computed<SearchFormItem[]>(() => [
   {
     key: "keyword",
-    label: "关键词",
+    label: "患者编号",
     type: "input",
     placeholder: "患者编号",
     span: 4,

@@ -62,6 +62,14 @@ export const useDictStore = defineStore(
           dict_label: item.dict_label!,
         }));
     };
+    const getDictArrayForSearch = (type:string)=>{
+      return  getDictArray(type).map(function (item){
+        return {
+          label : item.dict_label,
+          value : item.dict_value
+        }
+      })
+    }
 
     /**
      * 批量获取字典数据
@@ -144,6 +152,7 @@ export const useDictStore = defineStore(
       isLoaded,
       getDictData,
       getDictArray,
+      getDictArrayForSearch,
       getDict,
       getDictLabel,
       getDictItemLabel,

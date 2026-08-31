@@ -176,6 +176,7 @@ export interface SearchFormItem {
   render?: (() => VNode) | Component;
   /** 是否隐藏该表单项 */
   hidden?: boolean;
+  clearable?: boolean;
   /** 表单项占据的列宽，基于24格栅格系统 */
   span?: number;
   /** 选项数据，用于 select、checkbox-group、radio-group 等 */

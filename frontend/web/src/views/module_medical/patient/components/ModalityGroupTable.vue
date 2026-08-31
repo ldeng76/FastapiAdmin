@@ -9,6 +9,8 @@
               <ElTableColumn v-for="(col,index) in table.tableColumn" :width="col.prop === 'raw_text' ? 600 : undefined" :key="index" :prop="col.prop" :label="col.label">
                 <template #default="{ row }" >
                   <div v-if="col.prop === 'raw_text'" class="marked-content"  v-html="marked(row[col.prop] || '')"></div>
+                  <div v-else-if="['pre_admission','post_admission'].includes(col.prop)">{{getDateStr(row[col.prop])}}</div>
+                  <div v-else-if="['nursing_days'].includes(col.prop)">{{nursingDays(row[col.prop])}}</div>
                   <div v-else-if="typeof row[col.prop] !== 'object' || row[col.prop] == null">{{row[col.prop]}}</div>
                   <div v-else>{{JSON.stringify(row[col.prop])}}</div>
                 </template>
@@ -168,8 +170,29 @@ const isShowExpand = computed(()=>{
   })
   return bool
 })
+
+function getDateStr(obj: any){
+  if(!obj){
+    return obj
+  }
+  if(typeof obj === 'string' && obj.indexOf("{") === 0){
+    obj = JSON.parse(obj)
+  }
+  return obj.days+ getFieldLabel('days') + obj.hours + getFieldLabel('hours') + obj.minutes + getFieldLabel('minutes')
+}
+function nursingDays(obj:any){
+  if(!obj){
+    return obj
+  }
+  if(typeof obj === 'string' && obj.indexOf("{") === 0){
+    obj = JSON.parse(obj)
+  }
+  return getFieldLabel('level_1') + obj.level_1 +"天\n" + getFieldLabel('level_2') + obj.level_2 +'天'
+}
+
 const expandTableList = computed(()=>{
   let arr:TableItem[][] = [];
+
   function processing(arrTable:any,value:any,key:string){
     let valueFirst = value;
     let tableData:any[] = [];

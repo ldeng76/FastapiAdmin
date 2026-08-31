@@ -88,32 +88,32 @@
                   <ElButton type="primary" size="small" @click="patientList.showDicom(row)" plain>查看影像</ElButton>
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="patient_id" label="患者编号" width="120" />
-              <ElTableColumn prop="birth_date" label="出生日期" />
-              <ElTableColumn prop="age" label="年龄" />
-              <ElTableColumn prop="sex" label="性别">
+              <ElTableColumn prop="patient_id" :label="getFieldLabel('patient_id')" width="120" />
+              <ElTableColumn prop="birth_date" :label="getFieldLabel('birth_date')" />
+              <ElTableColumn prop="age" :label="getFieldLabel('age')" />
+              <ElTableColumn prop="sex" :label="getFieldLabel('sex')">
                 <template #default="{ row: row }">
                   {{ dictStore.getDictItemLabel('med_sex', row.sex) }}
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="smoking_status" label="吸烟情况">
+              <ElTableColumn prop="smoking_status" :label="getFieldLabel('smoking_status')">
                 <template #default="{ row: row }">
                   {{ dictStore.getDictItemLabel('med_smoking_status', row.smoking_status) }}
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="abo_blood_type" label="ABO血型">
+              <ElTableColumn prop="abo_blood_type" :label="getFieldLabel('abo_blood_type')">
                 <template #default="{ row: row }">
                   {{ dictStore.getDictItemLabel('med_blood_type_abo', row.abo_blood_type) }}
                 </template>
               </ElTableColumn>
-               <ElTableColumn prop="rh_blood_type" label="RH血型">
+              <ElTableColumn prop="rh_blood_type" :label="getFieldLabel('rh_blood_type')">
                 <template #default="{ row: row }">
                   {{ dictStore.getDictItemLabel('med_blood_type_rh', row.rh_blood_type) }}
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="native_place" label="籍贯"/>
-              <ElTableColumn prop="bmi" label="BMI" />
-              <ElTableColumn prop="first_nodule_date" label="首次发现结节日期"  />
+              <ElTableColumn prop="native_place" :label="getFieldLabel('native_place')"/>
+              <ElTableColumn prop="bmi" :label="getFieldLabel('bmi')" />
+              <ElTableColumn prop="first_nodule_date" :label="getFieldLabel('first_nodule_date')"  />
             </FaTable>
           </el-card>
         </el-col>
@@ -146,15 +146,16 @@ import {
 import type {LineDataItem} from "@/types/component/chart.ts";
 import { ElLoading } from 'element-plus'
 import FaSearchBar, {SearchFormItem} from "@/components/forms/fa-search-bar/index.vue";
+import {getFieldLabel} from "@/components/medical/field-renderer";
 const dictStore = useDictStore();
 
 const searchForm = ref<any>({gender:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
 const searchItems: SearchFormItem[] = [
-  { key: "gender", label: "患者性别",labelWidth:100,type :"select", clearable: true,options: dictStore.getDictArrayForSearch("med_sex"), placeholder: "请选择", span: 4 },
-  { key: "age_bucket", label: "患者年龄段",labelWidth:100, type: "select", clearable: true, options: [], placeholder: "请选择", span: 4 },
-  { key: "abo_blood_type", label: "患者ABO血型",labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_blood_type_abo"), placeholder: "请选择", span: 4 },
-  { key: "rh_blood_type", label: "患者RH血型",labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_blood_type_rh"), placeholder: "请选择", span: 4 },
-  { key: "smoking_status", label: "患者吸烟情况",labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_smoking_status"), placeholder: "请选择", span: 4 },
+  { key: "gender", label: getFieldLabel("gender"),labelWidth:100,type :"select", clearable: true,options: dictStore.getDictArrayForSearch("med_sex"), placeholder: "请选择", span: 4 },
+  { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options: [], placeholder: "请选择", span: 4 },
+  { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_blood_type_abo"), placeholder: "请选择", span: 4 },
+  { key: "rh_blood_type", label: getFieldLabel("rh_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_blood_type_rh"), placeholder: "请选择", span: 4 },
+  { key: "smoking_status", label: getFieldLabel("smoking_status"),labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_smoking_status"), placeholder: "请选择", span: 4 },
 ];
 const overviewCount = ref<StatsKpi[]>([]);
 const ageCount : any = ref({

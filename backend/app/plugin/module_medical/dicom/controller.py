@@ -18,6 +18,8 @@ from fastapi import HTTPException
 from .service import DicomService
 from fastapi.responses import HTMLResponse
 from app.config.setting import settings
+from app.api.v1.module_system.auth.schema import AuthSchema
+from app.core.dependencies import AuthPermission
 
 # DICOMweb 专用路由（不使用 OperationLogRoute，避免大文件日志）
 DicomwebRouter = APIRouter(tags=["DICOMweb"])
@@ -47,6 +49,7 @@ def dicom_viewer():
     description="返回所有 Study 的 DICOM JSON 数组，支持 QIDO-RS 标准参数",
 )
 async def qido_query_studies(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_instance_uid: Annotated[str | None, Query(alias="StudyInstanceUID", description="StudyInstanceUID")] = None,
     patient_id: Annotated[str | None, Query(alias="PatientID", description="PatientID")] = None,
     patient_name: Annotated[str | None, Query(alias="PatientName", description="PatientName")] = None,
@@ -70,6 +73,7 @@ async def qido_query_studies(
     description="按 StudyInstanceUID 查询单个 Study 的 DICOM JSON",
 )
 async def qido_query_study(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_uid: Annotated[str, Path(description="StudyInstanceUID")],
 ) -> JSONResponse:
     """QIDO-RS: 查询单个 Study。"""
@@ -89,6 +93,7 @@ async def qido_query_study(
     description="按 StudyInstanceUID 查询所有 Series 的 DICOM JSON",
 )
 async def qido_query_series(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_uid: Annotated[str, Path(description="StudyInstanceUID")],
 ) -> JSONResponse:
     """QIDO-RS: 查询 Study 下的 Series。"""
@@ -102,6 +107,7 @@ async def qido_query_series(
     description="按 SeriesInstanceUID 查询单个 Series 的 DICOM JSON",
 )
 async def qido_query_series_by_uid(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
 ) -> JSONResponse:
     """QIDO-RS: 查询单个 Series。"""
@@ -121,6 +127,7 @@ async def qido_query_series_by_uid(
     description="按 StudyInstanceUID 和 SeriesInstanceUID 查询所有 Instance 的 DICOM JSON",
 )
 async def qido_query_instances(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_uid: Annotated[str, Path(description="StudyInstanceUID")],
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
 ) -> JSONResponse:
@@ -135,6 +142,7 @@ async def qido_query_instances(
     description="按 SeriesInstanceUID 查询所有 Instance 的 DICOM JSON",
 )
 async def qido_query_instances_by_series(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
 ) -> JSONResponse:
     """QIDO-RS: 查询 Series 下的 Instance（简化路径）。"""
@@ -155,6 +163,7 @@ async def qido_query_instances_by_series(
     description="返回 Study 下所有 Instance 的完整 DICOM JSON 元数据",
 )
 async def wado_study_metadata(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_uid: Annotated[str, Path(description="StudyInstanceUID")],
 ) -> JSONResponse:
     """WADO-RS: Study 级元数据。"""
@@ -168,6 +177,7 @@ async def wado_study_metadata(
     description="返回 Series 下所有 Instance 的完整 DICOM JSON 元数据",
 )
 async def wado_series_metadata(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_uid: Annotated[str, Path(description="StudyInstanceUID")],
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
 ) -> JSONResponse:
@@ -182,6 +192,7 @@ async def wado_series_metadata(
     description="返回单个 Instance 的完整 DICOM JSON 元数据",
 )
 async def wado_instance_metadata(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
 ) -> JSONResponse:
     """WADO-RS: Instance 级元数据。"""
@@ -201,6 +212,7 @@ async def wado_instance_metadata(
     description="返回原始 DICOM 文件（application/dicom），供 cornerstone/wadouri 加载",
 )
 async def wado_get_instance(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     study_uid: Annotated[str, Path(description="StudyInstanceUID")],
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
@@ -216,6 +228,7 @@ async def wado_get_instance(
     description="按 SOPInstanceUID 返回原始 DICOM 文件",
 )
 async def wado_get_instance_by_uid(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
 ) -> FileResponse:
     """WADO-RS: Instance 二进制文件（简化路径）。"""
@@ -229,6 +242,7 @@ async def wado_get_instance_by_uid(
     description="将 DICOM 渲染为 PNG 图像，供 OHIF 直接显示",
 )
 async def wado_rendered_instance(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
     frame_number: Annotated[int | None, Query(description="帧号（多帧图像）")] = None,
     quality: Annotated[int, Query(description="JPEG 质量 (1-100)")] = 75,
@@ -246,6 +260,7 @@ async def wado_rendered_instance(
     description="按 StudyUID/SeriesUID/SOPUID/FrameNumber 获取帧的原始像素数据（multipart/related）",
 )
 async def wado_get_instance_frame_fullpath(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
     frame_number: Annotated[int, Path(description="帧号")],
 ) -> Response:
@@ -262,6 +277,7 @@ async def wado_get_instance_frame_fullpath(
     description="按 StudyUID/SeriesUID/SOPUID 返回 PNG 缩略图，支持 viewport 参数缩放",
 )
 async def wado_get_instance_thumbnail_fullpath(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
     viewport: Annotated[str | None, Query(description="缩略图尺寸，格式: 宽,高 (如 256,256)")] = None,
 ) -> Response:
@@ -277,6 +293,7 @@ async def wado_get_instance_thumbnail_fullpath(
     description="按 StudyUID/SeriesUID 返回 PNG 缩略图（自动取中间帧），支持 viewport 参数缩放",
 )
 async def wado_get_series_thumbnail_fullpath(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     series_uid: Annotated[str, Path(description="SeriesInstanceUID")],
     viewport: Annotated[str | None, Query(description="缩略图尺寸，格式: 宽,高 (如 256,256)")] = None,
 ) -> Response:

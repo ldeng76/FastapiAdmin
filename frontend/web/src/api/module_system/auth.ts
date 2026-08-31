@@ -142,8 +142,14 @@ export interface SelectTenantResult {
 /** 验证码信息 */
 export interface CaptchaInfo {
   enable: boolean;
+  /** image=传统图片验证码；altcha=基于 PoW 的 altcha-widget 验证 */
+  mode: "image" | "altcha";
+  // image 模式字段
   key: string;
   img_base: string;
+  // altcha 模式字段（base64url 编码 JSON，直接赋给 <altcha-widget challenge>）
+  challenge: string;
+  expire_seconds: number;
 }
 
 /** 退出登录操作 */

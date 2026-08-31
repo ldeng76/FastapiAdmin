@@ -63,6 +63,9 @@ importers:
       '@wangeditor-next/editor-for-vue':
         specifier: ^5.1.14
         version: 5.1.14(@wangeditor-next/editor@5.7.0)(vue@3.5.34(typescript@6.0.3))
+      altcha:
+        specifier: ^3.0.0
+        version: 3.2.2
       animate.css:
         specifier: ^4.1.1
         version: 4.1.1
@@ -2613,6 +2616,9 @@ packages:
   alien-signals@3.2.1:
     resolution: {integrity: sha512-I8FjmltrfnDFoZedi5CG8DghVYNhzb/Ijluz7tCSJH0xpd0484Kowhbb1XDYOxfJpU1p5wnM2X54dA+IfGyD1g==}
 
+  altcha@3.2.2:
+    resolution: {integrity: sha512-yNITQaRSkRe0u/hMxdzoXFFqxqn9iDt1rJ0reREU3D3uDD3w1oFz6v5C2PMww2XnGThtYUwe8MW+PxsiBglNqw==}
+
   animate.css@4.1.1:
     resolution: {integrity: sha512-+mRmCTv6SbCmtYJCN4faJMNFVNN5EuCTTprDTAo7YzIGji2KADmakjVA3+8mVDkZ2Bf09vayB35lSQIex2+QaQ==}
 
@@ -3858,6 +3864,9 @@ packages:
   hash-base@3.1.2:
     resolution: {integrity: sha512-Bb33KbowVTIj5s7Ked1OsqHUeCpz//tPwR+E2zJgJKo9Z5XolZ9b6bdUgjmYlwnWhoOQKoTd1TYToZGn5mAYOg==}
     engines: {node: '>= 0.8'}
+
+  hash-wasm@4.12.0:
+    resolution: {integrity: sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==}
 
   hash.js@1.1.7:
     resolution: {integrity: sha512-taOaskGt4z4SOANNseOviYDvjEJinIkRgmp7LbKP2YTTmVxWBl87s/uzK9r+44BclBSp2X7K1hqeNfz9JbBeXA==}
@@ -8374,6 +8383,10 @@ snapshots:
 
   alien-signals@3.2.1: {}
 
+  altcha@3.2.2:
+    dependencies:
+      hash-wasm: 4.12.0
+
   animate.css@4.1.1: {}
 
   ansi-escapes@4.3.2:
@@ -9810,6 +9823,8 @@ snapshots:
       readable-stream: 2.3.8
       safe-buffer: 5.2.1
       to-buffer: 1.2.2
+
+  hash-wasm@4.12.0: {}
 
   hash.js@1.1.7:
     dependencies:

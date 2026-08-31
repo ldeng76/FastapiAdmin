@@ -124,7 +124,8 @@
     "vue3-cron-plus": "^0.1.9",
     "vuedraggable": "^2.24.3",
     "xgplayer": "^3.0.20",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "altcha": "^3.0.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.1",

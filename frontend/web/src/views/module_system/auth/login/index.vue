@@ -437,8 +437,11 @@ const loginForm = reactive<LoginFormData>({
 
 const captchaState = reactive<CaptchaInfo>({
   enable: false,
+  mode: "image",
   key: "",
   img_base: "",
+  challenge: "",
+  expire_seconds: 0,
 });
 
 const rules = computed<FormRules>(() => {
@@ -463,12 +466,17 @@ const rules = computed<FormRules>(() => {
       },
     ],
   };
+  // 图片验证码模式下：captcha 字段必填；ALTCHA 模式下：captcha 由 widget@statechange 事件填充，
+  // 提交前通过 isPassing 做语义校验（captcha 本身是表单字段，保持非空校验更稳）。
   if (captchaState.enable) {
     base.captcha = [
       {
         required: true,
         trigger: "blur",
-        message: t("login.message.captchaCode.required"),
+        message:
+          captchaState.mode === "altcha"
+            ? "请完成人机验证"
+            : t("login.message.captchaCode.required"),
       },
     ];
   }
@@ -487,13 +495,25 @@ async function getCaptcha() {
     codeLoading.value = true;
     const response = await AuthAPI.getCaptcha();
     const data = response.data.data;
-    loginForm.captcha_key = data.key;
-    captchaState.img_base = data.img_base;
+    loginForm.captcha_key = data.key ?? "";
+    loginForm.captcha = data.mode === "altcha" ? "" : loginForm.captcha;
+    captchaState.img_base = data.img_base ?? "";
     captchaState.enable = data.enable;
+    captchaState.mode = data.mode ?? "image";
+    captchaState.challenge = data.challenge ?? "";
+    captchaState.expire_seconds = data.expire_seconds ?? 0;
+
+    // ALTCHA：challenge 更新后通知子组件重置本地状态
+    if (data.mode === "altcha") {
+      nextTick(() => {
+        accountFormRef.value?.resetAltcha?.();
+      });
+    }
   } catch {
     captchaState.enable = false;
     loginForm.captcha = "";
     loginForm.captcha_key = "";
+    captchaState.challenge = "";
   } finally {
     codeLoading.value = false;
   }
@@ -521,8 +541,11 @@ onMounted(async () => {
     return;
   }
   await getCaptcha();
-  if(captchaState.enable){
-    isPassing.value = true
+  // 未启用验证码 → 跳过滑块/人机验证（isPassing=true）
+  // image 模式下已启用验证码但走的是图片验证码（非滑块模式在表单上方），保持 isPassing=true 避免滑块挡住
+  // altcha 模式下 isPassing 由 widget 的 verified 事件控制，不能默认放行
+  if (!captchaState.enable || captchaState.mode === "image") {
+    isPassing.value = true;
   }
 });
 

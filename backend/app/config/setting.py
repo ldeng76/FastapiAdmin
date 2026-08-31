@@ -127,6 +127,19 @@ class Settings(BaseSettings):
     CAPTCHA_EXPIRE_SECONDS: int = 60 * 1  # 验证码过期时间(秒) 1分钟
     CAPTCHA_FONT_SIZE: int = 32  # 字体大小
     CAPTCHA_FONT_PATH: str = "static/assets/font/Arial.ttf"  # 字体路径
+    # 验证码模式：image 为传统图片/算术验证码；altcha 为基于 PoW 的 ALTCHA（AI 更难自动化）
+    CAPTCHA_MODE: Literal["image", "altcha"] = "altcha"
+    # ALTCHA 签名 HMAC-SHA256 密钥（空则自动从 settings.SECRET_KEY 派生，生产建议独立配置）
+    ALTCHA_HMAC_KEY: str = ""
+    # ALTCHA PoW 算法：SHA-256 / SHA-384 / SHA-512（前端 widget 需匹配）
+    ALTCHA_ALGORITHM: Literal["SHA-256", "SHA-384", "SHA-512"] = "SHA-256"
+    # ALTCHA 复杂度范围：前端需要在 [min, max] 内找到哈希前缀 0 位数满足的 nonce
+    ALTCHA_MIN_DIFFICULTY: int = 10000
+    ALTCHA_MAX_DIFFICULTY: int = 30000
+    # ALTCHA challenge 有效期（秒）
+    ALTCHA_EXPIRE_SECONDS: int = 5 * 60
+    # ALTCHA 是否禁止重放（推荐 True，校验成功后把 challenge 加入 Redis 防重复使用）
+    ALTCHA_REPLAY_PROTECTION: bool = True
 
     # ================================================= #
     # ***************** 第三方 OAuth 登录（可选）********* #

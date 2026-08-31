@@ -23,6 +23,7 @@ from app.core.security import (
     decode_access_token,
 )
 from app.utils.captcha_util import CaptchaUtil
+from app.utils.altcha_util import AltchaUtil
 from app.utils.common_util import get_random_character
 from app.utils.hash_bcrpy_util import PwdUtil
 from app.utils.ip_local_util import IpLocalUtil
@@ -78,8 +79,14 @@ class LoginService:
 
         # 验证码校验
         if settings.CAPTCHA_ENABLE and not request_from_docs:
-            if not login_form.captcha_key or not login_form.captcha:
-                raise CustomException(msg="验证码不能为空")
+            if settings.CAPTCHA_MODE == "altcha":
+                # ALTCHA 模式：只需要前端回传 payload（放 captcha 字段）
+                if not login_form.captcha:
+                    raise CustomException(msg="请完成人机验证")
+            else:
+                # 图片验证码模式：需要 captcha_key + captcha 同时存在
+                if not login_form.captcha_key or not login_form.captcha:
+                    raise CustomException(msg="验证码不能为空")
             await CaptchaService.check_captcha_service(
                 redis=redis,
                 key=login_form.captcha_key,
@@ -537,28 +544,37 @@ class LoginService:
 
 
 class CaptchaService:
-    """验证码服务"""
+    """验证码服务（支持 image 传统图片验证码与 altcha PoW 两种模式）"""
 
     @classmethod
-    async def get_captcha_service(cls, redis: Redis) -> dict[str, CaptchaKey | CaptchaBase64]:
+    async def get_captcha_service(cls, redis: Redis) -> dict:
         """
-        获取验证码
-
-        参数:
-        - redis (Redis): Redis客户端对象
+        获取验证码（按 settings.CAPTCHA_MODE 自动分流）。
 
         返回:
-        - dict[str, CaptchaKey | CaptchaBase64]: 包含验证码key和base64图片的字典；
-          若 CAPTCHA_ENABLE=False 则返回 enable=False 的空壳响应（前端据此隐藏验证码输入）。
+            dict: 符合 CaptchaOutSchema，含 enable/mode + 对应字段。
+            CAPTCHA_ENABLE=False 时，返回 enable=False 的空壳响应。
         """
         # 未启用验证码：返回正常响应（enable=False），不当作错误抛出
         if not settings.CAPTCHA_ENABLE:
             return CaptchaOutSchema(
                 enable=False,
+                mode=settings.CAPTCHA_MODE,
                 key="",
                 img_base="",
+                challenge="",
+                expire_seconds=0,
             ).model_dump()
 
+        mode = settings.CAPTCHA_MODE
+        if mode == "altcha":
+            return cls._get_altcha_captcha()
+        # 默认走 image 模式
+        return await cls._get_image_captcha(redis=redis)
+
+    @classmethod
+    async def _get_image_captcha(cls, redis: Redis) -> dict:
+        """传统图片/算术验证码（兼容原接口）"""
         # 生成验证码图片和值
         captcha_base64, captcha_value = CaptchaUtil.captcha_arithmetic()
         captcha_key = get_random_character()
@@ -571,31 +587,51 @@ class CaptchaService:
             expire=settings.CAPTCHA_EXPIRE_SECONDS,
         )
 
-        log.info(f"生成验证码成功,验证码:{captcha_value}")
+        log.info(f"生成图片验证码成功,验证码:{captcha_value}")
 
-        # 返回验证码信息
         return CaptchaOutSchema(
-            enable=settings.CAPTCHA_ENABLE,
+            enable=True,
+            mode="image",
             key=CaptchaKey(captcha_key),
             img_base=CaptchaBase64(f"data:image/png;base64,{captcha_base64}"),
+            challenge="",
+            expire_seconds=0,
         ).model_dump()
 
     @classmethod
-    async def check_captcha_service(cls, redis: Redis, key: str, captcha: str) -> bool:
+    def _get_altcha_captcha(cls) -> dict:
+        """ALTCHA PoW challenge（不需要 Redis，签名+过期由 HMAC+本地时间保障）"""
+        challenge = AltchaUtil.generate_challenge()
+        log.debug(f"生成 ALTCHA challenge[:16]={challenge.challenge[:16]} maxnumber={challenge.maxnumber}")
+        return CaptchaOutSchema(
+            enable=True,
+            mode="altcha",
+            key="",
+            img_base="",
+            challenge=challenge.to_widget_base64(),
+            expire_seconds=settings.ALTCHA_EXPIRE_SECONDS,
+        ).model_dump()
+
+    @classmethod
+    async def check_captcha_service(
+        cls,
+        redis: Redis,
+        key: str | None,
+        captcha: str | None,
+    ) -> bool:
         """
-        校验验证码
+        按 CAPTCHA_MODE 分流校验验证码。
 
-        参数:
-        - redis (Redis): Redis客户端对象
-        - key (str): 验证码key
-        - captcha (str): 用户输入的验证码
-
-        返回:
-        - bool: 验证通过返回True
-
-        异常:
-        - CustomException: 验证码无效或错误时抛出异常
+        image 模式：使用 key（Redis 存储键）与 captcha（用户输入值）。
+        altcha 模式：captcha 为前端 <altcha-widget> 提交的 payload（base64 字符串或 JSON 字段）。
         """
+        if settings.CAPTCHA_MODE == "altcha":
+            return await cls._verify_altcha(redis=redis, payload=captcha or "")
+        return await cls._verify_image(redis=redis, key=key or "", captcha=captcha or "")
+
+    @classmethod
+    async def _verify_image(cls, redis: Redis, key: str, captcha: str) -> bool:
+        """传统图片验证码校验（复用原逻辑）"""
         if not captcha:
             raise CustomException(msg="验证码不能为空")
 
@@ -614,7 +650,20 @@ class CaptchaService:
 
         # 验证成功后删除验证码,避免重复使用
         await RedisCURD(redis).delete(redis_key)
-        log.info(f"验证码校验成功,key:{key}")
+        log.info(f"图片验证码校验成功,key:{key}")
+        return True
+
+    @classmethod
+    async def _verify_altcha(cls, redis: Redis, payload: str) -> bool:
+        """ALTCHA PoW 校验"""
+        if not payload:
+            raise CustomException(msg="请完成人机验证（ALTCHA）")
+
+        try:
+            await AltchaUtil.verify_payload(payload=payload, redis=redis)
+        except ValueError as exc:
+            log.warning(f"ALTCHA verify failed: {exc}")
+            raise CustomException(msg=f"人机验证失败：{exc}")
         return True
 
 

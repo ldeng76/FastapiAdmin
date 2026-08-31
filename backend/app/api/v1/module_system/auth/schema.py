@@ -69,8 +69,20 @@ class CaptchaOutSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     enable: bool = Field(default=True, description="是否启用验证码")
-    key: str = Field(default="", description="验证码唯一标识（未启用时为空）")
-    img_base: str = Field(default="", description="Base64编码的验证码图片（未启用时为空）")
+    # mode: image 表示传统图片/算术验证码；altcha 表示基于 PoW 的 altcha-widget 验证
+    mode: str = Field(default="image", description="验证码模式：image | altcha")
+    # 图片验证码字段（mode=image 时使用，altcha 下保持空）
+    key: str = Field(default="", description="验证码唯一标识（image 模式使用）")
+    img_base: str = Field(default="", description="Base64编码的验证码图片（image 模式使用）")
+    # ALTCHA 字段（mode=altcha 时使用，image 下保持空）
+    challenge: str = Field(
+        default="",
+        description="ALTCHA challenge（base64url 编码 JSON，altcha-widget 直接喂给 challenge prop）",
+    )
+    expire_seconds: int = Field(
+        default=0,
+        description="ALTCHA challenge 有效期（秒），0 表示未使用 altcha",
+    )
 
 
 class AutoLoginUserSchema(BaseModel):

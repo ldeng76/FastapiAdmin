@@ -184,7 +184,14 @@ export default ({ mode }: { mode: string }) => {
       },
     },
     plugins: [
-      vue(),
+      vue({
+        template: {
+          compilerOptions: {
+            // 允许 altcha web 组件（自定义元素）在模板中不被当作未知组件报 warning
+            isCustomElement: (tag) => tag.startsWith("altcha-"),
+          },
+        },
+      }),
       vitePluginStart(),
       tailwindcss(),
       nodePolyfills({

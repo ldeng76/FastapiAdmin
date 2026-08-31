@@ -25,10 +25,10 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   size: 36,
-  src: undefined,
+  src: 'iamgs',
 });
 
-const fallbackTriggered = ref(false);
+const fallbackTriggered = ref(true);
 
 const resolvedSrc = computed(() => {
   if (fallbackTriggered.value) return defaultLogoUrl;

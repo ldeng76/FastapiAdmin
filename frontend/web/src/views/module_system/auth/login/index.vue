@@ -75,7 +75,7 @@
       </svg>
 
       <div class="foot">
-        <div>© 2025 肺结节多维度数据云平台 · 陕ICP备2025069493号-1</div>
+        <div>© 2026 肺结节多维度数据云平台</div>
       </div>
     </section>
 

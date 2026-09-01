@@ -920,7 +920,7 @@ async function handleRowClick(row: MenuTable) {
 }
 
 const allowedMenuTypeValues = computed(() => {
-  const pid = formData.value.parent_id;
+  const pid:any = formData.value.parent_id;
   const parentNode = findMenuNodeById(pid);
   if (!parentNode?.type) {
     return [MenuTypeEnum.CATALOG, MenuTypeEnum.MENU, MenuTypeEnum.EXTLINK];

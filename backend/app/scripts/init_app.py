@@ -233,8 +233,6 @@ def register_files(app: FastAPI) -> None:
 
     # 挂载前端静态文件
     from pathlib import Path as _Path
-    from fastapi.responses import FileResponse as _FileResponse
-
     _frontend_dist = _Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "web" / "dist"
     if _frontend_dist.is_dir():
         @app.get("/web/{full_path:path}", include_in_schema=False)
@@ -248,7 +246,7 @@ def register_files(app: FastAPI) -> None:
                 return FR(str(index_file), media_type="text/html")
             return Response(status_code=404)
 
-        @app.get("/web", include_in_schema=False)
+        @app.get("/", include_in_schema=False)
         async def _serve_frontend_index():
             from fastapi.responses import FileResponse as FR
             index_file = _frontend_dist / "index.html"

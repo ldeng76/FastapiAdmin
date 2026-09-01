@@ -165,6 +165,8 @@ export interface DictDataTable extends BaseType {
   dict_sort?: number;
   dict_label?: string;
   dict_value?: string;
+  label?: string;
+  value?: string;
   dict_type_id?: number;
   dict_type?: string;
   css_class?: string;

@@ -307,7 +307,9 @@ function ctToggle(){
 function fsqToggle(){
   showFsq.value = true
 }
-
+onBeforeMount(async ()=>{
+  await dictStore.getDict(['med_exam_type'])
+})
 </script>
 <style>
 .mdDialogDetailBody{

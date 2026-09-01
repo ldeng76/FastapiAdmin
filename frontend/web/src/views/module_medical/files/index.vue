@@ -134,6 +134,9 @@ const {
     ],
   },
 });
+onBeforeMount(async ()=>{
+  await dictStore.getDict(['med_exam_type'])
+})
 </script>
 <style scoped>
 .files-container{

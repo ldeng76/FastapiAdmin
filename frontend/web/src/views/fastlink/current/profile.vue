@@ -249,7 +249,7 @@ import {FormInstance, UploadRequestOptions, UploadFile, ElAvatar} from "element-
 import type { ElUpload } from "element-plus";
 import UserAPI, { type InfoFormState, type PasswordFormState } from "@/api/module_system/user";
 import { useUserStore, useDictStore } from "@stores";
-import {Camera, User, UserFilled} from "@element-plus/icons-vue";
+import {Camera} from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useI18n } from "vue-i18n";
 import { redirectToLogin, dataURLToFile } from "@utils";
@@ -568,6 +568,10 @@ async function onPasswordToggleSave() {
   }
   await handlePasswordChange();
 }
+
+onBeforeMount(async ()=>{
+  await dictStore.getDict(['sys_user_sex'])
+})
 
 onMounted(async () => {
   refreshGreeting();

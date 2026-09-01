@@ -132,7 +132,7 @@
 
 <script setup lang="ts">
 import PatientDetail from "./PatientDetail.vue"
-import { ref , onMounted } from "vue";
+import { ref , onMounted ,onBeforeMount} from "vue";
 import {useDictStore} from "@stores";
 import Total from "./components/Total.vue";
 import StatisticsAPI from "@api/module_medical/statistics.ts";
@@ -148,15 +148,8 @@ import { ElLoading } from 'element-plus'
 import FaSearchBar, {SearchFormItem} from "@/components/forms/fa-search-bar/index.vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 const dictStore = useDictStore();
-
 const searchForm = ref<any>({gender:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
-const searchItems: SearchFormItem[] = [
-  { key: "gender", label: getFieldLabel("gender"),labelWidth:100,type :"select", clearable: true,options: dictStore.getDictArrayForSearch("med_sex"), placeholder: "请选择", span: 4 },
-  { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options: [], placeholder: "请选择", span: 4 },
-  { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_blood_type_abo"), placeholder: "请选择", span: 4 },
-  { key: "rh_blood_type", label: getFieldLabel("rh_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_blood_type_rh"), placeholder: "请选择", span: 4 },
-  { key: "smoking_status", label: getFieldLabel("smoking_status"),labelWidth:100, type: "select", clearable: true, options: dictStore.getDictArrayForSearch("med_smoking_status"), placeholder: "请选择", span: 4 },
-];
+const searchItems = ref<SearchFormItem[]>([])
 const overviewCount = ref<StatsKpi[]>([]);
 const ageCount : any = ref({
   names :[],
@@ -245,7 +238,6 @@ function clearSearch() {
 
 function chartSelect(obj:any){
   if(searchForm.value[obj?.data?.filterName] !== undefined){
-    console.log(obj.data)
     searchForm.value[obj?.data?.filterName] = obj?.data?.filterValue
     searchCall()
   }
@@ -326,15 +318,19 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
   }
   patientList.setData(newPatientData);
 }
+onBeforeMount(async function (){
+  const ageBuckets = await StatisticsAPI.getAgeBuckets()
+  const dictObj = await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'],true)
+  searchItems.value = [
+    { key: "gender", label: getFieldLabel("gender"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_sex, placeholder: "请选择", span: 4 },
+    { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
+    { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_abo, placeholder: "请选择", span: 4 },
+    { key: "rh_blood_type", label: getFieldLabel("rh_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_rh, placeholder: "请选择", span: 4 },
+    { key: "smoking_status", label: getFieldLabel("smoking_status"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_smoking_status, placeholder: "请选择", span: 4 },
+  ];
+})
 
 onMounted(async function () {
-  const ageBuckets = await StatisticsAPI.getAgeBuckets()
-  const age_bucket_item = searchItems.find(function (n){
-    return n.key === 'age_bucket'
-  })
-  if(age_bucket_item){
-      age_bucket_item.options = ageBuckets
-  }
   await searchCall();
 });
 

@@ -140,7 +140,9 @@ function getExtRow(patient:any){
   }
   return rows;
 }
-
+onBeforeMount(async ()=>{
+  await dictStore.getDict(['med_sex','med_ethnicity','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
+})
 onMounted(fetchDetail);
 
 </script>

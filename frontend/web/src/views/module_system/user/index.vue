@@ -608,7 +608,7 @@ const {
               size: 28,
               src: row.avatar || undefined,
             },
-            () => (!row.avatar ? h(UserFilled) : undefined)
+            () => (!row.avatar ? h(ElAvatar,{icon:'UserFilled',size:'small'}) : undefined)
           ),
       },
       { prop: "username", label: "账号", minWidth: 100, showOverflowTooltip: true },

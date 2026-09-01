@@ -63,7 +63,7 @@ export const useDictStore = defineStore(
         }));
     };
     const getDictArrayForSearch = (type:string)=>{
-      return  getDictArray(type).map(function (item){
+      return getDictArray(type).map(function (item){
         return {
           label : item.dict_label,
           value : item.dict_value
@@ -74,9 +74,10 @@ export const useDictStore = defineStore(
     /**
      * 批量获取字典数据
      * @param types 字典类型数组
+     * @param isForSearch
      * @returns 指定类型的字典数据
      */
-    async function getDict(types: string[]): Promise<Record<string, DictDataTable[]>> {
+    async function getDict(types: string[],isForSearch = false): Promise<Record<string, DictDataTable[]>> {
       try {
         for (const type of types) {
           if (!dictData.value[type]) {
@@ -91,7 +92,11 @@ export const useDictStore = defineStore(
         // 返回请求的字典数据
         return types.reduce(
           (result, type) => {
-            result[type] = getDictArray(type);
+            if(isForSearch){
+               result[type] = getDictArrayForSearch(type);
+            } else {
+               result[type] = getDictArray(type);
+            }
             return result;
           },
           {} as Record<string, DictDataTable[]>

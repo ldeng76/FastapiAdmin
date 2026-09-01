@@ -93,6 +93,9 @@ function closeLoading(){
     loadingInstance.value.close()
   }
 }
+onBeforeMount(async ()=>{
+  await dictStore.getDict(['med_sex','med_smoking_status','med_blood_type_abo','med_blood_type_rh'])
+})
 onMounted(function (){
   seeImage({},'dicom')
 })

@@ -13,7 +13,11 @@ from app.common.response import ResponseSchema, SuccessResponse
 from app.core.dependencies import AuthPermission
 from app.core.router_class import OperationLogRoute
 
-from .schema import MedicalFilesQueryParam
+from .schema import (
+    MedFilesDictOutSchema,
+    MedFilesStatisticsOutSchema,
+    MedicalFilesQueryParam,
+)
 from .service import MedFilesService
 
 MedFilesRouter = APIRouter(
@@ -48,6 +52,47 @@ async def list_med_files_controller(
         file_type=file_type,
     )
     return SuccessResponse(data=result, msg="查询医疗文件列表成功")
+
+
+@MedFilesRouter.get(
+    "/dict/file-types",
+    summary="文件类型字典（根据已有数据）",
+    response_model=ResponseSchema[MedFilesDictOutSchema],
+)
+async def dict_file_types_controller(
+    search: Annotated[MedicalFilesQueryParam, Depends()],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+) -> JSONResponse:
+    """返回当前数据库实际出现过的 file_type 字典。
+
+    若传 `exam_type`，只会统计指定模态类型下实际存在的文件类型。
+    结果已做行级权限过滤（与 `/list` 一致的数据可见性）。
+    """
+    exam_type = search.exam_type[1] if search.exam_type else None
+    data = await MedFilesService.dict_file_types_service(auth=auth, exam_type=exam_type)
+    return SuccessResponse(data=data, msg="查询文件类型字典成功")
+
+
+@MedFilesRouter.get(
+    "/statistics",
+    summary="医疗文件统计（文件数 / 患者数 / 总大小）",
+    response_model=ResponseSchema[MedFilesStatisticsOutSchema],
+)
+async def statistics_controller(
+    search: Annotated[MedicalFilesQueryParam, Depends()],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+) -> JSONResponse:
+    """统计满足筛选条件的：文件个数、患者数（去重）、所有文件总大小。
+
+    - exam_type：模态类型，多选逗号分隔（如 ?exam_type=CT,PETCT）
+    - file_type：文件类型，多选逗号分隔（如 ?file_type=dicom,nii）
+    """
+    exam_type = search.exam_type[1] if search.exam_type else None
+    file_type = search.file_type[1] if search.file_type else None
+    data = await MedFilesService.statistics_service(
+        auth=auth, exam_type=exam_type, file_type=file_type
+    )
+    return SuccessResponse(data=data, msg="查询医疗文件统计成功")
 
 
 @MedFilesRouter.get(

@@ -3,18 +3,67 @@
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import func, select
+
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.config.setting import settings
 from app.core.exceptions import CustomException
 from app.core.logger import log
+from app.core.permission import Permission
 
 from .crud import MedFilesCRUD
 from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
 
 
+def _human_readable_size(num_bytes: int) -> str:
+    """把字节数格式化成易读字符串（保留 2 位小数，自动进位到 KB/MB/GB/TB）。"""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if abs(size) < 1024.0:
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} EB"
+
+
 class MedFilesService:
     """医疗文件服务。"""
+
+    # ------------------------------------------------------------------
+    # 辅助：为 SQL 构造业务过滤条件（与 CRUDBase.__build_conditions 保持一致）
+    # 不直接走 page() 是因为 distinct / 聚合用 SQL 原生更高效。
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_search_conditions(query, exam_type: list[str] | None, file_type: list[str] | None):
+        """给 select 查询追加 exam_type/file_type 的 in 过滤 + 软删除 + 租户过滤。
+
+        不追加 Permission 过滤（Permission.filter_query 作用于整个 select，在外部调用）。
+        """
+        m = MedFilesModel
+
+        # 软删除
+        if hasattr(m, "is_deleted"):
+            query = query.where(getattr(m, "is_deleted") == False)
+
+        # 多租户隔离
+        # 模型 MedFilesModel 当前没有 tenant_id 字段，这里不做额外过滤，
+        # 后续若新增 tenant_id 字段会自动匹配 CRUDBase 的策略。
+
+        if exam_type:
+            query = query.where(m.exam_type.in_(exam_type))
+        if file_type:
+            query = query.where(m.file_type.in_(file_type))
+
+        return query
+
+    @staticmethod
+    async def _apply_permission(auth: AuthSchema, query):
+        """对 select 追加 Permission 业务行级权限过滤，与 MedFilesCRUD 保持一致的可见性。"""
+        p = Permission(model=MedFilesModel, auth=auth)
+        return await p.filter_query(query)
 
     @classmethod
     async def page_service(
@@ -43,6 +92,76 @@ class MedFilesService:
             search=search,
             out_schema=MedicalFilesOutSchema,
         )
+
+    # ------------------------------------------------------------------
+    # 新增：字典接口 / 统计接口
+    # ------------------------------------------------------------------
+
+    @classmethod
+    async def dict_file_types_service(
+        cls,
+        auth: AuthSchema,
+        exam_type: list[str] | None = None,
+    ) -> dict:
+        """返回当前数据里实际出现过的 file_type 字典。
+
+        参数:
+            auth:       当前用户鉴权信息（控制行级可见性）
+            exam_type:  可选，仅统计指定模态下出现过的文件类型
+        """
+        m = MedFilesModel
+        sql = select(m.file_type).distinct().where(m.file_type.is_not(None), m.file_type != "")
+        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=None)
+        sql = await cls._apply_permission(auth, sql)
+        sql = sql.order_by(m.file_type.asc())
+
+        result = await auth.db.execute(sql)
+        rows = [r for r, in result.all()]
+
+        options = [{"label": str(x), "value": str(x)} for x in rows if x not in (None, "")]
+        return {"file_type_options": options}
+
+    @classmethod
+    async def statistics_service(
+        cls,
+        auth: AuthSchema,
+        exam_type: list[str] | None = None,
+        file_type: list[str] | None = None,
+    ) -> dict:
+        """统计满足条件的数据：文件个数、患者数、总文件大小。
+
+        参数:
+            auth:       当前用户鉴权信息（控制行级可见性）
+            exam_type:  可选，多选模态
+            file_type:  可选，多选文件类型
+        """
+        m = MedFilesModel
+
+        # 聚合
+        sql = select(
+            func.count(m.id).label("file_count"),
+            func.count(func.distinct(m.patient_id)).label("patient_count"),
+            func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
+        )
+        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type)
+        sql = await cls._apply_permission(auth, sql)
+
+        result = await auth.db.execute(sql)
+        row = result.one_or_none()
+        file_count = 0
+        patient_count = 0
+        total_size_bytes = 0
+        if row is not None:
+            file_count = int(row[0] or 0)
+            patient_count = int(row[1] or 0)
+            total_size_bytes = int(row[2] or 0)
+
+        return {
+            "file_count": file_count,
+            "patient_count": patient_count,
+            "total_size_bytes": total_size_bytes,
+            "total_size_text": _human_readable_size(total_size_bytes),
+        }
 
     @classmethod
     def _resolve_file_path(cls, raw: str) -> Path:

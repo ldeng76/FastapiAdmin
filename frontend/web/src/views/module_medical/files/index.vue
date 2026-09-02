@@ -18,11 +18,15 @@
     </el-aside>
     <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
+        <div style="display: flex;align-items: center;justify-content: center;font-size: 20px">
+          总计<strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="!statisticsCount.file_count || statisticsCount.file_count <10 ? 0 :1000" /></strong> 文件
+          <FaSvgIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="!statisticsCount.patient_count || statisticsCount.patient_count <10 ? 0 :1000" separator="," /></strong> 患者
+          <FaSvgIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
+        </div>
         <FaTable
           :loading="loading"
           :data="data"
           :columns="columns"
-          :height="'100%'"
           :header-cell-style="{ backgroundColor: '#f5f7fa' }"
           border
           :pagination="pagination"
@@ -39,21 +43,18 @@ import {useDictStore} from "@/store";
 import {h, ref, watch} from 'vue';
 import {useTable} from "@/hooks";
 import type {ColumnOption} from "@/types";
-import FilesApi,{FilesTable} from "@api/module_medical/files.ts";
+import FilesApi, {FilesTable, StatisticsCount} from "@api/module_medical/files.ts";
 import {ElButton} from "element-plus";
 import Viewer from "@views/module_medical/viewer/index.vue";
 const viewer = ref<any>(null)
 const selectedExamType = ref([])
 const selectedFileType= ref([])
-const fileTypeDict = ref([
-  {dict_value:"dcm",dict_label:"DCM"},
-  {dict_value:"svs",dict_label:"SVS"},
-  {dict_value:"nii",dict_label:"NII"},
-])
-function fileSize(sizeBytes:number | undefined) {
+const fileTypeDict = ref<any>([])
+const statisticsCount = ref<StatisticsCount>({})
+function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
 
-  if (!sizeBytes) {
-    throw new Error("文件大小值异常");
+  if (typeof sizeBytes !== 'number') {
+    return sizeBytes
   }
 
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
@@ -65,15 +66,19 @@ function fileSize(sizeBytes:number | undefined) {
     index++;
   }
 
-  return size.toFixed(2) + ' ' + units[index];
+  return (!isNumStrong ? size.toFixed(2) :'<strong>'+size.toFixed(2)+'</strong>') + ' ' + units[index];
 }
 const dictStore = useDictStore();
 watch([selectedExamType,selectedFileType],function (arr){
   let examType = arr[0]
   let fileType = arr[1]
-  getData({
+  let params = {
     exam_type:examType.toString(),
     file_type:fileType.toString()
+  }
+  getData(params)
+  FilesApi.statistics(params).then(function (res){
+    statisticsCount.value = res
   })
 })
 const {
@@ -89,6 +94,10 @@ const {
     apiFn: FilesApi.list,
     apiParams: { page_no: 1, page_size: 30 },
     columnsFactory: (): ColumnOption<FilesTable>[] => [
+      {
+        prop: "patient_id",
+        label: "患者ID"
+      },
       {
         prop: "file_name",
         label: "文件名"
@@ -136,6 +145,9 @@ const {
 });
 onBeforeMount(async ()=>{
   await dictStore.getDict(['med_exam_type'])
+  fileTypeDict.value = await FilesApi.getFileType()
+  statisticsCount.value = await FilesApi.statistics()
+
 })
 </script>
 <style scoped>

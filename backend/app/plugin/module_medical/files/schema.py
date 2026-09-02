@@ -45,3 +45,27 @@ class MedicalFilesQueryParam:
 
         self.exam_type = (QueueEnum.in_.value, exam_list) if exam_list else None
         self.file_type = (QueueEnum.in_.value, file_list) if file_list else None
+
+
+class DictItemSchema(BaseModel):
+    """通用字典项（label/value 对）。"""
+
+    label: str = Field(description="展示名")
+    value: str = Field(description="值")
+
+
+class MedFilesDictOutSchema(BaseModel):
+    """文件类型字典响应。"""
+
+    file_type_options: list[DictItemSchema] = Field(
+        description="当前数据库里实际出现过的文件类型字典（label 同 value）"
+    )
+
+
+class MedFilesStatisticsOutSchema(BaseModel):
+    """医疗文件统计响应。"""
+
+    file_count: int = Field(description="文件个数")
+    patient_count: int = Field(description="去重后的患者个数")
+    total_size_bytes: int = Field(description="所有文件总大小（字节）")
+    total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")

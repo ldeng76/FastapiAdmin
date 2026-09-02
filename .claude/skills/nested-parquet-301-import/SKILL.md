@@ -299,12 +299,51 @@ detail_fields=spec.get("detail_fields"),
 检查文件结尾是否有 `COMMIT;` 行（**之前我 edit 漏删了 COMMIT 导致
 事务整段被回滚，所有 INSERT 看似成功实际 0 行落库**）。
 
-### E. 大事务 commit 阶段不可中断
+### E. 大事务 commit 阶段加速
 
 3.5M lab 单事务 INSERT（即使分批 BATCH_SIZE=1000）仍在单事务内，
 commit 阶段需刷脏页到磁盘，耗时30+ 分钟。PG 端 `idle in transaction`、
 进程状态 Ssl/睡眠 + ep_poll 是正常状态。
 **绝对不要** SIGKILL，否则整事务回滚 + 重新跑又30 分钟。
+
+**修复方案（已落地于 `anon_etl_engine.py:import_center`）**：事务内
+`SET LOCAL synchronous_commit = off`——commit 不再等 fsync，事务内
+批量 INSERT 阶段耗时不变，**commit 阶段从 ~30 分钟降到秒级**。
+
+落地位置（`backend/app/plugin/module_medical/hospital/anon_etl_engine.py`
+`import_center` 入口，docstring 闭合后、`if not data_dir.exists()` 之前）：
+```python
+import os
+fsync_off = os.environ.get("LNRS_ETL_FSYNC", "0") != "1"
+if fsync_off:
+    try:
+        await db.execute(text("SET LOCAL synchronous_commit = off"))
+        log.info(f"ETL2: {center_code} 事务内 synchronous_commit=off "
+                 f"（commit 不等 fsync；崩溃丢失风险由重跑幂等吸收）")
+    except Exception as e:
+        # PG 版本不支持或权限不足 → 回退到 on（保持原行为，不阻断导入）
+        log.warning(f"ETL2: {center_code} 关闭 synchronous_commit 失败，回退默认: {e}")
+```
+
+**关键属性**：
+- `SET LOCAL` 作用域限定到当前事务，commit/rollback 后自动复原——
+  **不会**污染同一连接上的查询 API 调用。
+- **不会**影响 INSERT 阶段耗时（与每批 WAL 写入有关，与 fsync 无关）；
+  **仅** commit 阶段从 fsync 等待 30+ 分钟降到秒级。
+- 代价：DB crash 时本事务已 ACK 但未刷盘的最后 WAL 段会丢失 →
+  ETL 重跑幂等即可吸收（`ON CONFLICT DO UPDATE` + patient 三态机）。
+
+**环境变量逃生口**：
+- 默认 `LNRS_ETL_FSYNC=0` → 关闭 fsync（**当前默认**）
+- `LNRS_ETL_FSYNC=1` → 恢复同步落盘（用于对比 commit 耗时或复现 on 行为）
+
+**配套调优**（PG 端 `postgresql.conf` / `ALTER SYSTEM`，需 reload）：
+```sql
+ALTER SYSTEM SET wal_compression = on;            -- 减小 WAL 体积
+ALTER SYSTEM SET max_wal_size = '4GB';            -- 减少 checkpoint 触发频率
+ALTER SYSTEM SET maintenance_work_mem = '1GB';    -- index build 阶段
+```
+这些 **不会**影响 commit fsync 等待本身，但能降低 checkpoint 期间的 stall。
 
 ### F. lab 无 visit_id → 引擎退化为只挂 patient
 
@@ -317,8 +356,8 @@ commit 阶段需刷脏页到磁盘，耗时30+ 分钟。PG 端 `idle in transact
 301 record.parquet 的 `Doc[]` 是 XML/HTML 体（XMLNS+HTML+注释），清洗
 成本高；本次**不导入 Doc 数据**——只入顶层 visit 信息。
 `Doc` 列保留为 LIST 字段整体进入 `visit_detail_json`（引擎剩余字段自动
-进 JSONB 兜底），后续若要解析 Doc 可在 ETL1 端展开为 exam_text (ClinicalNote
-类型) 走 exam_detail。
+进 JSONB 兜底），后续若要解析 Doc 可在 ETL1 端展开为 exam_text
+(ClinicalNote 类型) 走 exam_detail。
 
 ### H. KNOWLEDGE_CENTERS 与 `--centers` 关系
 
@@ -335,6 +374,7 @@ CLI 默认处理列表。新中心可**不改 KNOWN_CENTERS**，只要 `--center
 | 引擎改动 | 无需改引擎 spec（spec 已覆盖） | 需加 spec 条目；`exam_type_field`/`detail_type` 透传 |
 | 数据量 | 万级 | 百万~千万级（大事务 commit 30+ 分钟） |
 | 数据问题 | 无明显脏数据 | NUL 字符 / NUMERIC 溢出 / examClass 多值 |
+| Commit 加速 | 不需要（万级） | `SET LOCAL synchronous_commit=off`（commit 30 分钟 → 秒级） |
 
 ## 适配脚本模板参考
 

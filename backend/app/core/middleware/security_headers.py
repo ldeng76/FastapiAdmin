@@ -73,9 +73,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
 
         # 内容安全策略（基础级别，可按需收紧）
+        # worker-src blob: —— ALTCHA widget 用 Blob Worker 跑 PoW，否则 CSP 会拒绝 Creating a worker from blob:
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "worker-src 'self' blob:; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https: blob:; "
             "font-src 'self' data:; "

@@ -1,0 +1,7 @@
+# 总抽样: 2682
+# 无文件: 1
+# 无 DICM: 0
+# 不在标准 9 种 modality 中: 0
+# Modality 分布:
+  CT: 2681
+  NOFILE: 1

@@ -31,8 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .anon_model import (
     AnonExamDetailModel,
     AnonExamModel,
+    AnonImagingOrphanModel,
+    AnonImagingStudyModel,
     AnonLabResultModel,
     AnonOrderModel,
+    AnonOrphanAuditBatchModel,
     AnonPatientModel,
     AnonReportTextModel,
     AnonSurgeryModel,
@@ -254,8 +257,12 @@ async def anon_get_patient_detail(
                     d[k] = d[k].isoformat()
             modalities["clinical"].append(_tag_row(d, "就诊", "clinical"))
     except Exception:
-        # 缺表（省医 schema 未建）时跳过
+        # 缺表（省医 schema 未建）时跳过；嵌套事务回滚以解除整事务 aborted 状态
         log.warning("就诊查询失败（可能 AnonVisitDetailModel 未建表）", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # 3) 手术
     surgery_stmt = (
@@ -302,6 +309,10 @@ async def anon_get_patient_detail(
             modalities["collection"].append(_tag_row(d, "检验结果", "clinical"))
     except Exception:
         log.warning("检验查询失败（可能 AnonLabResultModel 未建表）", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # 5) 医嘱（省医扩展表，可缺）
     try:
@@ -325,6 +336,10 @@ async def anon_get_patient_detail(
             modalities["order"].append(_tag_row(d, "医嘱", "clinical"))
     except Exception:
         log.warning("医嘱查询失败（可能 AnonOrderModel 未建表）", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # 6) 检查 + 报告 + 详情（按 exam_type 分模态）
     exam_stmt = (
@@ -405,3 +420,331 @@ async def anon_get_patient_detail(
         "patient": patient,
         "modal_data":modalities,
     }
+
+# --------------------------------------------------------------------------- #
+# 影像研究桥接查询（2026-08-28 新增）
+# --------------------------------------------------------------------------- #
+
+
+# 列出 SQL 列：与前端 DicomStudy 类型对齐
+IMAGING_STUDY_LIST_COLS = [
+    AnonImagingStudyModel.study_key,
+    AnonImagingStudyModel.dicom_study_uid.label("study_uid"),
+    AnonImagingStudyModel.modality,
+    AnonImagingStudyModel.image_path,
+    AnonImagingStudyModel.sop_count,
+    AnonImagingStudyModel.source,
+    AnonImagingStudyModel.anon_exam_id,
+    AnonImagingStudyModel.created_at,
+]
+
+
+async def anon_list_patient_imaging_studies(
+    db: AsyncSession,
+    patient_id: str,
+    center: str | None = None,
+    modality: str | None = None,
+) -> list[dict[str, Any]]:
+    """列出某患者的所有影像研究（study-level）。
+
+    用途：前端"患者详情 → 查看影像"按钮拿到 study 列表，传给
+    DicomViewer（cornerstone3D）拉 series/instances。
+
+    返回字段（与前端 DicomStudy 兼容）：
+      - study_id      = dicom_study_uid （DicomViewer props.studyId 期望）
+      - study_uid     = dicom_study_uid （冗余，便于诊断）
+      - modality      = 'CT' / 'Pathology' / ...
+      - image_path    = 磁盘上 Study 根目录绝对路径
+      - sop_count     = 该 Study 下影像切片数（仅展示）
+      - source        = 数据来源盘标识
+      - anon_exam_id  = 冗余 FK（ETL-2 回写时有值，离线灌库为空）
+      - series_count  = None（本表未填 series-level 明细；前端 DicomViewer
+                        会拉 series 接口补齐；UI 显示'系列数加载中'）
+      - patient_id    = PT_xxx（脱敏后）
+      - patient_name  = 从 lnrs_anon_patient 联表带出（便于 viewer overlay）
+      - study_description / study_date：未填，前端 DicomViewer 会用
+        listStudies() 接口补齐；本接口不返避免冗余
+    """
+    conditions = [
+        AnonImagingStudyModel.patient_id == patient_id,
+        AnonPatientModel.deleted_at.is_(None),
+    ]
+    if center:
+        conditions.append(AnonImagingStudyModel.center_code == center)
+    if modality:
+        conditions.append(AnonImagingStudyModel.modality == modality)
+
+    stmt = (
+        select(
+            AnonImagingStudyModel.study_key,
+            AnonImagingStudyModel.dicom_study_uid.label("study_uid"),
+            AnonImagingStudyModel.modality,
+            AnonImagingStudyModel.image_path,
+            AnonImagingStudyModel.sop_count,
+            AnonImagingStudyModel.source,
+            AnonImagingStudyModel.anon_exam_id,
+            AnonImagingStudyModel.center_code,
+            AnonImagingStudyModel.created_at,
+            AnonPatientModel.patient_id.label("patient_id"),
+            AnonPatientModel.sex,
+            AnonPatientModel.birth_date,
+        )
+        .join(
+            AnonPatientModel,
+            AnonPatientModel.patient_id == AnonImagingStudyModel.patient_id,
+        )
+        .where(*conditions)
+        .order_by(
+            AnonImagingStudyModel.modality,
+            AnonImagingStudyModel.study_key,
+        )
+    )
+    rows = (await db.execute(stmt)).mappings().all()
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        # study_id 别名：DicomViewer props.studyId 期望 = StudyInstanceUID
+        d["study_id"] = d["study_uid"]
+        d["patient_name"] = None  # 暂未联 patient_name（patient 表无此列）
+        if hasattr(d.get("birth_date"), "isoformat"):
+            d["birth_date"] = d["birth_date"].isoformat()
+        if hasattr(d.get("created_at"), "isoformat"):
+            d["created_at"] = d["created_at"].isoformat()
+        items.append(d)
+    return items
+
+
+async def anon_get_imaging_study_path(
+    db: AsyncSession,
+    *,
+    patient_id: str,
+    dicom_study_uid: str,
+) -> str | None:
+    """按 (patient_id, study_uid) 反查影像绝对路径。
+
+    用途：DICOMweb 后端在收到 QIDO-RS 请求需要验证 study 是否对当前 patient
+    可见时使用；以及 dicom_image_bytes 接口安全校验。
+    """
+    stmt = select(AnonImagingStudyModel.image_path).where(
+        AnonImagingStudyModel.patient_id == patient_id,
+        AnonImagingStudyModel.dicom_study_uid == dicom_study_uid,
+    ).limit(1)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+# --------------------------------------------------------------------------- #
+# 孤儿研究查询(2026-09-03 新增)
+# --------------------------------------------------------------------------- #
+
+
+async def anon_list_patient_imaging_orphans(
+    db: AsyncSession,
+    patient_id: str,
+    center: str | None = None,
+    orphan_status: str | None = None,
+    orphan_kind: str | None = None,
+) -> list[dict[str, Any]]:
+    """列出某患者的孤儿研究(2026-09-03 新增)。
+
+    返回元素字段:
+      - study_orphan_id      业务编号 OR_<8hex>
+      - source_orphan_hash   跨中心指纹
+      - center_code, dicom_study_uid, image_path, modality, path_date_prefix,
+        sop_count, source, orphan_kind, orphan_status, review_notes,
+        audit_batch_id, patient_id, created_at, updated_at
+    """
+    conditions = [
+        AnonImagingOrphanModel.patient_id == patient_id,
+    ]
+    if center:
+        conditions.append(AnonImagingOrphanModel.center_code == center)
+    if orphan_status:
+        conditions.append(AnonImagingOrphanModel.orphan_status == orphan_status)
+    if orphan_kind:
+        conditions.append(AnonImagingOrphanModel.orphan_kind == orphan_kind)
+
+    stmt = (
+        select(
+            AnonImagingOrphanModel.study_orphan_id,
+            AnonImagingOrphanModel.source_orphan_hash,
+            AnonImagingOrphanModel.center_code,
+            AnonImagingOrphanModel.dicom_study_uid,
+            AnonImagingOrphanModel.image_path,
+            AnonImagingOrphanModel.path_date_prefix,
+            AnonImagingOrphanModel.modality,
+            AnonImagingOrphanModel.sop_count,
+            AnonImagingOrphanModel.source,
+            AnonImagingOrphanModel.orphan_kind,
+            AnonImagingOrphanModel.orphan_status,
+            AnonImagingOrphanModel.review_notes,
+            AnonImagingOrphanModel.audit_batch_id,
+            AnonImagingOrphanModel.patient_id,
+            AnonImagingOrphanModel.created_at,
+            AnonImagingOrphanModel.updated_at,
+        )
+        .where(*conditions)
+        .order_by(
+            AnonImagingOrphanModel.orphan_kind,
+            AnonImagingOrphanModel.orphan_key,
+        )
+    )
+    rows = (await db.execute(stmt)).mappings().all()
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        for k in ("created_at", "updated_at"):
+            if hasattr(d.get(k), "isoformat"):
+                d[k] = d[k].isoformat()
+        items.append(d)
+    return items
+
+
+async def anon_get_imaging_orphan_path(
+    db: AsyncSession,
+    *,
+    patient_id: str,
+    study_orphan_id: str,
+) -> str | None:
+    """按 study_orphan_id 反查孤儿研究磁盘绝对路径(主表反查路径)。"""
+    stmt = select(AnonImagingOrphanModel.image_path).where(
+        AnonImagingOrphanModel.patient_id == patient_id,
+        AnonImagingOrphanModel.study_orphan_id == study_orphan_id,
+    ).limit(1)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def anon_resolve_orphan_id_from_path(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    image_path: str,
+    dicom_root: str,
+) -> str | None:
+    """给定 (center_code, image_path, dicom_root) 反查 study_orphan_id(反向映射:绝对路径 → ID)。
+
+    算法:rel_path = image_path.removeprefix(dicom_root).lstrip('/');OR_xxx = 'OR_' + sha256(f'{center_code}:{rel_path}')[:8];
+    然后 SELECT study_orphan_id WHERE study_orphan_id = ? 校验存在性(返回表内值或 None)。
+    用于:"运维迁移 dicom 根目录"场景下,旧 ID 仍可经此函数从新绝对路径获取(只要 dicom_root 一致)。
+    """
+    import hashlib
+
+    if image_path.startswith(dicom_root):
+        rel_path = image_path[len(dicom_root):].lstrip("/")
+    else:
+        rel_path = image_path
+    payload = f"{center_code}:{rel_path}".encode("utf-8")
+    candidate_id = "OR_" + hashlib.sha256(payload).hexdigest()[:8]
+    stmt = select(AnonImagingOrphanModel.study_orphan_id).where(
+        AnonImagingOrphanModel.study_orphan_id == candidate_id,
+        AnonImagingOrphanModel.center_code == center_code,
+    ).limit(1)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def anon_list_imaging_orphans_by_center(
+    db: AsyncSession,
+    center: str,
+    page: int = 1,
+    page_size: int = 50,
+    orphan_kind: str | None = None,
+    orphan_status: str | None = None,
+) -> list[dict[str, Any]]:
+    """分页列出某中心的孤儿(医院视角)。"""
+    conditions = [AnonImagingOrphanModel.center_code == center]
+    if orphan_kind:
+        conditions.append(AnonImagingOrphanModel.orphan_kind == orphan_kind)
+    if orphan_status:
+        conditions.append(AnonImagingOrphanModel.orphan_status == orphan_status)
+
+    offset = max(0, (page - 1) * page_size)
+    stmt = (
+        select(
+            AnonImagingOrphanModel.orphan_key,
+            AnonImagingOrphanModel.study_orphan_id,
+            AnonImagingOrphanModel.source_orphan_hash,
+            AnonImagingOrphanModel.center_code,
+            AnonImagingOrphanModel.patient_id,
+            AnonImagingOrphanModel.dicom_study_uid,
+            AnonImagingOrphanModel.image_path,
+            AnonImagingOrphanModel.path_date_prefix,
+            AnonImagingOrphanModel.modality,
+            AnonImagingOrphanModel.sop_count,
+            AnonImagingOrphanModel.orphan_kind,
+            AnonImagingOrphanModel.orphan_status,
+            AnonImagingOrphanModel.created_at,
+        )
+        .where(*conditions)
+        .order_by(AnonImagingOrphanModel.orphan_key)
+        .offset(offset)
+        .limit(page_size)
+    )
+    rows = (await db.execute(stmt)).mappings().all()
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        if hasattr(d.get("created_at"), "isoformat"):
+            d["created_at"] = d["created_at"].isoformat()
+        items.append(d)
+    return items
+
+async def anon_get_orphan_audit_batch(
+    db: AsyncSession,
+    audit_batch_id: str,
+) -> dict[str, Any] | None:
+    """反查审计批次元数据。"""
+    stmt = select(AnonOrphanAuditBatchModel).where(
+        AnonOrphanAuditBatchModel.audit_batch_id == audit_batch_id,
+    ).limit(1)
+    row = (await db.execute(stmt)).scalars().first()
+    if not row:
+        return None
+    d = {
+        "audit_batch_id": row.audit_batch_id,
+        "center_code": row.center_code,
+        "audit_locator": row.audit_locator,
+        "audit_sha256": row.audit_sha256,
+        "discovered_count": row.discovered_count,
+        "patient_missing_count": row.patient_missing_count,
+        "dual_disk_copy_count": row.dual_disk_copy_count,
+        "empty_dir_count": row.empty_dir_count,
+        "other_count": row.other_count,
+        "ran_by": row.ran_by,
+        "ran_at": row.ran_at.isoformat() if row.ran_at else None,
+        "notes": row.notes,
+    }
+    return d
+
+
+async def anon_get_imaging_orphan_by_id(
+    db: AsyncSession,
+    study_orphan_id: str,
+) -> dict[str, Any] | None:
+    """按 study_orphan_id 全局反查孤儿详情(主表即中间表的体现)。"""
+    stmt = select(
+        AnonImagingOrphanModel.orphan_key,
+        AnonImagingOrphanModel.study_orphan_id,
+        AnonImagingOrphanModel.source_orphan_hash,
+        AnonImagingOrphanModel.center_code,
+        AnonImagingOrphanModel.patient_id,
+        AnonImagingOrphanModel.dicom_study_uid,
+        AnonImagingOrphanModel.image_path,
+        AnonImagingOrphanModel.path_date_prefix,
+        AnonImagingOrphanModel.modality,
+        AnonImagingOrphanModel.sop_count,
+        AnonImagingOrphanModel.source,
+        AnonImagingOrphanModel.orphan_kind,
+        AnonImagingOrphanModel.orphan_status,
+        AnonImagingOrphanModel.review_notes,
+        AnonImagingOrphanModel.audit_batch_id,
+        AnonImagingOrphanModel.created_at,
+        AnonImagingOrphanModel.updated_at,
+    ).where(
+        AnonImagingOrphanModel.study_orphan_id == study_orphan_id,
+    ).limit(1)
+    row = (await db.execute(stmt)).mappings().first()
+    if not row:
+        return None
+    d = dict(row)
+    for k in ("created_at", "updated_at"):
+        if hasattr(d.get(k), "isoformat"):
+            d[k] = d[k].isoformat()
+    return d

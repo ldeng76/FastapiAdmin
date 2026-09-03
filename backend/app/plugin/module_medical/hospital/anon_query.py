@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .anon_model import (
     AnonExamDetailModel,
     AnonExamModel,
+    AnonImagingOrphanModel,
     AnonIngestBatchModel,
+    AnonOrphanAuditBatchModel,
     AnonPatientModel,
     AnonReportTextModel,
     AnonSurgeryModel,
@@ -145,9 +147,9 @@ async def anon_data_summary(
     db: AsyncSession,
     center_codes: list[str] | None = None,
 ) -> dict[str, Any]:
-    """一键汇总 7 张 anon 表的行数。
+    """一键汇总 anon 表的行数(含 2026-09-03 新增 imaging_orphan / orphan_audit_batch)。
 
-    返回 shape（与旧 HospitalService.get_data_summary_service 一致但 key 换 anon 表名）：
+    返回 shape(新增 2 键):
         {
             "patient": 1234,
             "exam": 5678,
@@ -156,6 +158,8 @@ async def anon_data_summary(
             "visit": 234,
             "surgery": 345,
             "ingest_batch": 12,
+            "imaging_orphan": 8085,         # 2026-09-03 新增
+            "orphan_audit_batch": 1,        # 2026-09-03 新增
             "total_rows": 14393,
         }
     """
@@ -167,6 +171,47 @@ async def anon_data_summary(
         "visit": await count_anon_visits(db, center_codes),
         "surgery": await count_anon_surgeries(db, center_codes),
         "ingest_batch": await count_anon_ingest_batches(db, center_codes),
+        "imaging_orphan": await count_anon_imaging_orphans(db, center_codes),
+        "orphan_audit_batch": await count_anon_orphan_audit_batches(db, center_codes),
     }
     counts["total_rows"] = sum(counts.values())
     return counts
+# --------------------------------------------------------------------------- #
+# 孤儿研究行数聚合(2026-09-03 新增,供步骤 4 步骤 5 使用)
+# --------------------------------------------------------------------------- #
+
+
+async def count_anon_imaging_orphans(
+    db: AsyncSession,
+    center_codes: list[str] | None = None,
+    orphan_kind: str | None = None,
+    orphan_status: str | None = None,
+) -> int:
+    """统计 lnrs_anon_imaging_orphan 行数。
+
+    Args:
+        center_codes: 限定中心列表;None 表示不限。
+        orphan_kind: 成因分类过滤(csv_uncovered/patient_missing/dual_disk_copy/empty_dir/other)。
+        orphan_status: 状态机过滤(discovered/reviewed/pending_ingest/ingested/rejected/archived)。
+    """
+    stmt = select(func.count()).select_from(AnonImagingOrphanModel)
+    if center_codes is not None:
+        stmt = stmt.where(AnonImagingOrphanModel.center_code.in_(center_codes))
+    if orphan_kind is not None:
+        stmt = stmt.where(AnonImagingOrphanModel.orphan_kind == orphan_kind)
+    if orphan_status is not None:
+        stmt = stmt.where(AnonImagingOrphanModel.orphan_status == orphan_status)
+    result = await db.execute(stmt)
+    return int(result.scalar_one())
+
+
+async def count_anon_orphan_audit_batches(
+    db: AsyncSession,
+    center_codes: list[str] | None = None,
+) -> int:
+    """统计 lnrs.lnrs_anon_orphan_audit_batch 行数(按 center_code 过滤)。"""
+    stmt = select(func.count()).select_from(AnonOrphanAuditBatchModel)
+    if center_codes is not None:
+        stmt = stmt.where(AnonOrphanAuditBatchModel.center_code.in_(center_codes))
+    result = await db.execute(stmt)
+    return int(result.scalar_one())

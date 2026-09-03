@@ -1,6 +1,6 @@
 -- 0016-imaging-orphan-registry.sql
 -- 2026-09-03:孤儿影像研究登记表 + 审计批次表 + 视图
--- 业务 ID `study_orphan_id` 由 (center_code, rel_path_from_dicom_root) SHA256[:8] 哈希派生,不依赖任何全局序列
+-- 业务 ID `study_orphan_id` 由 (center_code, rel_path_from_dicom_root) SHA256[:12] 哈希派生,不依赖任何全局序列
 -- 部署无关:rel_path 去掉 dicom 根绝对前缀,NFS 挂载点/主机 IP 变更不影响 ID
 -- 跨中心:source_orphan_hash 含 center_code,跨中心路径不撞
 -- **不建全局 SEQUENCE**;唯一序列是 orphan_key BIGSERIAL(物理 PK)
@@ -32,7 +32,7 @@ CREATE INDEX lnrs_anon_ix_orphan_audit_time   ON lnrs.lnrs_anon_orphan_audit_bat
 CREATE TABLE lnrs.lnrs_anon_imaging_orphan (
     orphan_key        BIGSERIAL    PRIMARY KEY,                         -- 物理 PK(BigSerial,内部锚定)
     -- 业务 ID:由信息映射生成,不依赖任何序列;同一 (center_code, rel_path_from_dicom_root) → 同一 ID
-    study_orphan_id   VARCHAR(16)  NOT NULL,                            -- OR_<8hex>, = 'OR_' || sha256('{center_code}:{rel_path_from_dicom_root}')[:8];rel_path 去掉 dicom 根绝对前缀,部署无关
+    study_orphan_id   VARCHAR(18)  NOT NULL,                            -- OR_<12hex>, = 'OR_' || sha256('{center_code}:{rel_path_from_dicom_root}')[:12];rel_path 去掉 dicom 根绝对前缀,部署无关;48 bit 空间(2.8e14),≤10^9 行碰撞概率 < 10^-3
     center_code       VARCHAR(32)  NOT NULL,                            -- zhujiang/shengyi/xinqiao/hos301
     -- 6 个 patient_missing 孤儿无对应 patient,FK 可空;其余孤儿 FK→patient CASCADE
     patient_id        VARCHAR(16)  REFERENCES lnrs.lnrs_anon_patient(patient_id) ON DELETE CASCADE,
@@ -51,8 +51,8 @@ CREATE TABLE lnrs.lnrs_anon_imaging_orphan (
     audit_batch_id    UUID         REFERENCES lnrs.lnrs_anon_orphan_audit_batch(audit_batch_id) ON DELETE SET NULL,
     created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    -- 业务编号格式校验(8hex 截断)
-    CONSTRAINT lnrs_anon_ck_imaging_orphan_id_fmt   CHECK (study_orphan_id ~ '^OR_[0-9a-f]{8}$'),
+    -- 业务编号格式校验(12hex 截断,48 bit 空间,2.8e14)
+    CONSTRAINT lnrs_anon_ck_imaging_orphan_id_fmt   CHECK (study_orphan_id ~ '^OR_[0-9a-f]{12}$'),
     -- 业务 ID 单列 UNIQUE(同 image_path → 同 ID,但跨中心不同 image_path 也不撞)
     CONSTRAINT lnrs_anon_uq_imaging_orphan_id      UNIQUE (study_orphan_id),
     -- 跨中心唯一指纹(单列 UNIQUE,审计重跑幂等 + 多中心路径不撞)
@@ -72,7 +72,6 @@ CREATE TABLE lnrs.lnrs_anon_imaging_orphan (
     -- patient_missing 必须 patient_id NULL;其他 4 类若患者注册则 FK 必填
     CONSTRAINT lnrs_anon_ck_imaging_orphan_patient CHECK (
         (orphan_kind = 'patient_missing' AND patient_id IS NULL) OR
-        (orphan_kind <> 'patient_missing')
     )
 );
 
@@ -118,8 +117,8 @@ LEFT JOIN lnrs.lnrs_anon_patient p ON p.patient_id = o.patient_id
 LEFT JOIN lnrs.lnrs_anon_orphan_audit_batch b ON b.audit_batch_id = o.audit_batch_id;
 
 
-COMMENT ON TABLE  lnrs.lnrs_anon_imaging_orphan           IS '影像孤儿登记表/中间表(ID ↔ 磁盘元数据双向映射);study_orphan_id 由 (center_code, rel_path_from_dicom_root) SHA256[:8] 哈希派生,部署无关';
-COMMENT ON COLUMN lnrs.lnrs_anon_imaging_orphan.study_orphan_id   IS '业务编号 OR_<8hex>,由 (center_code, rel_path_from_dicom_root) SHA256[:8] 哈希派生;同一 dicom 子路径 → 同一 ID(可反查);rel_path 去掉 dicom 根绝对前缀,NFS 挂载点变更不影响 ID';
+COMMENT ON TABLE  lnrs.lnrs_anon_imaging_orphan           IS '影像孤儿登记表/中间表(ID ↔ 磁盘元数据双向映射);study_orphan_id 由 (center_code, rel_path_from_dicom_root) SHA256[:12] 哈希派生,部署无关;48 bit 空间(2.8e14),≤10^9 行碰撞概率 < 10^-3';
+COMMENT ON COLUMN lnrs.lnrs_anon_imaging_orphan.study_orphan_id   IS '业务编号 OR_<12hex>,由 (center_code, rel_path_from_dicom_root) SHA256[:12] 哈希派生;同一 dicom 子路径 → 同一 ID(可反查);rel_path 去掉 dicom 根绝对前缀,NFS 挂载点变更不影响 ID';
 COMMENT ON COLUMN lnrs.lnrs_anon_imaging_orphan.source_orphan_hash IS '跨中心唯一指纹 sha256(center_code:image_path),CHAR(64) 单列 UNIQUE;含完整 abs_path 便于磁盘运维定位;对齐 source_*_hash 模式';
 COMMENT ON COLUMN lnrs.lnrs_anon_imaging_orphan.orphan_kind  IS '成因分类:csv_uncovered/patient_missing/dual_disk_copy/empty_dir/other';
 COMMENT ON COLUMN lnrs.lnrs_anon_imaging_orphan.orphan_status IS '状态机:discovered→reviewed→pending_ingest→ingested;旁支 rejected/archived';

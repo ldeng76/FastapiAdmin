@@ -883,7 +883,7 @@ class AnonImagingOrphanModel(MappedBase):
     )
 
     orphan_key: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    study_orphan_id: Mapped[str] = mapped_column(String(16), nullable=False)
+    study_orphan_id: Mapped[str] = mapped_column(String(18), nullable=False)
     center_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     patient_id: Mapped[str | None] = mapped_column(
         String(16),

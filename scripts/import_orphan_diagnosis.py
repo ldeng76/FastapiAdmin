@@ -3,7 +3,7 @@
 设计要点(2026-09-03 三轮):
 - 输入:docs/孤儿文件研究/2026-09-03珠江医院CT文件/orphan_diagnosis_v4.csv(8,134 行;多中心时可改)
 - 输出:INSERT INTO lnrs.lnrs_anon_imaging_orphan + lnrs.lnrs_anon_orphan_audit_batch
-- 业务编号 study_orphan_id = 'OR_' + sha256(f'{center_code}:{rel_path_from_dicom_root}')[:8]
+- 业务编号 study_orphan_id = 'OR_' + sha256(f'{center_code}:{rel_path_from_dicom_root}')[:12]  # 48 bit,2.8e14 空间
   - **rel_path_from_dicom_root** = image_path.removeprefix(dicom_root).lstrip('/')(去掉 dicom 根前缀,保留 dicom 子目录名 + 子路径)
   - 例:image_path='/data/wlx/DATABASE/01_disk/zhujiang_dicom/pn202307/20230715/<basename>',dicom_root='/data/wlx/DATABASE/01_disk/zhujiang_dicom'
     → rel_path='zhujiang_dicom/pn202307/20230715/<basename>'
@@ -77,12 +77,12 @@ def compute_rel_path(image_path: str, dicom_root: str) -> str:
 
 
 def compute_study_orphan_id(center_code: str, rel_path: str) -> str:
-    """业务编号派生:OR_<8hex> = 'OR_' + sha256(f'{center}:{rel_path}')[:8]。
+    """业务编号派生:OR_<12hex> = 'OR_' + sha256(f'{center}:{rel_path}')[:12](48 bit 空间)。
 
     由 dicom 子路径哈希生成,丢弃绝对部署前缀,部署无关 + 跨中心不撞。
     """
     payload = f"{center_code}:{rel_path}".encode("utf-8")
-    return "OR_" + hashlib.sha256(payload).hexdigest()[:8]
+    return "OR_" + hashlib.sha256(payload).hexdigest()[:12]
 
 
 def compute_source_orphan_hash(center_code: str, image_path: str) -> str:

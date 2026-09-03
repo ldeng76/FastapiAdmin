@@ -621,7 +621,7 @@ async def anon_resolve_orphan_id_from_path(
 ) -> str | None:
     """给定 (center_code, image_path, dicom_root) 反查 study_orphan_id(反向映射:绝对路径 → ID)。
 
-    算法:rel_path = image_path.removeprefix(dicom_root).lstrip('/');OR_xxx = 'OR_' + sha256(f'{center_code}:{rel_path}')[:8];
+    算法:rel_path = image_path.removeprefix(dicom_root).lstrip('/');OR_xxx = 'OR_' + sha256(f'{center_code}:{rel_path}')[:12](48 bit 空间);
     然后 SELECT study_orphan_id WHERE study_orphan_id = ? 校验存在性(返回表内值或 None)。
     用于:"运维迁移 dicom 根目录"场景下,旧 ID 仍可经此函数从新绝对路径获取(只要 dicom_root 一致)。
     """
@@ -632,7 +632,7 @@ async def anon_resolve_orphan_id_from_path(
     else:
         rel_path = image_path
     payload = f"{center_code}:{rel_path}".encode("utf-8")
-    candidate_id = "OR_" + hashlib.sha256(payload).hexdigest()[:8]
+    candidate_id = "OR_" + hashlib.sha256(payload).hexdigest()[:12]
     stmt = select(AnonImagingOrphanModel.study_orphan_id).where(
         AnonImagingOrphanModel.study_orphan_id == candidate_id,
         AnonImagingOrphanModel.center_code == center_code,

@@ -173,7 +173,7 @@ async def get_patient_imaging_study_path_controller(
     summary="患者孤儿研究列表",
     description=(
         "按 patient_id 列出 lnrs_anon_imaging_orphan 中该患者的孤儿记录；"
-        "返回元素含 study_orphan_id (= OR_<8hex>)、image_path、orphan_kind、orphan_status 等。"
+        "返回元素含 study_orphan_id (= OR_<12hex>)、image_path、orphan_kind、orphan_status 等。"
     ),
     response_model=ResponseSchema[list],
 )
@@ -204,7 +204,7 @@ async def list_patient_imaging_orphans_controller(
 )
 async def get_patient_imaging_orphan_path_controller(
     patient_id: Annotated[str, Path(description="患者编号 PT_xxxxxxxx")],
-    study_orphan_id: Annotated[str, Path(description="孤儿编号 OR_<8hex>")],
+    study_orphan_id: Annotated[str, Path(description="孤儿编号 OR_<12hex>(48 bit 空间)")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],
 ) -> JSONResponse:
     """反查孤儿研究绝对路径。"""
@@ -228,7 +228,7 @@ async def get_patient_imaging_orphan_path_controller(
     response_model=ResponseSchema[dict],
 )
 async def get_imaging_orphan_by_id_controller(
-    study_orphan_id: Annotated[str, Path(description="孤儿编号 OR_<8hex>")],
+    study_orphan_id: Annotated[str, Path(description="孤儿编号 OR_<12hex>(48 bit 空间)")],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],
 ) -> JSONResponse:
     """按业务 ID 全局反查孤儿详情。"""

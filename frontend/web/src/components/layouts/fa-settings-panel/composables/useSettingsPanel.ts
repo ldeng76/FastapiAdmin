@@ -203,7 +203,7 @@ export function useSettingsPanel() {
       domOperations.setRootAttribute("data-box-mode", boxMode);
 
       themeHandlers.initSystemTheme();
-      openFestival();
+      // openFestival();
     };
 
     const cleanupSettings = () => {

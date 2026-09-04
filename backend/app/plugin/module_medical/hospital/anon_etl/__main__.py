@@ -68,9 +68,12 @@ def _dry_run(centers: list[str], data_root: Path) -> int:
             print(f"[DRY-RUN]    - {spec['src_table']:<22} [{tag}] kind={spec['kind']}")
             if exists:
                 total += 1
-        # visit_record 显式提示
+        # visit_record 显式提示：仅当中心未启用 visit_detail spec 时才是真跳过
         visit_pq = cdir / "visit_record.parquet"
-        if visit_pq.exists():
+        if visit_pq.exists() and not any(
+            s.get("src_table") == "visit_record" and s.get("kind") == "visit_detail"
+            for s in specs
+        ):
             print(
                 f"[DRY-RUN]    - visit_record.parquet     [{visit_pq.stat().st_size} bytes] "
                 f"SKIP (visit 桥未启用)"

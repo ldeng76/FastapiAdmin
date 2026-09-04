@@ -1,31 +1,39 @@
 """ETL-1 适配: 301 医院 record.parquet → ETL-2 引擎期望的 visit_record.parquet 布局。
 
-源文件: /data/wlx/DATABASE/extracted_tables/hos301/record.parquet (17,997 行)
-  schema:
+源文件: /data/wlx/DATABASE/extracted_tables/hos301/record.parquet (261,271 行 / 17,997 visit)
+  schema (2026-09-04 重抽版):
     patient_id (VARCHAR)
-    visit_id (BIGINT)             — 78/17997 NULL；其余非空
+    visit_id (BIGINT)             — 全局自增序号(1/2/3...), (patient_id, visit_id) 唯一
     admissionDateTime (TIMESTAMP)  100% 非空
-    dischargeDateTime (TIMESTAMP)  13/17997 NULL
+    dischargeDateTime (TIMESTAMP)  116/261271 NULL (可空)
     deptAdmissionTo (VARCHAR)
-    Doc LIST<STRUCT(docId, docTime VARCHAR, docTitle, content VARCHAR)>
+    docId (VARCHAR)               — 病历文档 ID (visit 内多 doc 平铺成多行)
+    docTime (TIMESTAMP)           — 病历文档时间
+    docTitle (VARCHAR)            — 病历文档标题
+    raw_text (VARCHAR)            — 病历文档内容 (HTML/XML, 19-22KB/行)
 
-  Doc.content 是 XML/ HTML 文档（带 <!--Copyright...--> + xmlns）；
-  26 万 Doc 文档清洗成本高，本次**不导入 Doc 数据**——只把顶层 visit 信息入 visit_detail。
+  旧版 (2026-09-01) Doc LIST<STRUCT(...)> 已展平: 17,997 visit × 多 doc → 261,271 行。
+  旧版 78/17997 visit_id NULL 在新版消失 (visit_id 0 NULL)。
 
 关键观察:
-  - 顶层 visit_id 与 (patient_id, admissionDateTime) 1:1
-  - 17,997 顶层行 ≈ visit 次数（部分病人多次住院）
-  - 78 行 visit_id NULL：引擎 visit handler 要求 visit_id 非空，过滤掉
-  - 13 行 dischargeDateTime NULL：引擎 discharge_date 可空，保留
+  - (patient_id, admissionDateTime) 唯一 → visit 唯一标识 (17,997)
+  - 源 visit_id 是全局自增序号 (1,2,3...), 多 patient 共享同一 visit_id
+  - **visit_id 派生**: RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
+    保证 record 与 order 同一 (patient_id, admissionDateTime) 派生同一 visit_id,
+    这样 ETL-2 引擎端 visit_lookup 可命中,order 能挂到正确 visit 桥。
+  - 单 visit 最多 195 doc (Y9303816/visit=1), 平均 14.5 doc/visit
+  - 261,271 - 17,997 = 243,274 多余行 → 引擎层 seen_visit_hash 丢弃
+  - 单 visit 首次出现的行 = "visit 主行" (含 patient/visit/admission/discharge/dept)
 
 ETL2 hos301 spec: src_table='visit_record', kind='visit_detail',
                  id_field='visit_id', date_field='admissionDateTime'
 
 引擎读 parquet 后从 rd 提取:
-  patient_id, visit_id (id_field), admission_time (date_field),
+  patient_id, visit_id (id_field, 派生自 RANK), admission_time (date_field),
   discharge_date, admission_dept (=deptAdmissionTo),
   visit_category / length_of_stay / visit_age / visit_detail_json
-其余字段（含 Doc 等）→ visit_detail_json
+其余字段 (docId/docTime/docTitle/raw_text) → visit_detail_json
+(同 visit 多 doc 时仅 first row 的 doc 字段进 JSONB,后续行 dedup 丢弃)
 """
 
 from __future__ import annotations
@@ -62,16 +70,30 @@ def main() -> int:
     dst = out_dir / "visit_record.parquet"
 
     con = duckdb.connect(":memory:")
-    # 顶层 visit_id 与 admissionDateTime 1:1。不展平 Doc，Doc 字段保留为 list
-    # (引擎 visit_detail handler 把所有非 known 列入 JSONB)。
+
+    # 同 visit 多 doc 行被引擎 dedup 丢弃 (保留 first row 的 docId/docTime/docTitle/raw_text)。
     # 引擎 known 列: {patient_id, id_field, visit_id, admission_time, discharge_date,
     #                   admission_dept, discharge_dept, length_of_stay,
     #                   payment_method, visit_age, visit_category}
     sql = f"""
         COPY (
+            WITH derived AS (
+                SELECT
+                    patient_id,
+                    RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
+                        AS visit_id_ranked,
+                    admissionDateTime,
+                    dischargeDateTime,
+                    deptAdmissionTo,
+                    docId,
+                    docTime,
+                    docTitle,
+                    raw_text
+                FROM read_parquet('{src.as_posix()}')
+            )
             SELECT
-                CAST(patient_id AS VARCHAR)         AS patient_id,
-                CAST(visit_id    AS VARCHAR)        AS visit_id,
+                CAST(patient_id      AS VARCHAR)    AS patient_id,
+                CAST(visit_id_ranked AS VARCHAR)    AS visit_id,
                 admissionDateTime                   AS admission_time,
                 dischargeDateTime                   AS discharge_date,
                 CAST(deptAdmissionTo AS VARCHAR)    AS admission_dept,
@@ -80,9 +102,12 @@ def main() -> int:
                 CAST(NULL AS VARCHAR)               AS payment_method,
                 CAST(NULL AS DOUBLE)                AS visit_age,
                 CAST(NULL AS VARCHAR)               AS visit_category,
-                Doc                                 AS visit_Doc
-            FROM read_parquet('{src.as_posix()}')
-            WHERE visit_id IS NOT NULL
+                docId                               AS visit_docId,
+                docTime                             AS visit_docTime,
+                docTitle                            AS visit_docTitle,
+                raw_text                            AS visit_raw_text
+            FROM derived
+            WHERE visit_id_ranked IS NOT NULL
         ) TO '{dst.as_posix()}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
     """
     con.execute(sql)

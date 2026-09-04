@@ -1,10 +1,10 @@
 """ETL-1 适配: 301 医院 order.parquet → ETL-2 引擎期望的 order.parquet 布局。
 
 源文件: /data/wlx/DATABASE/extracted_tables/hos301/order.parquet (8,313 visit 行)
-  schema:
+  schema (2026-09-04 重抽版):
     patient_id (VARCHAR)
-    visit_id (BIGINT)
-    admissionDateTime (TIMESTAMP)
+    visit_id (BIGINT)             — **整列 1, 垃圾数据, 不再使用**
+    admissionDateTime (TIMESTAMP) — 与 patient_id 一起唯一定位 visit
     deptAdmissionTo (VARCHAR)
     dischargeDateTime (TIMESTAMP)
     order_data LIST<STRUCT(
@@ -15,22 +15,27 @@
         startDateTime TIMESTAMP, stopDateTime TIMESTAMP)>
 
 关键观察:
-  - 顶层 visit_id 100% 非空（8313/ 8313）
-  - order_data 长度范围 4-1806；展平后 ~870, 800 行
+  - 源 visit_id 全 1 (8313/8313) 是垃圾数据, 不能直接用
+  - (patient_id, admissionDateTime) 唯一 = visit 真实唯一标识
+  - **visit_id 派生**: RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
+    与 etl1_adapt_hos301_record.py 同表达式, 保证 order 与 record 派生同一 visit_id,
+    这样 ETL-2 引擎 visit_lookup 能命中, order 挂到正确 visit 桥
+  - 8,313 visit 全部 patient 都包含在 record 8350 patient 内 (差 37 是 record 独有)
+  - order_data 长度范围 4-1806; 展平后 ~870,800 行
   - orderClassName: 检验/西药/治疗/护理/膳食/检查/其他/手术
-  - orderText 即医嘱内容，映射到引擎 order_name
+  - orderText 即医嘱内容, 映射到引擎 order_name
 
 ETL2 hos301 spec: src_table='order', kind='order',
                  order_type='order', order_name_field='orderText'
 
 引擎读 parquet 后从 rd 提取:
-  patient_id, visit_id, order_name (=orderText),
+  patient_id, visit_id (派生自 RANK), order_name (=orderText),
   order_time (=startDateTime), order_source (=orderClassName),
   order_detail (整体 dict 进 JSONB)
 
-其余字段（dosage, frequency 等）→ order_detail_json
+其余字段 (dosage, frequency 等) → order_detail_json
 
-DuckDB 技巧: 同 lab，LATERAL unnest(order_data) AS unnest 后 unnest.<field> 访问 struct 子字段。
+DuckDB 技巧: 同 lab, LATERAL unnest(order_data) AS unnest 后 unnest.<field> 访问 struct 子字段。
 """
 
 from __future__ import annotations
@@ -67,27 +72,36 @@ def main() -> int:
     dst = out_dir / "order.parquet"
 
     con = duckdb.connect(":memory:")
+    # 派生 visit_id: RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
     sql = f"""
         COPY (
+            WITH derived AS (
+                SELECT
+                    patient_id,
+                    RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
+                        AS visit_id_ranked,
+                    order_data
+                FROM read_parquet('{src.as_posix()}')
+            )
             SELECT
-                CAST(patient_id AS VARCHAR)        AS patient_id,
-                CAST(visit_id    AS VARCHAR)       AS visit_id,
-                CAST(unnest.orderText AS VARCHAR)   AS task_name,
-                unnest.startDateTime                AS order_time,
-                CAST(unnest.orderClassName AS VARCHAR) AS order_source,
-                unnest.administration               AS order_administration,
-                unnest.dosage                       AS order_dosage,
-                CAST(unnest.dosageUnits AS VARCHAR)  AS order_dosageUnits,
-                CAST(unnest.freqDetail AS VARCHAR)   AS order_freqDetail,
-                CAST(unnest.frequency AS VARCHAR)    AS order_frequency,
-                CAST(unnest.orderClassName AS VARCHAR) AS order_orderClassName,
-                unnest.orderNo                       AS order_orderNo,
-                unnest.orderSubNo                    AS order_orderSubNo,
-                unnest.performSchedule               AS order_performSchedule,
-                CAST(unnest.repeatIndicator AS VARCHAR) AS order_repeatIndicator,
-                unnest.stopDateTime                  AS order_stopDateTime
-            FROM read_parquet('{src.as_posix()}'),
-                 LATERAL unnest(order_data) AS unnest
+                CAST(derived.patient_id   AS VARCHAR)        AS patient_id,
+                CAST(derived.visit_id_ranked AS VARCHAR)     AS visit_id,
+                CAST(unnest.orderText AS VARCHAR)           AS task_name,
+                unnest.startDateTime                        AS order_time,
+                CAST(unnest.orderClassName AS VARCHAR)      AS order_source,
+                unnest.administration                       AS order_administration,
+                unnest.dosage                               AS order_dosage,
+                CAST(unnest.dosageUnits AS VARCHAR)         AS order_dosageUnits,
+                CAST(unnest.freqDetail AS VARCHAR)          AS order_freqDetail,
+                CAST(unnest.frequency AS VARCHAR)           AS order_frequency,
+                CAST(unnest.orderClassName AS VARCHAR)      AS order_orderClassName,
+                unnest.orderNo                              AS order_orderNo,
+                unnest.orderSubNo                           AS order_orderSubNo,
+                unnest.performSchedule                      AS order_performSchedule,
+                CAST(unnest.repeatIndicator AS VARCHAR)     AS order_repeatIndicator,
+                unnest.stopDateTime                         AS order_stopDateTime
+            FROM derived,
+                 LATERAL unnest(derived.order_data) AS unnest
         ) TO '{dst.as_posix()}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
     """
     con.execute(sql)

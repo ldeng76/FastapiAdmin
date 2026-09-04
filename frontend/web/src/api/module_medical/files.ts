@@ -51,12 +51,13 @@ const FilesApi = {
       return data;
     }
   },
-  async getFileCheckExists(file_id: any) {
+  async getFileCheckExists(params: any) {
     const res = await request<ApiResponse>({
-      url: `${API_PATH}files/check-exists/${file_id}`,
+      url: `${API_PATH}files/check-exists`,
+      params:params,
       method: "get",
     });
-    return res?.data?.data?.exists || false;
+    return res?.data?.data || {exists:false};
   },
   getStudyUid(file_id:any){
     return request<ApiResponse<string>>({

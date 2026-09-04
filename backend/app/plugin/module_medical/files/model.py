@@ -18,6 +18,9 @@ class MedFilesModel(MappedBase):
         "study_key",
         Integer, primary_key=True, autoincrement=True, comment="主键ID"
     )
+    anon_exam_id: Mapped[str | None] = mapped_column(
+        String(40), nullable=True, comment="检查ID"
+    )
     file_name: Mapped[str | None] = mapped_column(
         "dicom_study_uid",
         String(255), nullable=True, comment="文件名"

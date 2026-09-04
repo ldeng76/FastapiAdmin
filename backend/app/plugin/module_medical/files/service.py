@@ -211,27 +211,60 @@ class MedFilesService:
 
     @classmethod
     async def check_file_existence_service(
-        cls, auth: AuthSchema, file_id: int
+        cls,
+        auth: AuthSchema,
+        *,
+        file_id: int | None = None,
+        anon_exam_id: str | None = None,
     ) -> dict:
-        """按文件ID校验磁盘文件是否实际存在。
+        """校验磁盘文件是否实际存在。
 
-        返回:
-            {"file_id", "exists"}
+        二选一参数：
+            - file_id:      按 lnrs_anon_imaging_study.study_key 主键定位
+            - anon_exam_id: 按 lnrs_anon_imaging_study.anon_exam_id 脱敏检查ID定位
+
+        返回字典包含：
+            lookup_by / lookup_value / matched_file_id / exists
         """
-        obj: MedFilesModel | None = await MedFilesCRUD(auth).get(id=file_id)
-        if not obj:
-            return {"file_id": file_id, "exists": False}
+        # 根据入参查询目标记录，走 list 以便复用 Permission 行级过滤
+        search: dict[str, Any] = {}
+        if file_id is not None:
+            search["id"] = file_id
+        elif anon_exam_id:
+            search["anon_exam_id"] = anon_exam_id
+        else:
+            # 正常不会走到这里，controller 已做二选一校验
+            return {
+                "file_id": None,
+                "exists": False,
+            }
 
+        objs = await MedFilesCRUD(auth).list(search=search)
+        obj: MedFilesModel | None = objs[0] if objs else None
+
+        if obj is None:
+            return {
+                "file_id": None,
+                "exists": False,
+            }
+
+        matched_id = obj.id
         if not obj.file_path:
-            return {"file_id": file_id, "exists": False}
+            return {
+                "file_id": matched_id,
+                "exists": False,
+            }
 
         path = cls._resolve_file_path(obj.file_path)
         if path.is_file():
             return {
-                "file_id": file_id,
-                "exists": True
+                "file_id": matched_id,
+                "exists": True,
             }
-        return {"file_id": file_id, "exists": False}
+        return {
+            "file_id": matched_id,
+            "exists": False,
+        }
 
     @classmethod
     async def get_study_instance_uid_service(

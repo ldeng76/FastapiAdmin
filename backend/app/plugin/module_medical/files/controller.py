@@ -5,12 +5,13 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path as FastPath, Query
+from fastapi import APIRouter, Depends, Path as FastPath, Query, status
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.common.response import ResponseSchema, SuccessResponse
 from app.core.dependencies import AuthPermission
+from app.core.exceptions import CustomException
 from app.core.router_class import OperationLogRoute
 
 from .schema import (
@@ -133,19 +134,34 @@ async def get_study_instance_uid_controller(
 
 
 @MedFilesRouter.get(
-    "/check-exists/{file_id}",
-    summary="校验文件是否存在",
+    "/check-exists",
+    summary="校验文件是否存在（file_id / anon_exam_id 二选一）",
     response_model=ResponseSchema[FileExistenceOutSchema],
 )
 async def check_file_exists_controller(
-    file_id: Annotated[int, FastPath(description="文件ID", ge=1)],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+    file_id: Annotated[
+        int | None, Query(description="文件主键 study_key；与 anon_exam_id 二选一")
+    ] = None,
+    anon_exam_id: Annotated[
+        str | None, Query(description="脱敏检查ID；与 file_id 二选一")
+    ] = None,
 ) -> JSONResponse:
-    """按文件ID校验磁盘文件是否实际存在。
+    """按 file_id 或 anon_exam_id 校验磁盘文件是否实际存在。
 
-    返回 exists ，不会抛异常（记录不存在也算 exists=False）。
+    两个参数必须且只能传一个；返回值不会抛异常（记录不存在也算 exists=False）。
     """
+    if file_id is None and not anon_exam_id:
+        raise CustomException(
+            msg="file_id 与 anon_exam_id 必须传一个",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if file_id is not None and anon_exam_id:
+        raise CustomException(
+            msg="file_id 与 anon_exam_id 只能传一个",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
     data = await MedFilesService.check_file_existence_service(
-        auth=auth, file_id=file_id
+        auth=auth, file_id=file_id, anon_exam_id=anon_exam_id,
     )
     return SuccessResponse(data=data, msg="校验文件存在性成功")

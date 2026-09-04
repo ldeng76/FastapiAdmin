@@ -18,18 +18,28 @@ const src = ref()
 interface params {
   file_type?:string,
   file_id?:number | null
+  anon_exam_id?:string
 }
 const props = defineProps<params>()
 
 async function open(obj:params){
   let file_id = obj && obj.file_id || props.file_id
   let file_type = obj && obj.file_type || props.file_type
+  let anon_exam_id = obj && obj.anon_exam_id || props.anon_exam_id
   loading.value = ElLoading.service()
-  if(!await FilesApi.getFileCheckExists(file_id)){
+  let query:params = {}
+  if(file_id){
+     query.file_id = file_id;
+  } else if(anon_exam_id){
+     query.anon_exam_id = anon_exam_id;
+  }
+  let res = await FilesApi.getFileCheckExists(query)
+  if(!res.exists){
     closeLoading()
     ElMessage.error('文件不存在！')
     return;
   }
+  file_id = res.file_id;
   if(file_type === 'nii'){
     src.value = `/api/v1/static/niftiViewer.html?file_id=${file_id}`
     showToggle.value = true

@@ -22,7 +22,7 @@
     </ElTableColumn>
     <ElTableColumn v-if="getIsImage() || tableName === '基因检测'" label="操作" width="120" :align="'center'">
       <template #default="{ row }" >
-        <div v-if="getIsImage()" style="margin-top: 5px"><ElButton type="success" @click="ctToggle()" size="small">查看影像</ElButton></div>
+        <div v-if="getIsImage()" style="margin-top: 5px"><ElButton type="success" @click="ctToggle(row)" size="small">查看影像</ElButton></div>
         <div v-else-if="tableName === '基因检测'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因数据</ElButton></div>
       </template>
     </ElTableColumn>
@@ -134,6 +134,7 @@ import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRa
 import {marked} from "marked";
 import {useDictStore} from "@/store";
 import Viewer from "@views/module_medical/viewer/index.vue";
+import FilesApi from "@api/module_medical/files.ts";
 
 interface Props {
   rows: any[];
@@ -296,11 +297,11 @@ function getTableColumn(obj:any){
   return arr
 }
 
-function ctToggle(){
+function ctToggle(row:any){
   if(viewer?.value){
     viewer?.value.open({
       file_type:'dcm',
-      file_id:1
+      anon_exam_id:row.anon_exam_id
     })
   }
 }

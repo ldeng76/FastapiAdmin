@@ -1,5 +1,5 @@
 <template>
-  <el-container class="layout-container">
+  <el-container v-loading="loading" class="layout-container">
     <el-header shadow="hover" class="top-header">
       <FaSearchBar
         v-model="searchForm"
@@ -144,10 +144,10 @@ import {
   PatientListItem,
 } from "@/types/module_medical/hospital.ts";
 import type {LineDataItem} from "@/types/component/chart.ts";
-import { ElLoading } from 'element-plus'
 import FaSearchBar, {SearchFormItem} from "@/components/forms/fa-search-bar/index.vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 const dictStore = useDictStore();
+const loading = ref(false)
 const searchForm = ref<any>({gender:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
 const searchItems = ref<SearchFormItem[]>([])
 const overviewCount = ref<StatsKpi[]>([]);
@@ -220,15 +220,12 @@ const kpisIcon = {
 }
 
 async function searchCall(){
-  const loading = ElLoading.service({
-    lock: true,
-    text: 'Loading',
-  })
+  loading.value = true
   let params = searchForm.value;
   let res = await StatisticsAPI.getOverview(params)
   let tableRes = await patientList.getData(params)
   upDateChatsView(res?.data?.data,tableRes?.data?.data)
-  loading.close()
+  loading.value = false
 }
 
 function clearSearch() {

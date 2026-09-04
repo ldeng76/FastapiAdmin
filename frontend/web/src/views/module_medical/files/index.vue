@@ -1,5 +1,5 @@
 <template>
-  <el-container class="files-container">
+  <el-container v-loading="loading" class="files-container">
     <el-aside width="250px" style="margin-right: 10px;">
       <ElCard class="fa-table-card" :bodyStyle="{overflow: 'auto'}" style="height: 100% ;margin-top : 0;">
          <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
@@ -24,7 +24,6 @@
           <FaSvgIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
         </div>
         <FaTable
-          :loading="loading"
           :data="data"
           :columns="columns"
           :header-cell-style="{ backgroundColor: '#f5f7fa' }"
@@ -46,11 +45,13 @@ import type {ColumnOption} from "@/types";
 import FilesApi, {FilesTable, StatisticsCount} from "@api/module_medical/files.ts";
 import {ElButton} from "element-plus";
 import Viewer from "@views/module_medical/viewer/index.vue";
+
 const viewer = ref<any>(null)
 const selectedExamType = ref([])
 const selectedFileType= ref([])
 const fileTypeDict = ref<any>([])
 const statisticsCount = ref<StatisticsCount>({})
+const loading = ref(false)
 function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
   if (typeof sizeBytes !== 'number') {
     return sizeBytes
@@ -67,22 +68,23 @@ function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
   return (!isNumStrong ? size.toFixed(2) :'<strong>'+size.toFixed(2)+'</strong>') + ' ' + units[index];
 }
 const dictStore = useDictStore();
-watch([selectedExamType,selectedFileType],function (arr){
+
+watch([selectedExamType,selectedFileType],async function (arr){
   let examType = arr[0]
   let fileType = arr[1]
   let params = {
     exam_type:examType.toString(),
     file_type:fileType.toString()
   }
-  getData(params)
-  FilesApi.statistics(params).then(function (res){
-    statisticsCount.value = res
-  })
+  loading.value = true
+  await getData(params)
+  statisticsCount.value = await FilesApi.statistics(params)
+  loading.value = false
 })
+
 const {
   columns,
   data,
-  loading,
   pagination,
   handleSizeChange,
   handleCurrentChange,
@@ -144,8 +146,10 @@ const {
 
 onBeforeMount(async ()=>{
   await dictStore.getDict(['med_exam_type'])
+  loading.value = true
   fileTypeDict.value = await FilesApi.getFileType()
   statisticsCount.value = await FilesApi.statistics()
+  loading.value = false
 })
 
 </script>

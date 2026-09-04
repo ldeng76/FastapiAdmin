@@ -8,6 +8,9 @@
 - 本轮 finding 表实际不写入（自由文本不拆分），但模型保留
 - 不建模：dicom_series / dicom_instance / dicom_uid_map（本轮无 DICOM 源，
   uid_map 按 ADR 物理隔离不进生产库）
+
+2026-08-28 增：lnrs_anon_imaging_study（影像研究桥接表，patient_id ↔ 影像
+ 绝对路径；仅存脱敏 ID；ETL-2 回写 + 离线灌库双通道）。
 """
 
 from __future__ import annotations
@@ -634,6 +637,300 @@ class AnonOrderModel(MappedBase):
     )
 
 
+class AnonDiagnosisModel(MappedBase):
+    """患者级诊断 — 省医 2026-09 全量批次扩展（0014）。
+
+    就诊.诊断 + 住院病案首页.诊断 合并，source 区分。
+    """
+
+    __tablename__ = "lnrs_anon_diagnosis"
+    __table_args__ = (
+        UniqueConstraint("source_diag_hash", name="lnrs_anon_uq_diagnosis"),
+        {"schema": "lnrs", "comment": "脱敏诊断（患者级，省医扩展）"},
+    )
+
+    diagnosis_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    diagnosis_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    diagnosis_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    diagnosis_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_primary: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    diagnosis_category: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    diagnosis_detail_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_diag_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonClinicalDocumentModel(MappedBase):
+    """病程记录文档 — 省医 2026-09 全量批次扩展（0014）。自由文本。"""
+
+    __tablename__ = "lnrs_anon_clinical_document"
+    __table_args__ = (
+        UniqueConstraint("source_doc_hash", name="lnrs_anon_uq_clinical_doc"),
+        {"schema": "lnrs", "comment": "脱敏病程记录文档（患者级，省医扩展）"},
+    )
+
+    document_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    doc_type: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    doc_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    doc_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_doc_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonMedicalHistoryModel(MappedBase):
+    """就诊病史 — 省医 2026-09 全量批次扩展（0014）。"""
+
+    __tablename__ = "lnrs_anon_medical_history"
+    __table_args__ = (
+        UniqueConstraint("source_hist_hash", name="lnrs_anon_uq_medical_history"),
+        {"schema": "lnrs", "comment": "脱敏病史（患者级，省医扩展）"},
+    )
+
+    history_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    chief_complaint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    present_illness: Mapped[str | None] = mapped_column(Text, nullable=True)
+    past_history: Mapped[str | None] = mapped_column(Text, nullable=True)
+    personal_history: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marriage_history: Mapped[str | None] = mapped_column(Text, nullable=True)
+    family_history: Mapped[str | None] = mapped_column(Text, nullable=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    data_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_hist_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonVitalObservationModel(MappedBase):
+    """生命体征/观察测量 — 省医 2026-09 全量批次扩展（0014）。
+
+    护理记录 + ICU 护理 + 麻醉子项 合并，obs_type 区分。
+    obs_time 为 TIMESTAMP（日内多次测量保留时分秒）。
+    """
+
+    __tablename__ = "lnrs_anon_vital_observation"
+    __table_args__ = (
+        UniqueConstraint("source_obs_hash", name="lnrs_anon_uq_vital_observation"),
+        {"schema": "lnrs", "comment": "脱敏生命体征/观察测量（省医扩展）"},
+    )
+
+    observation_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    anon_visit_id: Mapped[str | None] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_visit.anon_visit_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    obs_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    item_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_result: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_result_value: Mapped[float | None] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
+    item_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    obs_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    obs_detail_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_obs_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonImagingStudyModel(MappedBase):
+    """影像研究桥接表 — patient_id (PT_xxx) ↔ 影像绝对路径。
+
+    设计要点（2026-08-28 新增）：
+    - 仅存脱敏 ID（patient_id FK 到 lnrs_anon_patient）；原始 pat_local_id 不入库
+    - dicom_study_uid 明文，便于 dicom/repository 内存索引反查
+    - image_path 存磁盘上 Study 根目录的绝对路径（不含 Series/SOP 拆解）
+    - anon_exam_id 可空：ETL-2 回写时填充；离线灌库（CSV → imaging_study）为空
+    - 同一 (patient_id, dicom_study_uid, source) 唯一；跨源（盘 1 + 盘 2）允许重复
+    - 与已有 lnrs_anon_dicom_series 语义正交：后者填 series-level 明细，
+      本表填 study-level 桥接（用于"在患者记录处点击打开影像"）
+    """
+
+    __tablename__ = "lnrs_anon_imaging_study"
+    __table_args__ = (
+        UniqueConstraint(
+            "patient_id", "dicom_study_uid", "source",
+            name="lnrs_anon_uq_imaging_study",
+        ),
+        CheckConstraint(
+            "center_code ~ '^[a-z][a-z0-9_]*$'",
+            name="lnrs_anon_ck_imaging_center",
+        ),
+        CheckConstraint(
+            "modality IN ('CT','MR','XR','US','PET','NM','Pathology','Genetic','Other')",
+            name="lnrs_anon_ck_imaging_modality",
+        ),
+        {"schema": "lnrs", "comment": "影像研究桥接表（PT_xxx ↔ 影像绝对路径）"},
+    )
+
+    study_key: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    patient_id: Mapped[str] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    modality: Mapped[str] = mapped_column(String(16), nullable=False, default="CT")
+    image_path: Mapped[str] = mapped_column(Text, nullable=False)
+    sop_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="disk_index")
+    anon_exam_id: Mapped[str | None] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_exam.anon_exam_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_batch_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonImagingOrphanModel(MappedBase):
+    """影像孤儿登记表/中间表(2026-09-03)。
+
+    业务 ID `study_orphan_id` 由 `(center_code, rel_path_from_dicom_root)` SHA256[:8] 哈希派生,
+    同一 dicom 子路径(去掉 dicom 根绝对前缀) → 同一 ID(可反查);不依赖任何全局序列。
+    `source_orphan_hash` 是跨中心唯一锚(对齐 source_*_hash 模式)。
+    主表本身就是 ID↔元数据映射表(无需另建映射表)。
+    """
+
+    __tablename__ = "lnrs_anon_imaging_orphan"
+    __table_args__ = (
+        UniqueConstraint("study_orphan_id", name="lnrs_anon_uq_imaging_orphan_id"),
+        UniqueConstraint("source_orphan_hash", name="lnrs_anon_uq_imaging_orphan_hash"),
+        UniqueConstraint(
+            "center_code", "dicom_study_uid", "image_path",
+            name="lnrs_anon_uq_imaging_orphan_path",
+        ),
+        {"schema": "lnrs", "comment": "影像孤儿登记表(SHA256 映射 ID + 状态机,中间表语义)"},
+    )
+
+    orphan_key: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    study_orphan_id: Mapped[str] = mapped_column(String(18), nullable=False)
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    patient_id: Mapped[str | None] = mapped_column(
+        String(16),
+        ForeignKey("lnrs.lnrs_anon_patient.patient_id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
+    dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    image_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_orphan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    path_date_prefix: Mapped[str] = mapped_column(String(32), nullable=False)
+    modality: Mapped[str] = mapped_column(String(16), nullable=False, default="CT")
+    sop_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="orphan_audit_2026_09_03")
+    orphan_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    orphan_status: Mapped[str] = mapped_column(String(16), nullable=False, default="discovered", index=True)
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    audit_batch_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_orphan_audit_batch.audit_batch_id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AnonOrphanAuditBatchModel(MappedBase):
+    """孤儿审计批次元数据(2026-09-03)。"""
+
+    __tablename__ = "lnrs_anon_orphan_audit_batch"
+    __table_args__ = (
+        {"schema": "lnrs", "comment": "孤儿审计批次元数据(非 ETL 灌库,仅审计锚定)"},
+    )
+
+    audit_batch_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
+    center_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    audit_locator: Mapped[str] = mapped_column(Text, nullable=False)
+    audit_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discovered_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    patient_missing_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dual_disk_copy_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    empty_dir_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    other_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ran_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_ingest_batch": AnonIngestBatchModel,
     "lnrs_anon_patient": AnonPatientModel,
@@ -647,4 +944,11 @@ ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_visit_detail": AnonVisitDetailModel,
     "lnrs_anon_lab_result": AnonLabResultModel,
     "lnrs_anon_order": AnonOrderModel,
+    "lnrs_anon_diagnosis": AnonDiagnosisModel,
+    "lnrs_anon_clinical_document": AnonClinicalDocumentModel,
+    "lnrs_anon_medical_history": AnonMedicalHistoryModel,
+    "lnrs_anon_vital_observation": AnonVitalObservationModel,
+    "lnrs_anon_imaging_study": AnonImagingStudyModel,
+    "lnrs_anon_imaging_orphan": AnonImagingOrphanModel,
+    "lnrs_anon_orphan_audit_batch": AnonOrphanAuditBatchModel,
 }

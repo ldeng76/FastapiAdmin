@@ -20,7 +20,8 @@ from app.core.logger import log
 from sqlalchemy import func, select
 
 from .crud import HospitalCRUD
-from .anon_query import anon_data_summary
+from .anon_query import anon_data_summary, count_anon_imaging_orphans, count_anon_orphan_audit_batches
+from .anon_medical_query import anon_list_imaging_orphans_by_center
 from .model import (
     HospitalModel,
     HospitalStatus,
@@ -338,3 +339,89 @@ class HospitalService:
                 code=409,
                 status_code=409,
             )
+
+
+# =========================================================================== #
+# M3-2026-09-03: 孤儿研究审计汇总
+# =========================================================================== #
+
+
+    @classmethod
+    async def get_orphan_summary_service(
+        cls,
+        auth: AuthSchema,
+        id: int,
+        center_codes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """获取医院孤儿研究审计汇总(2026-09-03 新增)。
+
+        返回结构:
+            {
+                "hospital_id": int,
+                "center_codes": list[str],
+                "tables": {"imaging_orphan": int, "orphan_audit_batch": int},
+                "by_kind": {"csv_uncovered": int, "patient_missing": int, ...},
+                "by_status": {"discovered": int, ...},
+            }
+
+        Args:
+            auth: 认证上下文。
+            id: 医院 ID。
+            center_codes: 限定中心列表;None 表示统计该医院所有可见中心。
+        """
+        from sqlalchemy import text
+
+        hospital = await HospitalCRUD(auth).get_by_id_crud(id=id)
+        if not hospital:
+            raise CustomException(msg="医院不存在", code=404, status_code=404)
+
+        # 1. 表行数
+        tables = {
+            "imaging_orphan": await count_anon_imaging_orphans(auth.db, center_codes),
+            "orphan_audit_batch": await count_anon_orphan_audit_batches(auth.db, center_codes),
+        }
+
+        # 2. 按 orphan_kind 分组
+        by_kind: dict[str, int] = {}
+        kind_stmt = text("""
+            SELECT orphan_kind, COUNT(*) AS cnt
+            FROM lnrs.lnrs_anon_imaging_orphan
+            WHERE (:has_center = FALSE OR center_code = ANY(:center_codes))
+            GROUP BY orphan_kind
+        """)
+        result = await auth.db.execute(
+            kind_stmt,
+            {
+                "has_center": center_codes is not None,
+                "center_codes": center_codes or [],
+            },
+        )
+        for kind, cnt in result.fetchall():
+            by_kind[kind] = cnt
+
+        # 3. 按 orphan_status 分组
+        by_status: dict[str, int] = {}
+        status_stmt = text("""
+            SELECT orphan_status, COUNT(*) AS cnt
+            FROM lnrs.lnrs_anon_imaging_orphan
+            WHERE (:has_center = FALSE OR center_code = ANY(:center_codes))
+            GROUP BY orphan_status
+        """)
+        result = await auth.db.execute(
+            status_stmt,
+            {
+                "has_center": center_codes is not None,
+                "center_codes": center_codes or [],
+            },
+        )
+        for status, cnt in result.fetchall():
+            by_status[status] = cnt
+
+        return {
+            "hospital_id": hospital.id,
+            "lifecycle_status": hospital.lifecycle_status,
+            "center_codes": center_codes or [],
+            "tables": tables,
+            "by_kind": by_kind,
+            "by_status": by_status,
+        }

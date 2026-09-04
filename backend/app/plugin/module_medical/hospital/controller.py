@@ -201,6 +201,37 @@ async def get_anon_data_summary_controller(
 
 
 # =========================================================================== #
+# M3-2026-09-03: 孤儿研究审计汇总
+# =========================================================================== #
+
+
+@HospitalRouter.get(
+    "/hospital/{hospital_id}/orphan-summary",
+    summary="孤儿研究审计汇总",
+    description=(
+        "返回某医院下各 center_code 的孤儿研究统计："
+        "imaging_orphan 总数 + 按 orphan_kind / orphan_status 分组计数 + orphan_audit_batch 总数。"
+        "支持跨中心汇总(传 center_codes 多选);不传则汇总该医院所有可见中心。"
+    ),
+    response_model=ResponseSchema[dict],
+)
+async def get_orphan_summary_controller(
+    hospital_id: Annotated[int, Path(description="医院ID")],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["hospital:query"]))],
+    center_codes: Annotated[
+        list[str] | None,
+        Query(description="限定中心列表(可选,多选;不传则汇总该医院所有可见中心)"),
+    ] = None,
+) -> JSONResponse:
+    """孤儿研究审计汇总(2026-09-03 新增)。"""
+    from .service import HospitalService
+    result = await HospitalService.get_orphan_summary_service(
+        auth=auth, id=hospital_id, center_codes=center_codes,
+    )
+    return SuccessResponse(data=result, msg="获取孤儿汇总成功")
+
+
+# =========================================================================== #
 # M3b：ETL-1 (Excel → Parquet) — 多医院源数据落地
 # =========================================================================== #
 # 触发: 上传医院原始 Excel (含中文长字段名、inline string cell),

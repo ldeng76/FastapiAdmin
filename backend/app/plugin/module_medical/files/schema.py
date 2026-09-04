@@ -72,5 +72,7 @@ class MedFilesStatisticsOutSchema(BaseModel):
 
 
 class FileExistenceOutSchema(BaseModel):
-    file_id: int | None = Field(default=None, description="文件ID")
-    exists: bool = Field(description="磁盘上文件是否存在")
+    """文件存在性校验响应。"""
+
+    file_id: int | None = Field(default=None, description="命中记录的主键，查询不到时为 null")
+    exists: bool = Field(description="文件或目录在磁盘上是否存在")

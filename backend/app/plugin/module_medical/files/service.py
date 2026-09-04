@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from fastapi import status
 from sqlalchemy import func, select
 
 from app.api.v1.module_system.auth.schema import AuthSchema
@@ -194,7 +195,9 @@ class MedFilesService:
             (file_path, file_name)
 
         异常:
-            CustomException: 文件不存在或文件路径无效
+            CustomException: 记录不存在 / file_path 为空
+            CustomException: 路径指向目录（不能流式下载整个目录，请用 DICOMweb 预览）
+            CustomException: 磁盘上文件不存在
         """
         obj: MedFilesModel | None = await MedFilesCRUD(auth).get(id=file_id)
         if not obj:
@@ -204,6 +207,11 @@ class MedFilesService:
             raise CustomException(msg="文件路径为空")
 
         path = cls._resolve_file_path(obj.file_path)
+        if path.is_dir():
+            raise CustomException(
+                msg="该路径为目录（整份 DICOM study），不能下载单个文件；请通过 DICOMweb 接口预览",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         if not path.is_file():
             raise CustomException(msg=f"文件不存在: {path}")
 
@@ -217,70 +225,73 @@ class MedFilesService:
         file_id: int | None = None,
         anon_exam_id: str | None = None,
     ) -> dict:
-        """校验磁盘文件是否实际存在。
+        """校验文件或目录在磁盘上是否存在。
 
-        二选一参数：
-            - file_id:      按 lnrs_anon_imaging_study.study_key 主键定位
-            - anon_exam_id: 按 lnrs_anon_imaging_study.anon_exam_id 脱敏检查ID定位
-
-        返回字典包含：
-            lookup_by / lookup_value / matched_file_id / exists
+        file_id / anon_exam_id 二选一。
+        DB 的 image_path 指向单文件或 Study 目录都算存在（file_id 返回命中的 study_key）。
         """
-        # 根据入参查询目标记录，走 list 以便复用 Permission 行级过滤
         search: dict[str, Any] = {}
         if file_id is not None:
             search["id"] = file_id
         elif anon_exam_id:
             search["anon_exam_id"] = anon_exam_id
         else:
-            # 正常不会走到这里，controller 已做二选一校验
-            return {
-                "file_id": None,
-                "exists": False,
-            }
+            return {"file_id": None, "exists": False}
 
         objs = await MedFilesCRUD(auth).list(search=search)
         obj: MedFilesModel | None = objs[0] if objs else None
-
-        if obj is None:
-            return {
-                "file_id": None,
-                "exists": False,
-            }
-
-        matched_id = obj.id
-        if not obj.file_path:
-            return {
-                "file_id": matched_id,
-                "exists": False,
-            }
+        if obj is None or not obj.file_path:
+            return {"file_id": obj.id if obj else None, "exists": False}
 
         path = cls._resolve_file_path(obj.file_path)
-        if path.is_file():
-            return {
-                "file_id": matched_id,
-                "exists": True,
-            }
-        return {
-            "file_id": matched_id,
-            "exists": False,
-        }
+        exists = path.is_file() or path.is_dir()
+        return {"file_id": obj.id, "exists": bool(exists)}
 
     @classmethod
     async def get_study_instance_uid_service(
         cls, auth: AuthSchema, file_id: int
     ) -> str:
-        """按文件ID读取 DICOM 文件，注册到 DICOM indexer 后返回 StudyInstanceUID。
+        """按文件ID读取 DICOM 文件/目录，注册到 DICOM indexer 后返回 StudyInstanceUID。
+
+        真实数据两种分支：
+            A) DB file_path 是单个 DICOM 文件 → register_file 后再 register_folder 补全
+            B) DB file_path 是一个 Study 目录（里面多文件） → 直接 register_folder
 
         注册后即可通过 StudyInstanceUID 走 DICOMweb 接口预览。
 
         异常:
-            CustomException: 文件不存在 / 非 DICOM 文件 / 无 StudyInstanceUID
+            CustomException: 记录不存在 / 路径无效 / 目录里没有合法 DICOM 图像 / 无 StudyInstanceUID
         """
-        path, _ = await cls.get_file_stream_service(auth=auth, file_id=file_id)
-
-        # 注册到 DICOM indexer（内部用 stop_before_pixels 读头，不会加载像素）
         from app.plugin.module_medical.dicom.service import DicomService
+
+        # 不要走 get_file_stream_service（它会拒绝目录），自己解 path
+        obj: MedFilesModel | None = await MedFilesCRUD(auth).get(id=file_id)
+        if not obj:
+            raise CustomException(msg="文件不存在")
+        if not obj.file_path:
+            raise CustomException(msg="文件路径为空")
+
+        path = cls._resolve_file_path(obj.file_path)
+
+        # 分支 B：path 本身是 Study 文件夹（典型医院目录组织方式）
+        if path.is_dir():
+            folder_reg = DicomService.register_folder(path)
+            if not folder_reg or not folder_reg.get("study_uid"):
+                raise CustomException(msg="目录中未解析到合法的 DICOM 图像")
+            uid = folder_reg["study_uid"]
+            log.info(
+                "DICOM 按目录已注册到 indexer: file_id=%s folder=%s study=%s series=%d instances=%d",
+                file_id,
+                path,
+                uid,
+                folder_reg.get("series_count", 0),
+                folder_reg.get("instance_count", 0),
+            )
+            return uid
+
+        # 分支 A：单个文件 → 先注册文件，再把父目录补齐
+        if not path.is_file():
+            raise CustomException(msg=f"文件不存在: {path}")
 
         registered = DicomService.register_file(path)
         if not registered:
@@ -290,8 +301,20 @@ class MedFilesService:
         if not uid:
             raise CustomException(msg="该文件未包含 StudyInstanceUID")
 
-        log.info(
-            "DICOM 文件已注册到 indexer: file_id=%s, study_uid=%s, series_uid=%s, sop_uid=%s",
-            file_id, uid, registered.get("series_uid"), registered.get("sop_uid"),
-        )
+        folder_reg = DicomService.register_folder(path.parent)
+        if folder_reg and folder_reg.get("study_uid"):
+            uid = folder_reg["study_uid"]
+            log.info(
+                "DICOM study 文件夹已批量注册: file_id=%s folder=%s study=%s series=%d instances=%d",
+                file_id,
+                path.parent,
+                uid,
+                folder_reg.get("series_count", 0),
+                folder_reg.get("instance_count", 0),
+            )
+        else:
+            log.info(
+                "DICOM 文件已注册到 indexer: file_id=%s, study_uid=%s, series_uid=%s, sop_uid=%s",
+                file_id, uid, registered.get("series_uid"), registered.get("sop_uid"),
+            )
         return uid

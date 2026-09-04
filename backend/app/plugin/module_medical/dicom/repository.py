@@ -335,7 +335,7 @@ class DicomIndexer:
             return None
 
     # ------------------------------------------------------------------ #
-    # 手动注册单文件（不依赖目录扫描）
+    # 手动注册：单文件 / 整个 study 文件夹
     # ------------------------------------------------------------------ #
     def register_file(self, file_path: Path) -> dict[str, Any] | None:
         """手动注册单个 DICOM 文件到内存索引。
@@ -461,6 +461,68 @@ class DicomIndexer:
             self._evict_if_needed()
 
         return result
+
+    def register_folder(self, folder_path: Path) -> dict[str, Any] | None:
+        """批量注册一个 study 文件夹下的全部 DICOM 文件。
+
+        适用的真实数据格式：
+        - 一个文件夹代表一个完整 Study
+        - 文件夹内含 N 个 Series，下挂 M 个 Instance（每个 Instance 是独立文件，单帧）
+        - 文件名没有 .dcm 后缀也可以（内容是合法 DICOM）
+
+        返回: {"study_uid", "series_count", "instance_count"}；目录里没 DICOM 图像返回 None。
+        """
+        folder_path = Path(folder_path)
+        if not folder_path.is_dir():
+            log.warning("register_folder 目标不是目录: %s", folder_path)
+            return None
+
+        # 取目录下所有文件（不递归更深层，假设 study 文件夹里就是所有 instance）
+        file_paths = [p for p in folder_path.iterdir() if p.is_file()]
+        if not file_paths:
+            return None
+
+        study_uid_result: str | None = None
+        series_count = 0
+        instance_count = 0
+        failed = 0
+        skipped = 0
+
+        for fp in file_paths:
+            # 先用已缓存的幂等判断，避免重复读头
+            if self._path_to_uid.get(str(fp)):
+                r = self._path_to_uid[str(fp)]
+                if study_uid_result is None:
+                    study_uid_result = r.get("study_uid")
+                instance_count += 1
+                continue
+            res = self.register_file(fp)
+            if res is None:
+                # register_file 内部已打日志（非图像/读失败/UID缺失），这里计数即可
+                failed += 1
+                continue
+            if res.get("study_uid") and study_uid_result is None:
+                study_uid_result = res["study_uid"]
+            instance_count += 1
+
+        # 计算 series 数量
+        if study_uid_result:
+            idx = self._studies.get(study_uid_result)
+            if idx is not None:
+                series_count = len(idx.series)
+
+        log.info(
+            "DICOM register_folder: %s → study=%s series=%d instances=%d failed=%d skipped=%d",
+            folder_path, study_uid_result, series_count, instance_count, failed, skipped,
+        )
+
+        if not study_uid_result:
+            return None
+        return {
+            "study_uid": study_uid_result,
+            "series_count": series_count,
+            "instance_count": instance_count,
+        }
 
     # ------------------------------------------------------------------ #
     # UID 反向索引

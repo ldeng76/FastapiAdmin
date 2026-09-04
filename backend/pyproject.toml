@@ -33,6 +33,8 @@ dependencies = [
     "passlib==1.7.4",                           # 密码加密
     "prefect>=3.5.0,<4",                        # 工作流编排（与 typer>=0.19 兼容；部署与 requirements.txt 一致）
     "pillow==11.0.0",                           # 图片处理
+    "pylibjpeg>=2.0",                            # pydicom pixel_array 纯软件解码：JPEG Lossless (SV1) 等封装格式
+    "pylibjpeg-libjpeg>=2.1",                    #   ↑ libjpeg 解码后端（Windows/manylinux 均有 wheel）
     "prometheus-fastapi-instrumentator==7.1.0",   # Prometheus 指标采集
     "psutil==6.1.0",                            # 系统信息
     "psycopg==3.3.2",                           # postgresql 同步操作数据库基于 psycopg是psycopg2升级版：psycopg2 是一个 pure-Python PostgreSQL 适配器。

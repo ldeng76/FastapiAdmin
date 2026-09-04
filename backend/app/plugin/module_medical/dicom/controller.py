@@ -195,7 +195,29 @@ async def wado_instance_metadata(
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
     sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
 ) -> JSONResponse:
-    """WADO-RS: Instance 级元数据。"""
+    """WADO-RS: Instance 级元数据（短路径）。"""
+    result = DicomService.get_instance_metadata(sop_uid)
+    if result is None:
+        return JSONResponse(
+            content={"error": "Instance not found"},
+            status_code=404,
+            media_type="application/dicom+json",
+        )
+    return JSONResponse(content=[result], media_type="application/dicom+json")
+
+
+@DicomwebRouter.get(
+    "/dicom/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}/metadata",
+    summary="WADO-RS: 获取 Instance 的 DICOM JSON 元数据（全路径）",
+    description="按 Study/Series/SOP 全路径返回单个 Instance 的 DICOM JSON 元数据。"
+    "OHIF v3 在切 instance 时经常走这条全路径而不是 /dicom/instances/{sop_uid}/metadata，"
+    "如果缺路由会 404 → TransferSyntaxUID/WC/WW 拿不到 → 主图显示全灰/解码失败。",
+)
+async def wado_instance_metadata_fullpath(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+    sop_uid: Annotated[str, Path(description="SOPInstanceUID")],
+) -> JSONResponse:
+    """WADO-RS: Instance 级元数据（Study/Series/SOP 全路径，OHIF 常用）。"""
     result = DicomService.get_instance_metadata(sop_uid)
     if result is None:
         return JSONResponse(

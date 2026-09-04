@@ -68,7 +68,8 @@
    建议处理顺序：**立即吊销 GitLab Token → 轮换数据库/Redis/JWT/脱敏密钥 → 排查操作日志 → 清理 Git 跟踪与历史 → 完善 .gitignore/.dockerignore。**本次仅审计，未修改文件。
 
 ```
-
+## todo list
+### 
 ## 一些重要信息：
 ### 测试用 rustfs :
 ```text
@@ -84,4 +85,39 @@ cat /home/dzy/.config/rclone/rclone.conf
  region = us-east-1                                                                                                                                                                                                                                                                                                                                  
  provider = Other                           
  
+```
+
+## 数据导入：
+### 2026-08-25
+```text
+/data/wlx/DATABASE/extracted_tables/zhujiang/operation.parquet  --> 已导入
+```
+
+### 2026-08-27
+```text 
+天睿： 更新了一下 DATABASE/extracted_tables/zhujiang/ct.parquet, 把 lung_rads 字段从每份报告一个变成每个结节一个
+给AI的提示词：此数据文件有变更：把 lung_rads 字段从每份报告一个变成每个结节一个  。 请重新导入。
+ 
+```
+
+### 2026-08-31
+```text
+天睿： 301 的原始文本放在
+/data/wlx/DATABASE/extracted_tables/hos301/*.parquet
+exam - 检查
+lab - 检验
+order - 医嘱
+record - 病历
+
+除以下字段外 全部都是继承原始数据的英文字段名 没有中文说明
+patient_id - 患者id
+visit_id - 就诊id
+exam_id - 检查id
+test_id - 检验id
+
+2026-09-02 21:23:19 ： 已导入到生产机的PG数据库
+
+第2个任务：
+/data/wlx/DATABASE/13_multimodal/shengyi/extracted ： 省医的原始文本整合版
+2026-09-02 21:41:39 开始导入
 ```

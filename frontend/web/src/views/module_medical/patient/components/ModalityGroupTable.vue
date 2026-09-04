@@ -6,10 +6,9 @@
           <template v-for="(table,index) in expandTableList[rows.indexOf(row)]" :key="index" >
             <div class="mb-1 font-bold">{{table.tableName}}</div>
             <ElTable  style="margin-bottom: 20px" border :header-cell-style="{ backgroundColor: '#f5f7fa' }" :data="table.tableData" size="small">
-              <ElTableColumn v-for="(col,index) in table.tableColumn" :width="col.prop === 'raw_text' ? 600 : undefined" :key="index" :prop="col.prop" :label="col.label">
+              <ElTableColumn v-for="(col,index) in table.tableColumn" :key="index" :prop="col.prop" :label="col.label">
                 <template #default="{ row }" >
-                  <div v-if="col.prop === 'raw_text'" class="marked-content"  v-html="marked(row[col.prop] || '')"></div>
-                  <div v-else-if="['pre_admission','post_admission'].includes(col.prop)">{{getDateStr(row[col.prop])}}</div>
+                  <div v-if="['pre_admission','post_admission'].includes(col.prop)">{{getDateStr(row[col.prop])}}</div>
                   <div v-else-if="['nursing_days'].includes(col.prop)">{{nursingDays(row[col.prop])}}</div>
                   <div v-else-if="typeof row[col.prop] !== 'object' || row[col.prop] == null">{{row[col.prop]}}</div>
                   <div v-else>{{JSON.stringify(row[col.prop])}}</div>
@@ -20,10 +19,11 @@
         </div>
       </template>
     </ElTableColumn>
-    <ElTableColumn v-if="getIsImage() || tableName === '基因检测'" label="操作" width="120" :align="'center'">
+    <ElTableColumn v-if="getIsImage() || tableName === '基因检测' || isShowRawBtn" label="操作" width="120" :align="'center'">
       <template #default="{ row }" >
         <div v-if="getIsImage()" style="margin-top: 5px"><ElButton type="success" @click="ctToggle(row)" size="small">查看影像</ElButton></div>
         <div v-else-if="tableName === '基因检测'" style="margin-top: 5px"><ElButton type="success" @click="fsqToggle()" size="small">查看基因数据</ElButton></div>
+        <div v-if="isShowRawBtn" style="margin-top: 5px"><ElButton type="info" @click="showRawText(row)" size="small">查看原始数据</ElButton></div>
       </template>
     </ElTableColumn>
     <ElTableColumn v-if="getIsVisit()" prop="anon_visit_id" :label="getFieldLabel('anon_visit_id')"  width="200" />
@@ -123,6 +123,14 @@
       </div>
     </template>
   </el-dialog>
+   <el-dialog v-model="isShowRawText">
+     <div v-html="marked(rawText)"></div>
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="isShowRawText = false" type="primary"  plain>关闭</el-button>
+      </div>
+    </template>
+  </el-dialog>
   <Viewer ref="viewer" />
 </template>
 
@@ -134,7 +142,6 @@ import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRa
 import {marked} from "marked";
 import {useDictStore} from "@/store";
 import Viewer from "@views/module_medical/viewer/index.vue";
-import FilesApi from "@api/module_medical/files.ts";
 
 interface Props {
   rows: any[];
@@ -148,6 +155,8 @@ interface TableItem<T = any> {
 const dictStore = useDictStore()
 const viewer = ref<any>(null)
 const showFsq = ref(false);
+const isShowRawText = ref(false);
+const rawText = ref<any>('');
 // const fsq = ref(``);
 
 const props = defineProps<Props>();
@@ -171,7 +180,42 @@ const isShowExpand = computed(()=>{
   })
   return bool
 })
-
+const isShowRawBtn = computed(function (){
+  let bool = false
+  const rows = props.rows || []
+  function check(obj:any){
+     for (const key in obj){
+       if(key === 'raw_text'){
+         bool = true
+         break;
+       } else if(isObjectKey(obj[key],key)){
+         check(obj[key])
+       }
+    }
+  }
+  rows.find(function (row:any){
+    if(!bool){
+      check(row)
+    }
+  })
+  return bool;
+})
+function showRawText(row:any){
+  let text = ''
+  function findRaw(obj:any){
+     for (const key in obj){
+       if(key === 'raw_text'){
+         text = obj[key]
+         break;
+       } else if(isObjectKey(obj[key],key)){
+         findRaw(obj[key])
+       }
+    }
+  }
+  findRaw(row)
+  rawText.value = marked(text)
+  isShowRawText.value = true
+}
 function getDateStr(obj: any){
   if(!obj){
     return obj
@@ -287,7 +331,7 @@ function getTableColumn(obj:any){
   let arr = []
   for (const key in obj){
     let value = obj[key];
-    if(key.indexOf("_") !== 0 && !['review_status','pat_local_id'].includes(key) && !isObjectKey(value,key)){
+    if(key.indexOf("_") !== 0 && !['review_status','pat_local_id','raw_text'].includes(key) && !isObjectKey(value,key)){
       arr.push({
         prop:key,
         label:getFieldLabel(key)

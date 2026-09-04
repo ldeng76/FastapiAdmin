@@ -815,7 +815,7 @@ async def _batch_upsert_orders(
 ) -> None:
     """批量 upsert order 行（省医扩展，drug + non_drug 合并）。
 
-    冲突键：(anon_visit_id, source_order_hash)（DDL UNIQUE lnrs_anon_uq_order）。
+    冲突键：source_order_hash（DDL UNIQUE lnrs_anon_uq_order，单列）。
     anon_visit_id 可空：NULL 不参与 UNIQUE 冲突。
     """
     if not order_rows:
@@ -833,7 +833,6 @@ async def _batch_upsert_orders(
         )
         await db.execute(stmt)
         await _maybe_commit(db, rows_done=i + len(batch), label="order")
-
 
 async def _write_phi_audit_batch(
     db: AsyncSession,
@@ -1197,7 +1196,7 @@ async def _import_exam_text_table(
                 anon_visit_ids = {
                     compute_anon_visit_id(center_code, v): v for v in set(visit_ids)
                 }
-                rows = await _in_lookup_chunked(
+                visit_results = await _in_lookup_chunked(
                     db,
                     lambda c: select(
                         AnonVisitDetailModel.anon_visit_id,
@@ -1205,7 +1204,7 @@ async def _import_exam_text_table(
                     ).where(AnonVisitDetailModel.anon_visit_id.in_(c)),
                     list(anon_visit_ids.keys()),
                 )
-                for r in rows:
+                for r in visit_results:
                     if r[1]:
                         visit_date_lookup[anon_visit_ids[r[0]]] = r[1]
         else:
@@ -1216,16 +1215,15 @@ async def _import_exam_text_table(
                 if _row_to_dict(cols, row).get(id_field)
             ]
             if anon_exam_ids_for_lookup:
-                rows = await _in_lookup_chunked(
+                lookup_results = await _in_lookup_chunked(
                     db,
                     lambda c: select(AnonExamModel.anon_exam_id, AnonExamModel.exam_date).where(
                         AnonExamModel.anon_exam_id.in_(c)
                     ),
                     anon_exam_ids_for_lookup,
                 )
-                for row in rows:
+                for row in lookup_results:
                     exam_date_lookup[row[0]] = row[1]
-    imported = 0
 
     for row in rows:
         rd = _row_to_dict(cols, row)
@@ -1808,16 +1806,15 @@ async def _import_order_table(
         anon_visit_ids = {
             compute_anon_visit_id(center_code, v): v for v in visit_id_set
         }
-        rows = await _in_lookup_chunked(
+        visit_results = await _in_lookup_chunked(
             db,
             lambda c: select(AnonVisitModel.anon_visit_id).where(
                 AnonVisitModel.anon_visit_id.in_(c)
             ),
             list(anon_visit_ids.keys()),
         )
-        for (aevid,) in rows:
+        for (aevid,) in visit_results:
             visit_lookup[anon_visit_ids[aevid]] = aevid
-
     patient_records: list[dict[str, Any]] = []
     order_rows: list[dict[str, Any]] = []
     seen_order_hash: set[tuple] = set()
@@ -2682,9 +2679,14 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "date_field": "examDateTime",
         },
         {"src_table": "lab_result", "kind": "lab", "id_field": "test_id"},
+
         {
             "src_table": "order", "kind": "order",
             "order_type": "non_drug", "order_name_field": "task_name",
+            # 301 staging 同 (time, name, type) 多达 22 次重复（一次开多条同医嘱），
+            # source_order_hash 默认 4 元组 (center,time,name,type) 会全部合并为 1 行
+            # 丢失数据。Rev 2026-09-02 起追加 patient_id 段，让哈希区分同患者不同行。
+            "order_hash_extra": True,
         },
     ],
 }

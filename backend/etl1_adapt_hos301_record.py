@@ -16,11 +16,11 @@
   旧版 78/17997 visit_id NULL 在新版消失 (visit_id 0 NULL)。
 
 关键观察:
-  - (patient_id, admissionDateTime) 唯一 → visit 唯一标识 (17,997)
-  - 源 visit_id 是全局自增序号 (1,2,3...), 多 patient 共享同一 visit_id
-  - **visit_id 派生**: RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
-    保证 record 与 order 同一 (patient_id, admissionDateTime) 派生同一 visit_id,
-    这样 ETL-2 引擎端 visit_lookup 可命中,order 能挂到正确 visit 桥。
+-  - 源 visit_id 是全局自增序号 (1,2,3...), 多 patient 共享同一 visit_id
+-  - **visit_id 派生**: SUBSTR(MD5(patient_id || '|' || admissionDateTime), 1, 12)
+    12hex 字符串, 全局唯一 (17,997), 与 etl1_adapt_hos301_order.py 同表达式,
+    保证 record 与 order 跨表 visit_id 对齐, ETL-2 visit_lookup 命中
+
   - 单 visit 最多 195 doc (Y9303816/visit=1), 平均 14.5 doc/visit
   - 261,271 - 17,997 = 243,274 多余行 → 引擎层 seen_visit_hash 丢弃
   - 单 visit 首次出现的行 = "visit 主行" (含 patient/visit/admission/discharge/dept)
@@ -29,7 +29,7 @@ ETL2 hos301 spec: src_table='visit_record', kind='visit_detail',
                  id_field='visit_id', date_field='admissionDateTime'
 
 引擎读 parquet 后从 rd 提取:
-  patient_id, visit_id (id_field, 派生自 RANK), admission_time (date_field),
+  patient_id, visit_id (id_field, 派生自 MD5 12hex), admission_time (date_field),
   discharge_date, admission_dept (=deptAdmissionTo),
   visit_category / length_of_stay / visit_age / visit_detail_json
 其余字段 (docId/docTime/docTitle/raw_text) → visit_detail_json
@@ -80,8 +80,8 @@ def main() -> int:
             WITH derived AS (
                 SELECT
                     patient_id,
-                    RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
-                        AS visit_id_ranked,
+                    SUBSTR(MD5(patient_id || '|' || CAST(admissionDateTime AS VARCHAR)), 1, 12)
+                        AS visit_id_md5,
                     admissionDateTime,
                     dischargeDateTime,
                     deptAdmissionTo,
@@ -93,7 +93,7 @@ def main() -> int:
             )
             SELECT
                 CAST(patient_id      AS VARCHAR)    AS patient_id,
-                CAST(visit_id_ranked AS VARCHAR)    AS visit_id,
+                CAST(visit_id_md5    AS VARCHAR)    AS visit_id,
                 admissionDateTime                   AS admission_time,
                 dischargeDateTime                   AS discharge_date,
                 CAST(deptAdmissionTo AS VARCHAR)    AS admission_dept,
@@ -107,7 +107,7 @@ def main() -> int:
                 docTitle                            AS visit_docTitle,
                 raw_text                            AS visit_raw_text
             FROM derived
-            WHERE visit_id_ranked IS NOT NULL
+            WHERE visit_id_md5 IS NOT NULL
         ) TO '{dst.as_posix()}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE)
     """
     con.execute(sql)

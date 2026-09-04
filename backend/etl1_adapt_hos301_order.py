@@ -15,11 +15,12 @@
         startDateTime TIMESTAMP, stopDateTime TIMESTAMP)>
 
 关键观察:
-  - 源 visit_id 全 1 (8313/8313) 是垃圾数据, 不能直接用
-  - (patient_id, admissionDateTime) 唯一 = visit 真实唯一标识
-  - **visit_id 派生**: RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
-    与 etl1_adapt_hos301_record.py 同表达式, 保证 order 与 record 派生同一 visit_id,
-    这样 ETL-2 引擎 visit_lookup 能命中, order 挂到正确 visit 桥
+-  - 源 visit_id 全 1 (8313/8313) 是垃圾数据, 不能直接用
+-  - (patient_id, admissionDateTime) 唯一 = visit 真实唯一标识
+-  - **visit_id 派生**: SUBSTR(MD5(patient_id || '|' || admissionDateTime), 1, 12)
+    12hex 字符串, 全局唯一, 与 etl1_adapt_hos301_record.py 同表达式,
+    保证 order 与 record 跨表 visit_id 对齐, ETL-2 visit_lookup 命中
+
   - 8,313 visit 全部 patient 都包含在 record 8350 patient 内 (差 37 是 record 独有)
   - order_data 长度范围 4-1806; 展平后 ~870,800 行
   - orderClassName: 检验/西药/治疗/护理/膳食/检查/其他/手术
@@ -27,9 +28,8 @@
 
 ETL2 hos301 spec: src_table='order', kind='order',
                  order_type='order', order_name_field='orderText'
-
 引擎读 parquet 后从 rd 提取:
-  patient_id, visit_id (派生自 RANK), order_name (=orderText),
+  patient_id, visit_id (派生自 MD5 12hex), order_name (=orderText),
   order_time (=startDateTime), order_source (=orderClassName),
   order_detail (整体 dict 进 JSONB)
 
@@ -72,20 +72,22 @@ def main() -> int:
     dst = out_dir / "order.parquet"
 
     con = duckdb.connect(":memory:")
-    # 派生 visit_id: RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
+    # 派生 visit_id: SUBSTR(MD5(patient_id || '|' || admissionDateTime), 1, 12)
+    # 与 etl1_adapt_hos301_record.py 同表达式, 保证跨表 visit_id 一致
     sql = f"""
         COPY (
             WITH derived AS (
                 SELECT
                     patient_id,
-                    RANK() OVER (PARTITION BY patient_id ORDER BY admissionDateTime)
-                        AS visit_id_ranked,
+                    admissionDateTime,
+                    SUBSTR(MD5(patient_id || '|' || CAST(admissionDateTime AS VARCHAR)), 1, 12)
+                        AS visit_id_md5,
                     order_data
                 FROM read_parquet('{src.as_posix()}')
             )
             SELECT
                 CAST(derived.patient_id   AS VARCHAR)        AS patient_id,
-                CAST(derived.visit_id_ranked AS VARCHAR)     AS visit_id,
+                CAST(derived.visit_id_md5 AS VARCHAR)        AS visit_id,
                 CAST(unnest.orderText AS VARCHAR)           AS task_name,
                 unnest.startDateTime                        AS order_time,
                 CAST(unnest.orderClassName AS VARCHAR)      AS order_source,

@@ -24,24 +24,39 @@ const FilesApi = {
       url: `${API_PATH}files/list`,
       params :params,
       method: "get",
+    }).then(function (res:any){
+      if(res.data?.data){
+        res.data?.data.items.forEach(function (n:any){
+          n.file_type = 'dcm'
+        })
+      }
+      return res
     });
   },
-  statistics(params = {}){
+  async statistics(params = {}) {
     const data = {
-      file_count:0,
-      patient_count:0,
-      total_size_bytes:0,
-      total_size_text :""
+      file_count: 0,
+      patient_count: 0,
+      total_size_bytes: 0,
+      total_size_text: ""
     }
-    return request<ApiResponse<StatisticsCount>>({
-      url: `${API_PATH}files/statistics`,
-      params :params,
+    try {
+      const res = await request<ApiResponse<StatisticsCount>>({
+        url: `${API_PATH}files/statistics`,
+        params: params,
+        method: "get",
+      });
+      return res?.data?.data || data;
+    } catch {
+      return data;
+    }
+  },
+  async getFileCheckExists(file_id: any) {
+    const res = await request<ApiResponse>({
+      url: `${API_PATH}files/check-exists/${file_id}`,
       method: "get",
-    }).then(function (res:any){
-      return res?.data?.data || data
-    }).catch(function (){
-      return data
     });
+    return res?.data?.data?.exists || false;
   },
   getStudyUid(file_id:any){
     return request<ApiResponse<string>>({
@@ -49,17 +64,18 @@ const FilesApi = {
       method: "get",
     });
   },
-  getFileType(){
-    return request<ApiResponse>({
-      url: `${API_PATH}files/dict/file-types`,
-      method: "get",
-    }).then(function (res:any){
-      return (res?.data?.data?.file_type_options || []).map(function (n:any){
-        return {dict_value:n.value,dict_label:n.label}
-      })
-    }).catch(function (){
-      return []
-    });
+  async getFileType() {
+    try {
+      const res = await request<ApiResponse>({
+        url: `${API_PATH}files/dict/file-types`,
+        method: "get",
+      });
+      return (res?.data?.data?.file_type_options || []).map(function (n: any) {
+        return {dict_value: 'dcm', dict_label: 'dcm'};
+      });
+    } catch {
+      return [];
+    }
   }
 }
 export default FilesApi;

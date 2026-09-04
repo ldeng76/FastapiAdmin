@@ -12,7 +12,7 @@ class MedicalFiles(BaseModel):
     patient_id: str | None = Field(default=None, description="患者编号")
     exam_type: str | None = Field(default=None, description="模态类型")
     file_type: str | None = Field(default=None, description="文件类型")
-    file_size: int | None = Field(default=None, description="文件大小")
+    # file_size: int | None = Field(default=None, description="文件大小")
     file_path: str | None = Field(default=None, description="文件路径")
 
 
@@ -69,3 +69,10 @@ class MedFilesStatisticsOutSchema(BaseModel):
     patient_count: int = Field(description="去重后的患者个数")
     total_size_bytes: int = Field(description="所有文件总大小（字节）")
     total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")
+
+
+class FileExistenceOutSchema(BaseModel):
+    """文件存在性校验响应。"""
+
+    file_id: int = Field(description="文件ID")
+    exists: bool = Field(description="磁盘上文件是否存在")

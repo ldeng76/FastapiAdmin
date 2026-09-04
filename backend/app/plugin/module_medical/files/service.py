@@ -141,7 +141,7 @@ class MedFilesService:
         sql = select(
             func.count(m.id).label("file_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
-            func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
+            # func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
         )
         sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type)
         sql = await cls._apply_permission(auth, sql)
@@ -154,7 +154,7 @@ class MedFilesService:
         if row is not None:
             file_count = int(row[0] or 0)
             patient_count = int(row[1] or 0)
-            total_size_bytes = int(row[2] or 0)
+            # total_size_bytes = int(row[2] or 0)
 
         return {
             "file_count": file_count,
@@ -165,14 +165,8 @@ class MedFilesService:
 
     @classmethod
     def _resolve_file_path(cls, raw: str) -> Path:
-        """解析数据库中的 file_path 字段为实际可访问的绝对路径。
 
-        统一以 settings.FILES_DATA_ROOT 为根目录重定位：
-        - 去掉开头的盘符（D:\\）、斜杠（/ 或 \\）等锚点
-        - 拼接到 FILES_DATA_ROOT 下
-        - 若已位于 FILES_DATA_ROOT 下则保持不变
-        """
-        root = Path(settings.FILES_DATA_ROOT)
+        root = Path(settings.DICOM_DATA_DIR)
         p = Path(raw)
 
         # 已在根目录下，直接返回
@@ -214,6 +208,30 @@ class MedFilesService:
             raise CustomException(msg=f"文件不存在: {path}")
 
         return path, obj.file_name or path.name
+
+    @classmethod
+    async def check_file_existence_service(
+        cls, auth: AuthSchema, file_id: int
+    ) -> dict:
+        """按文件ID校验磁盘文件是否实际存在。
+
+        返回:
+            {"file_id", "exists"}
+        """
+        obj: MedFilesModel | None = await MedFilesCRUD(auth).get(id=file_id)
+        if not obj:
+            return {"file_id": file_id, "exists": False}
+
+        if not obj.file_path:
+            return {"file_id": file_id, "exists": False}
+
+        path = cls._resolve_file_path(obj.file_path)
+        if path.is_file():
+            return {
+                "file_id": file_id,
+                "exists": True
+            }
+        return {"file_id": file_id, "exists": False}
 
     @classmethod
     async def get_study_instance_uid_service(

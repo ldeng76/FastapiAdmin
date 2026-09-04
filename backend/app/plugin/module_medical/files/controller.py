@@ -14,6 +14,7 @@ from app.core.dependencies import AuthPermission
 from app.core.router_class import OperationLogRoute
 
 from .schema import (
+    FileExistenceOutSchema,
     MedFilesDictOutSchema,
     MedFilesStatisticsOutSchema,
     MedicalFilesQueryParam,
@@ -129,3 +130,22 @@ async def get_study_instance_uid_controller(
         auth=auth, file_id=file_id
     )
     return SuccessResponse(data=uid, msg="获取 StudyInstanceUID 成功")
+
+
+@MedFilesRouter.get(
+    "/check-exists/{file_id}",
+    summary="校验文件是否存在",
+    response_model=ResponseSchema[FileExistenceOutSchema],
+)
+async def check_file_exists_controller(
+    file_id: Annotated[int, FastPath(description="文件ID", ge=1)],
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
+) -> JSONResponse:
+    """按文件ID校验磁盘文件是否实际存在。
+
+    返回 exists ，不会抛异常（记录不存在也算 exists=False）。
+    """
+    data = await MedFilesService.check_file_existence_service(
+        auth=auth, file_id=file_id
+    )
+    return SuccessResponse(data=data, msg="校验文件存在性成功")

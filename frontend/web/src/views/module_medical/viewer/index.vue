@@ -21,10 +21,15 @@ interface params {
 }
 const props = defineProps<params>()
 
-function open(obj:params){
+async function open(obj:params){
   let file_id = obj && obj.file_id || props.file_id
   let file_type = obj && obj.file_type || props.file_type
   loading.value = ElLoading.service()
+  if(!await FilesApi.getFileCheckExists(file_id)){
+    closeLoading()
+    ElMessage.error('文件不存在！')
+    return;
+  }
   if(file_type === 'nii'){
     src.value = `/api/v1/static/niftiViewer.html?file_id=${file_id}`
     showToggle.value = true

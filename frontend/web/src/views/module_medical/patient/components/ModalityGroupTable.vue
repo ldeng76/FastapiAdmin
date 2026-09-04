@@ -1,5 +1,5 @@
 <template>
-  <ElTable :data="rows" border size="small" :stripe="true" :header-cell-style="{ color:'#333' }">
+  <ElTable :data="rows" border size="small" height="100%" :stripe="true" :header-cell-style="{ color:'#333' }">
     <ElTableColumn type="expand" v-if="isShowExpand">
       <template #default="{ row }" >
         <div v-if="expandTableList[rows.indexOf(row)] !== undefined" style="padding: 20px">

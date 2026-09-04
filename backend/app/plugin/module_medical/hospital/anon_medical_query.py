@@ -67,8 +67,8 @@ def _tag_row(row: dict[str, Any], table_label: str, modality: str) -> dict[str, 
     return row
 
 # 4 模态分组（与 med_* 一致，方便前端理解）
-MODALITIES = ("clinical","surgery", "ihc","ultrasound","radiology","collection","order","genetic", "pathology", "ct")
-
+MODALITIES = ("clinical","surgery", "ihc","ultrasound","radiology","collection","order","other","genetic", "pathology", "ct")
+# Other
 # exam_type → 模态分组
 # 数据来源：lnrs_anon_exam.exam_type 列（ETL-2 写入，已规整为英文枚举）
 # 珠江用 CT/Pathology/Genetic；省医用 Radiology/Ultrasound（也归影像类）
@@ -78,6 +78,7 @@ EXAM_TYPE_TO_MODALITY: dict[str, str] = {
     "Ultrasound": "ultrasound",
     "Pathology": "pathology",
     "IHC": "ihc",
+    "Other" : "other",
     "Genetic": "genetic",
 }
 
@@ -378,9 +379,9 @@ async def anon_get_patient_detail(
             detail_by_exam.setdefault(d_obj.anon_exam_id, []).append(d_obj)
 
     for row in exam_rows:
-        modality = EXAM_TYPE_TO_MODALITY.get(row["exam_type"] or "", "clinical")
+        modality = EXAM_TYPE_TO_MODALITY.get(row["exam_type"] or "", "other")
         if modality not in modalities:
-            modality = "clinical"
+            modality = "other"
 
         exam_date = row["exam_date"]
         base = {

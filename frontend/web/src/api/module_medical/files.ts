@@ -20,7 +20,7 @@ export interface StatisticsCount {
 
 const FilesApi = {
   list(params = {}){
-    return request<ApiResponse>({
+    return request<ApiResponse<FilesTable>>({
       url: `${API_PATH}files/list`,
       params :params,
       method: "get",

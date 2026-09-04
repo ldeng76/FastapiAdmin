@@ -2,7 +2,9 @@
   <div v-if="rows.length === 0">
     <ElEmpty :description="`暂无${tableName}`" />
   </div>
-  <ModalityGroupTable v-else :tableName="tableName" :rows="rows"></ModalityGroupTable>
+  <div v-else style="height: 100%">
+      <ModalityGroupTable :tableName="tableName" :rows="rows"></ModalityGroupTable>
+  </div>
 </template>
 
 <script setup lang="ts">

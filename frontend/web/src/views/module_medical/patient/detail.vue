@@ -1,6 +1,6 @@
 <!-- 医学数据 · 患者多模态详情：基本信息 + 临床/基因/病理/影像 四模态 Tab -->
 <template>
-  <div class="medical-detail" v-loading="loading">
+  <div class="medical-detail fa-full-height" v-loading="loading">
     <ElDescriptions :column="4" border size="small" class="mb-5">
       <ElDescriptionsItem :label="getFieldLabel('patient_id')">{{ patient?.patient_id || "-" }}</ElDescriptionsItem>
       <ElDescriptionsItem :label="getFieldLabel('sex')">{{ dictStore.getDictItemLabel('med_sex',patient?.sex) }}</ElDescriptionsItem>
@@ -15,7 +15,7 @@
       <ElDescriptionsItem v-for="n in getExtRow(patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
     </ElDescriptions>
     <!-- 四模态 Tab -->
-    <ElTabs v-model="activeTab">
+    <ElTabs  class="patient-detail-tab" v-model="activeTab">
       <ElTabPane v-for="[key, value] in [...detail.entries()]"
         :label="getFieldLabel(key)"
         :name="key"
@@ -149,10 +149,19 @@ onMounted(fetchDetail);
 
 <style scoped>
 .medical-detail {
-  padding: 12px;
+  height: 100%;
+}
+.patient-detail-tab{
+  height: calc(100% - 150px);
 }
 hr{
   border: 1px solid transparent;
   border-bottom-color: var(--default-border)
+}
+</style>
+<style>
+.patient-detail-tab .el-tabs__content,
+.patient-detail-tab .el-tabs__content > .el-tab-pane{
+  height: 100%;
 }
 </style>

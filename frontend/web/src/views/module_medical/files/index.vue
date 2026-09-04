@@ -52,11 +52,9 @@ const selectedFileType= ref([])
 const fileTypeDict = ref<any>([])
 const statisticsCount = ref<StatisticsCount>({})
 function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
-
   if (typeof sizeBytes !== 'number') {
     return sizeBytes
   }
-
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   let size = sizeBytes;
   let index = 0;
@@ -143,12 +141,13 @@ const {
     ],
   },
 });
+
 onBeforeMount(async ()=>{
   await dictStore.getDict(['med_exam_type'])
   fileTypeDict.value = await FilesApi.getFileType()
   statisticsCount.value = await FilesApi.statistics()
-
 })
+
 </script>
 <style scoped>
 .files-container{

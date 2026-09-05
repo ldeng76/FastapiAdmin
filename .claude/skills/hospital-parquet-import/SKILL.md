@@ -12,6 +12,7 @@ description: 将医院新批次 parquet 数据（如珠江 zhujiang0814.parquet�
 - 0719 珠江全量 CT（data/zhujiang/nodule_imaging.parquet，97,039 条 exam，引擎兼容格式直接导入）
 - 0825 珠江 extracted_tables 批次（7 表一次导：patient/ct/genetics/ihc/pathology/operation/inpatient；含引擎空正文守卫修复 + zhujiang spec 追加 inpatient(visit_detail) + IHC 日期改用自带列；batch `8aff203f-...`）
 - 0825r2 raw_text 补录批次（batch `ce93eaaf-...`：CT/IHC/病理 3 表 detail_json 补 `raw_text` 顶层键，源文件原始报告全文逐字符落库）
+- 0904 新桥 (xinqiao) extracted_tables 批次（3 表一次导：CT 124,045 / pathology 19,089 / genetic 4,717，49,563 占位患者；无 patient 表；CT 正文中文标题（检查所见/检查结论）需换正则，珠江英文正则 0 命中；pathology/genetic 源文件无 exam_id → 适配层合成确定性 md5 ID；xinqiao 注册种子 0017；batch `843e8c43-...`；同期修复引擎 `_import_exam_text_table` 缺 `imported = 0` 初始化（4f66e9a0 误删，首跑 UnboundLocalError））
 
 ## 流水线全景
 
@@ -353,6 +354,12 @@ PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
   - **R11 diagnosis + diagnosis_inpatient**（2026-09-03 05:04 ~ 05:56）：4,925,535 + 1,000,030 = 5,925,565 行（实际落库 5,137,373，差异 ~13% 为 source_diagnosis_hash 哈希碰撞合并）。`diagnosis_inpatient` 含 21 个病案首页上下文字段进 detail JSONB。
   - **R12 clinical_document**（batch 各次，2026-09-03 05:56 ~ 06:09）：**事务因 DiskFullError 回滚**，0 行入库。失败原因为根盘（PG 在 /var/lib/postgresql/18/main）满。R12-R15 挂起待磁盘扩容后继续。
   - **R13-R15 未跑**（medical_history 1.4M / nursing_observation 13.8M / icu+anesthesia_observation 5.9M）。预计耗时：nursing 13.8M 行单事务类比 drug_order ~57 分钟；medical_history 与 obs 体量较小。
+  - **0904 新桥 xinqiao extracted_tables 批次（2026-09-05 00:21 ~ 00:27，batch `843e8c43-9c07-4bcb-b935-684e79ac0191`）**：CT 124,045 exam（staging 按 nodules[] 展开 243,241 行 detail，7,491 占位 n0）/ Pathology 19,089（19,101 行、12 组跨行合并）/ Genetic 4,717。无 patient 表 → 49,563 占位患者（sex='0'）。report_text 142,391（CT 124,045 + 病理 18,346；基因 body 空不写）。phi_audit 414,287（按唯一 exam 计：124,045×3 + 19,089+18,346 + 4,717）。
+    - 源文件 `/data/wlx/DATABASE/extracted_tables/xinqiao/{ct,pathology,genetics}.parquet`，与 zhujiang extracted_tables 同构（xinqiao ct 12 列与 zhujiang 完全同名同型）；差异：① 正文标题中文（检查所见/检查结论）② pathology/genetic 无 exam_id 列 ③ 多 `病理.送检部位` 列（组织病理/冰冻切片）④ ct 的 pat_local_id 100% NULL。
+    - ID 合成（无 exam_id 列）：pathology `specimen_id='XQP'||md5(patient_id|exam_date|送检部位)[:16]`（组键秒级时间戳，跨行同组合并）；genetic `test_id='XQG'||md5(patient_id|exam_date|sample_source|test_method)[:16]`（四元组行级唯一，NULL 以空串参与）。
+    - 引擎 spec `_CENTER_PARQUET_SPECS["xinqiao"]` 重写为 0825 同构（CT detail 原生 struct：exam_meta struct_pack + nodule_morphology 单元素 `[nodule]`，避免 0825 文档记录的 to_json 双重编码；病理 detail 含 submit_site/frozen/multi_nodules）。
+    - **引擎 bug 修复**：`_import_exam_text_table` 缺 `imported = 0`（commit 4f66e9a0 误删，父版本有），任何中心 exam 表导入首行即 UnboundLocalError → 已按父版本位置恢复（date lookup 预加载块后、行循环前）。
+    - 产物：种子 `backend/sql/postgres/0017-xinqiao-center-seed.sql`（tenant+med_hospital id=13，无 dict mapping——无 patient 枚举 + 静态 exam_type）；适配 `backend/etl2/etl1_adapt_xinqiao_{ct,pathology,genetics}.py`；staging `data_xq0904/xinqiao/{nodule_imaging,pathology_specimen,genetic_test}.parquet`（gitignore）；3 连跑内容哈希一致。
   - **引擎扩展（已落代码，未走完整生产验证）**：
     - `anon_etl_engine._in_lookup_chunked`（新 helper，asyncpg 参数上限 32767 修复）+ 5 处预读调用点（exam visit_date_lookup / exam_date_lookup / lab / order / observation）
     - `_secret_bytes` 加 `dict` 缓存 + `_SECRET_WARNED` 告警去重（避免 100M 级日志风暴）

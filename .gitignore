@@ -148,3 +148,4 @@ TCGA样例数据-临床-基因
 # 珠江 0825 raw_text 补录 staging（3 表，可重新生成），不入库
 /data_zj0825raw/
 /data_hos301/
+/data_xq0904/

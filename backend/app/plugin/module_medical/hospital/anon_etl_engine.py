@@ -1224,6 +1224,7 @@ async def _import_exam_text_table(
                 )
                 for row in lookup_results:
                     exam_date_lookup[row[0]] = row[1]
+    imported = 0
 
     for row in rows:
         rd = _row_to_dict(cols, row)
@@ -2539,20 +2540,57 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "xinqiao": [
+        # 2026-09-04 extracted_tables 批次（ct/pathology/genetics 3 表，无 patient 表，
+        # 患者由 exam 占位路径发号）：staging 与珠江 0825 同构，
+        # 适配脚本 backend/etl2/etl1_adapt_xinqiao_{ct,pathology,genetics}.py
         {"src_table": "patient", "kind": "patient"},
         {
             "src_table": "nodule_imaging",
             "kind": "exam_text",
             "exam_type": "CT",
             "id_field": "exam_id",
-            "body_fields": ["impression", "findings"],
+            # 源 raw_text 为中文标题（检查所见/检查结论），适配层已切分为
+            # findings/impression（珠江 DESCRIPTION/IMPRESSION 正则对 124k 行 0 命中）
+            "body_fields": ["findings", "impression"],
+            "detail_type": "nodule_imaging",
+            "detail_fields": [
+                "nodule_no", "nodule_location", "long_diameter", "density_type",
+                "exam_meta", "nodule_morphology",
+                "raw_text",
+            ],
+            "ordinal_field": "nodule_no",
         },
         {
             "src_table": "pathology_specimen",
             "kind": "exam_text",
             "exam_type": "Pathology",
+            # 源文件无 exam_id：适配层按 (patient_id, exam_date, 送检部位)
+            # 合成确定性 specimen_id（跨行同组 exam 合并，同珠江 0825 病理模式）
             "id_field": "specimen_id",
-            "body_fields": ["pathology_diagnosis", "gross_findings", "microscopic_findings"],
+            "body_fields": ["histology_class"],
+            "detail_type": "pathology",
+            "detail_fields": [
+                # 送检部位（组织病理/冰冻切片）珠江源文件没有，新桥专有列
+                "submit_site", "frozen", "multi_nodules",
+                "specimen_type", "sampling_site",
+                "specimens",
+                "raw_text",
+            ],
+        },
+        {
+            "src_table": "genetic_test",
+            "kind": "exam_text",
+            "exam_type": "Genetic",
+            # 源文件无 exam_id：适配层按 (patient_id, exam_date,
+            # sample_source, test_method) 合成确定性 test_id（四元组行级唯一）
+            "id_field": "test_id",
+            "body_fields": [],
+            "detail_type": "genetic",
+            "detail_fields": [
+                "test_meta", "variant_result",
+                "driver_mutations", "immune_markers",
+            ],
+            "date_field": "test_date",
         },
     ],
     "zhujiang": [

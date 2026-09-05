@@ -1,0 +1,81 @@
+center,center_name,category,subtype,count
+hos301,301医院,patient 患者,,8350
+hos301,301医院,visit 就诊,,17997
+hos301,301医院,visit_detail 住院明细,,17997
+hos301,301医院,exam 检查,CT,50537
+hos301,301医院,exam 检查,Pathology 病理,13583
+hos301,301医院,exam 检查,Ultrasound 超声,81783
+hos301,301医院,exam 检查,Other,51120
+hos301,301医院,exam 检查,小计,197023
+hos301,301医院,exam_detail 检查明细,exam_extras,197023
+hos301,301医院,exam_detail 检查明细,小计,197023
+hos301,301医院,report_text 报告正文,CT,50537
+hos301,301医院,report_text 报告正文,Pathology 病理,11925
+hos301,301医院,report_text 报告正文,Ultrasound 超声,81768
+hos301,301医院,report_text 报告正文,Other,31814
+hos301,301医院,report_text 报告正文,小计,176044
+hos301,301医院,lab 检验（明细行）,,3503732
+hos301,301医院,order 医嘱,,830440
+shengyi,省医,patient 患者,,87138
+shengyi,省医,visit 就诊,,2381010
+shengyi,省医,visit_detail 住院明细,,2381010
+shengyi,省医,exam 检查,CT,226151
+shengyi,省医,exam 检查,Pathology 病理,189966
+shengyi,省医,exam 检查,Ultrasound 超声,181691
+shengyi,省医,exam 检查,ECG 心电,149072
+shengyi,省医,exam 检查,Radiology 放射,170104
+shengyi,省医,exam 检查,MR 磁共振,62059
+shengyi,省医,exam 检查,Other,57171
+shengyi,省医,exam 检查,小计,1036214
+shengyi,省医,exam_detail 检查明细,pathology,189966
+shengyi,省医,exam_detail 检查明细,imaging_report,515585
+shengyi,省医,exam_detail 检查明细,ultrasound,181604
+shengyi,省医,exam_detail 检查明细,ecg,149072
+shengyi,省医,exam_detail 检查明细,小计,1036227
+shengyi,省医,report_text 报告正文,CT,225887
+shengyi,省医,report_text 报告正文,Pathology 病理,189932
+shengyi,省医,report_text 报告正文,Ultrasound 超声,179077
+shengyi,省医,report_text 报告正文,ECG 心电,148848
+shengyi,省医,report_text 报告正文,Radiology 放射,170104
+shengyi,省医,report_text 报告正文,MR 磁共振,62059
+shengyi,省医,report_text 报告正文,Other,55314
+shengyi,省医,report_text 报告正文,小计,1031221
+shengyi,省医,lab 检验（明细行）,,44952198
+shengyi,省医,order 医嘱,,20377569
+shengyi,省医,diagnosis 诊断,,5137373
+shengyi,省医,medical_history 病案首页,,699536
+shengyi,省医,clinical_document 临床文书,,2672861
+shengyi,省医,surgery 手术,,324637
+shengyi,省医,observation 体征监测,,16303150
+xinqiao,新桥,patient 患者,,49563
+xinqiao,新桥,exam 检查,CT,124045
+xinqiao,新桥,exam 检查,Pathology 病理,19089
+xinqiao,新桥,exam 检查,Genetic 基因,4717
+xinqiao,新桥,exam 检查,小计,147851
+xinqiao,新桥,exam_detail 检查明细,nodule_imaging,243241
+xinqiao,新桥,exam_detail 检查明细,pathology,19089
+xinqiao,新桥,exam_detail 检查明细,genetic,4717
+xinqiao,新桥,exam_detail 检查明细,小计,267047
+xinqiao,新桥,report_text 报告正文,CT,124045
+xinqiao,新桥,report_text 报告正文,Pathology 病理,18346
+xinqiao,新桥,report_text 报告正文,小计,142391
+zhujiang,珠江医院,patient 患者,,86301
+zhujiang,珠江医院,visit 就诊,,9590
+zhujiang,珠江医院,visit_detail 住院明细,,9590
+zhujiang,珠江医院,exam 检查,CT,97039
+zhujiang,珠江医院,exam 检查,Pathology 病理,15386
+zhujiang,珠江医院,exam 检查,Genetic 基因,1088
+zhujiang,珠江医院,exam 检查,IHC 免疫组化,25
+zhujiang,珠江医院,exam 检查,小计,113538
+zhujiang,珠江医院,exam_detail 检查明细,nodule_imaging,188167
+zhujiang,珠江医院,exam_detail 检查明细,pathology,15386
+zhujiang,珠江医院,exam_detail 检查明细,ihc,6723
+zhujiang,珠江医院,exam_detail 检查明细,genetic,1091
+zhujiang,珠江医院,exam_detail 检查明细,小计,211367
+zhujiang,珠江医院,report_text 报告正文,CT,97039
+zhujiang,珠江医院,report_text 报告正文,Pathology 病理,12452
+zhujiang,珠江医院,report_text 报告正文,Genetic 基因,12
+zhujiang,珠江医院,report_text 报告正文,小计,109503
+zhujiang,珠江医院,surgery 手术,,18058
+zhujiang,珠江医院,imaging_study DICOM影像,,36356
+zhujiang,珠江医院,imaging_orphan DICOM孤儿,,8085

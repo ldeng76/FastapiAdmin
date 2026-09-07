@@ -36,6 +36,7 @@
         :header-cell-style="{ backgroundColor: '#f5f7fa' }"
         :columns="columns"
         :pagination="pagination"
+        @sort-change="onSortChange"
         @pagination:size-change="handleSizeChange"
         @pagination:current-change="handleCurrentChange"
       />
@@ -62,6 +63,7 @@ import PatientAPI, { type PatientTable } from "@/api/module_medical/patient";
 import Detail from "./detail.vue";
 import {useDictStore} from "@/store";
 import {ArrowLeft} from "@element-plus/icons-vue";
+import {getFieldLabel} from "@/components/medical/field-renderer";
 defineOptions({ name: "MedicalPatient", inheritAttrs: false });
 const dictStore = useDictStore()
 const showPatientId = ref('')
@@ -71,12 +73,7 @@ const showDetailData = ref({
   center: ""
 });
 
-// 搜索表单
-interface PatientSearchForm {
-  center: string;
-  keyword: string;
-}
-const searchForm = ref<PatientSearchForm>({ center: "", keyword: "" });
+const searchForm = ref<any>({});
 const showSearchBar = ref(true);
 
 const patientSearchItems = computed<SearchFormItem[]>(() => [
@@ -121,13 +118,23 @@ function goDetail(row: PatientTable) {
   showDetailData.value = { detail: row.patient_id, center: row.center_code || "" }
   showDetail.value = true
 }
-
+const sortParams = ref({sort_field:"",sort_order:""})
+function onSortChange({ prop, order }:any){
+  if(order){
+     order = order.replace("ending","")
+  }
+  sortParams.value = {
+    sort_field:prop,
+    sort_order:order
+  }
+}
 const {
   columns,
   columnChecks,
   data,
   loading,
   pagination,
+  replaceSearchParams,
   getData,
   resetSearchParams,
   handleSizeChange,
@@ -141,38 +148,50 @@ const {
       { type: "globalIndex", width: 60, label: "序号" },
       {
         prop: "patient_id",
-        label: "患者编号",
+        label:getFieldLabel("patient_id"),
         minWidth: 140,
-        showOverflowTooltip: true,
+        sortable :'custom',
       },
       {
         prop: "sex",
-        label: "性别",
+        label: getFieldLabel("sex"),
         minWidth: 80,
+        sortable :'custom',
         formatter: (row) => dictStore.getDictItemLabel("med_sex",row.sex),
       },
       {
         prop: "birth_date",
         label: "年龄（出生日期）",
         minWidth: 150,
+        sortable :'custom',
         formatter: (row) => fmtAgeBirthday(row.birth_date),
       },
       {
         prop: "abo_blood_type",
-        label: "血型",
-        minWidth: 110,
-        formatter: (row) => bloodTypeLabel(row),
+        label: getFieldLabel("abo_blood_type"),
+        minWidth: 80,
+        sortable :'custom',
+        formatter: (row) => dictStore.getDictItemLabel("med_blood_type_abo",row.abo_blood_type),
+      },
+      {
+        prop: "med_blood_type_rh",
+        label: getFieldLabel("rh_blood_type"),
+        minWidth: 80,
+        sortable :'custom',
+        formatter: (row) => dictStore.getDictItemLabel("med_blood_type_rh",row.rh_blood_type),
       },
       {
         prop: "smoking_status",
-        label: "吸烟状态",
+        label: getFieldLabel("smoking_status"),
         minWidth: 110,
+        sortable :'custom',
         formatter: (row) => dictStore.getDictItemLabel("med_smoking_status",row.smoking_status),
       },
       {
         prop: "first_nodule_date",
-        label: "首结节日期",
+        label: getFieldLabel("first_nodule_date"),
         minWidth: 130,
+        sortable :'custom',
         formatter: (row) => fmtDate(row.first_nodule_date),
       },
       {
@@ -197,9 +216,20 @@ function fmtDate(v?: string): string {
   return v.length > 10 ? v.slice(0, 10) : v;
 }
 
+watch([sortParams],function (){
+  handleSearchBarSearch()
+})
+
 // 搜索
 function handleSearchBarSearch() {
-  getData(searchForm.value);
+  let params:any = Object.assign({},searchForm.value)
+  if(sortParams.value.sort_field && sortParams.value.sort_order){
+    let obj :any = {}
+    obj[sortParams.value.sort_field] = sortParams.value.sort_order
+    params.order_by = JSON.stringify([obj])
+  }
+  replaceSearchParams(params)
+  getData(params);
 }
 
 // 年龄（出生日期）合并显示：如 "62（1963-05）"
@@ -220,13 +250,6 @@ function fmtAgeBirthday(v?: string): string {
   return age !== null ? `${age}（${ym}）` : ym;
 }
 
-// 血型合并显示：ABO/Rh，如 "A型/阳性"；缺失则单独显示已有项；都无则 "-"
-function bloodTypeLabel(row: PatientTable): string {
-  const a = dictStore.getDictItemLabel("med_blood_type_abo",row.abo_blood_type);
-  const r = dictStore.getDictItemLabel("med_blood_type_rh",row.rh_blood_type);
-  if (a && r) return `${a}/${r}`;
-  return a || r || "-";
-}
 onBeforeMount(async ()=>{
   await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
 })

@@ -39,12 +39,15 @@ class PatientService:
         sex: str | None,
         smoking_status: str | None,
         page: PaginationQueryParam,
+        order_by: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """患者分页列表。
 
         返回结构必须包含 page_no / page_size / has_next，前端 useTable 的
         ``isPageResultPayload`` 与 ``normalizePageResultLike`` 都依赖这三项做响应
         解包校验；任意一项缺失都会被识别为非法分页响应，从而回退为空列表。
+
+        order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
         """
         items, total = await anon_list_patients(
             auth.db,
@@ -53,6 +56,7 @@ class PatientService:
             smoking_status=smoking_status,
             offset=page.offset,
             limit=page.limit,
+            order_by=order_by,
         )
         page_size = page.limit or 10
         page_no = (page.offset // page_size) + 1 if page_size else 1

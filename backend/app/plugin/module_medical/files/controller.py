@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.common.response import ResponseSchema, SuccessResponse
+from app.core.base_params import PaginationQueryParam
 from app.core.dependencies import AuthPermission
 from app.core.exceptions import CustomException
 from app.core.router_class import OperationLogRoute
@@ -26,6 +27,35 @@ MedFilesRouter = APIRouter(
     route_class=OperationLogRoute, prefix="/files", tags=["医疗文件"],
 )
 
+# 允许排序的字段白名单（对应 MedFilesModel 的 ORM 属性名，防止注入任意列）
+ALLOWED_SORT_FIELDS = {
+    "id", "anon_exam_id", "file_name", "patient_id",
+    "exam_type", "file_type", "file_path",
+}
+# 允许的排序方式
+ALLOWED_SORT_ORDERS = {"asc", "desc"}
+
+
+def _normalize_order_by(raw: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    """把 PaginationQueryParam 传入的 order_by 过滤到白名单内。
+
+    非法字段/方向会被静默跳过；全部被过滤时回退到默认 [{"id": "desc"}]。
+    """
+    if not raw:
+        return [{"id": "desc"}]
+    result: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        for field, direction in item.items():
+            if field not in ALLOWED_SORT_FIELDS:
+                continue
+            direction = str(direction).lower()
+            if direction not in ALLOWED_SORT_ORDERS:
+                continue
+            result.append({field: direction})
+    return result or [{"id": "desc"}]
+
 
 @MedFilesRouter.get(
     "/list",
@@ -33,23 +63,24 @@ MedFilesRouter = APIRouter(
     response_model=ResponseSchema[dict],
 )
 async def list_med_files_controller(
+    page: Annotated[PaginationQueryParam, Depends()],
     search: Annotated[MedicalFilesQueryParam, Depends()],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
-    page_no: Annotated[int, Query(ge=1, description="当前页码")] = 1,
-    page_size: Annotated[int, Query(ge=1, le=100, description="每页数量")] = 30,
 ) -> JSONResponse:
     """分页查询医疗文件列表。
 
     - exam_type：模态类型，多选逗号分隔（如 ?exam_type=CT,PETCT），为空返回全部
     - file_type：文件类型，多选逗号分隔（如 ?file_type=dicom,nii），为空返回全部
+    - order_by：排序，JSON 数组，如 [{"patient_id":"asc"},{"id":"desc"}]
     """
     exam_type = search.exam_type[1] if search.exam_type else None
     file_type = search.file_type[1] if search.file_type else None
+    order_by = _normalize_order_by(page.order_by)
     result = await MedFilesService.page_service(
         auth=auth,
-        offset=(page_no - 1) * page_size,
-        limit=page_size,
-        order_by=[{"id": "desc"}],
+        offset=page.offset,
+        limit=page.limit,
+        order_by=order_by,
         exam_type=exam_type,
         file_type=file_type,
     )

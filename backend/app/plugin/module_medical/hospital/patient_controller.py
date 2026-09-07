@@ -25,6 +25,38 @@ from .patient_service import PatientService
 
 PatientRouter = APIRouter(route_class=OperationLogRoute, tags=["患者多模态"])
 
+# 允许排序的字段白名单（对应 AnonPatientModel 的 ORM 属性名，防止注入任意列）
+ALLOWED_SORT_FIELDS = {
+    "patient_id", "birth_date", "sex",
+    "abo_blood_type", "rh_blood_type",
+    "smoking_status", "first_nodule_date",
+}
+# 允许的排序方式
+ALLOWED_SORT_ORDERS = {"asc", "desc"}
+
+
+def _normalize_order_by(raw: list[dict[str, str]] | None) -> list[dict[str, str]] | None:
+    """把 PaginationQueryParam 传入的 order_by 过滤到白名单内。
+
+    非法字段/方向会被静默跳过；过滤后为空时返回 None，由 query 层走默认排序
+    (center_code asc, patient_id asc)，避免 PaginationQueryParam 的兜底
+    updated_time 字段报错。
+    """
+    if not raw:
+        return None
+    result: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        for field, direction in item.items():
+            if field not in ALLOWED_SORT_FIELDS:
+                continue
+            direction = str(direction).lower()
+            if direction not in ALLOWED_SORT_ORDERS:
+                continue
+            result.append({field: direction})
+    return result or None
+
 
 @PatientRouter.get(
     "/centers",
@@ -43,7 +75,11 @@ async def list_centers_controller(
 @PatientRouter.get(
     "/patients",
     summary="患者分页列表",
-    description="支持按性别/吸烟情况/关键词筛选，按 patient_id 排序",
+    description=(
+        "支持按性别/吸烟情况/关键词筛选；"
+        "通过 order_by 控制排序，可选字段: patient_id/birth_date/sex/"
+        "abo_blood_type/rh_blood_type/smoking_status/first_nodule_date"
+    ),
     response_model=ResponseSchema[dict],
 )
 async def list_patients_controller(
@@ -62,13 +98,19 @@ async def list_patients_controller(
         Query(description="吸烟情况（精确匹配 smoking_status）"),
     ] = None,
 ) -> JSONResponse:
-    """患者分页列表。"""
+    """患者分页列表。
+
+    order_by：JSON 数组格式，如 [{"birth_date":"desc"},{"patient_id":"asc"}]；
+    不传时按 (center_code, patient_id) 升序。
+    """
+    order_by = _normalize_order_by(page.order_by)
     result = await PatientService.list_patients_service(
         auth=auth,
         keyword=keyword,
         sex=sex,
         smoking_status=smoking_status,
         page=page,
+        order_by=order_by,
     )
     return SuccessResponse(data=result, msg="获取患者列表成功")
 

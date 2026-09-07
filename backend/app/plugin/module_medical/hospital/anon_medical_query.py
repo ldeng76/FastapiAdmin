@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import Date, cast, func, or_, select
+from sqlalchemy import ColumnElement, Date, asc, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .anon_model import (
@@ -44,6 +44,25 @@ from .anon_model import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_order_by(model, order_by: list[dict[str, str]] | None) -> list[ColumnElement]:
+    """把 list[dict[str, str]] 转成 SQLAlchemy 排序表达式。
+
+    None 或空时使用模型默认排序 (center_code asc, patient_id asc)，
+    与改造前的硬编码行为一致；非法字段已被 controller 层过滤，
+    此处不做白名单二次拦截，字段不存在会抛 AttributeError。
+    """
+    if not order_by:
+        return [model.center_code, model.patient_id]
+    cols: list[ColumnElement] = []
+    for item in order_by:
+        if not isinstance(item, dict):
+            continue
+        for field, direction in item.items():
+            col = getattr(model, field)
+            cols.append(desc(col) if str(direction).lower() == "desc" else asc(col))
+    return cols or [model.center_code, model.patient_id]
 
 
 def _flatten_jsonb(row: dict[str, Any], jsonb_key: str) -> dict[str, Any]:
@@ -144,8 +163,12 @@ async def anon_list_patients(
     smoking_status: str | None = None,
     offset: int = 0,
     limit: int = 10,
+    order_by: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """患者分页列表（基于 AnonPatientModel）。返回 (行列表, 总数)。"""
+    """患者分页列表（基于 AnonPatientModel）。返回 (行列表, 总数)。
+
+    order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
+    """
     conditions = [AnonPatientModel.deleted_at.is_(None)]
     if sex:
         conditions.append(AnonPatientModel.sex == sex)
@@ -170,7 +193,7 @@ async def anon_list_patients(
     list_stmt = (
         select(*PATIENT_LIST_COLS)
         .where(*conditions)
-        .order_by(AnonPatientModel.center_code, AnonPatientModel.patient_id)
+        .order_by(*_resolve_order_by(AnonPatientModel, order_by))
         .limit(limit)
         .offset(offset)
     )

@@ -24,14 +24,7 @@ const FilesApi = {
       url: `${API_PATH}files/list`,
       params :params,
       method: "get",
-    }).then(function (res:any){
-      if(res.data?.data){
-        res.data?.data.items.forEach(function (n:any){
-          n.file_type = 'dcm'
-        })
-      }
-      return res
-    });
+    })
   },
   async statistics(params = {}) {
     const data = {

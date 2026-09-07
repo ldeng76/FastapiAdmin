@@ -28,6 +28,7 @@
           :columns="columns"
           :header-cell-style="{ backgroundColor: '#f5f7fa' }"
           border
+          @sort-change="onSortChange"
           :pagination="pagination"
           @pagination:size-change="handleSizeChange"
           @pagination:current-change="handleCurrentChange"
@@ -48,7 +49,8 @@ import Viewer from "@views/module_medical/viewer/index.vue";
 
 const viewer = ref<any>(null)
 const selectedExamType = ref([])
-const selectedFileType= ref([])
+const selectedFileType = ref([])
+const sortParams = ref({sort_field:"",sort_order:""})
 const fileTypeDict = ref<any>([])
 const statisticsCount = ref<StatisticsCount>({})
 const loading = ref(false)
@@ -68,15 +70,31 @@ function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
   return (!isNumStrong ? size.toFixed(2) :'<strong>'+size.toFixed(2)+'</strong>') + ' ' + units[index];
 }
 const dictStore = useDictStore();
+function onSortChange({ prop, order }:any){
+  if(order){
+     order = order.replace("ending","")
+  }
+  sortParams.value = {
+    sort_field:prop,
+    sort_order:order
+  }
+}
 
-watch([selectedExamType,selectedFileType],async function (arr){
+watch([selectedExamType,selectedFileType,sortParams],async function (arr){
   let examType = arr[0]
   let fileType = arr[1]
   let params = {
     exam_type:examType.toString(),
-    file_type:fileType.toString()
+    file_type:fileType.toString(),
+    order_by:'[]'
+  }
+  if(sortParams.value.sort_field && sortParams.value.sort_order){
+    let obj :any = {}
+    obj[sortParams.value.sort_field] = sortParams.value.sort_order
+    params.order_by = JSON.stringify([obj])
   }
   loading.value = true
+  replaceSearchParams(params)
   await getData(params)
   statisticsCount.value = await FilesApi.statistics(params)
   loading.value = false
@@ -88,24 +106,36 @@ const {
   pagination,
   handleSizeChange,
   handleCurrentChange,
+  replaceSearchParams,
   getData
 } = useTable({
+  transform:{
+    dataTransformer(data){
+      data.forEach(function (n:any){
+        n.file_type = 'dcm'
+      })
+      return data
+    }
+  },
   core: {
     apiFn: FilesApi.list,
     apiParams: { page_no: 1, page_size: 30 },
     columnsFactory: (): ColumnOption<FilesTable>[] => [
       {
         prop: "patient_id",
-        label: "患者ID"
+        label: "患者ID",
+        sortable :'custom'
       },
       {
         prop: "file_name",
-        label: "文件名"
+        label: "文件名",
+        sortable :'custom'
       },
       {
         prop: "exam_type",
         label: "模态类型",
         minWidth: 80,
+        sortable :'custom',
         formatter(row){
           return dictStore.getDictItemLabel("med_exam_type",row.exam_type)
         }
@@ -113,6 +143,7 @@ const {
       {
         prop: "file_type",
         label: "文件类型",
+        sortable :'custom',
         minWidth: 80
       },
       {

@@ -63,14 +63,17 @@ import {getFieldLabel} from "@/components/medical/field-renderer";
 import StatisticsAPI from "@api/module_medical/statistics.ts";
 defineOptions({ name: "MedicalPatient", inheritAttrs: false });
 const dictStore = useDictStore()
+const route = useRoute();
 const showPatientId = ref('')
 const showDetail = ref(false);
 const showDetailData = ref({
   detail: '',
   center: ""
 });
+let query:any = route.query;
+query.is_placeholders = query.is_placeholders === 'true';
 
-const searchForm = ref<any>({});
+const searchForm = ref<any>(query);
 const showSearchBar = ref(true);
 const patientSearchItems = ref<SearchFormItem[]>([])
 
@@ -90,6 +93,7 @@ function onSortChange({ prop, order }:any){
     sort_order:order
   }
 }
+
 const {
   columns,
   columnChecks,
@@ -105,7 +109,7 @@ const {
 } = useTable({
   core: {
     apiFn: PatientAPI.listPatient,
-    apiParams: { page_no: 1, page_size: 10 },
+    apiParams: Object.assign({ page_no: 1, page_size: 10 },query),
     columnsFactory: (): ColumnOption<PatientTable>[] => [
       { type: "globalIndex", width: 60, label: "序号" },
       {

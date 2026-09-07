@@ -62,18 +62,3 @@ async def get_bmi_buckets_controller(
 ) -> JSONResponse:
     """BMI 分档字典（中国成人标准：偏瘦/正常/超重/肥胖）。"""
     return SuccessResponse(data=BMI_BUCKET_OPTIONS, msg="获取 BMI 分档字典成功")
-
-
-@StatsRouter.get(
-    "/statistics/patients",
-    summary="患者分页列表",
-    description="分页查询患者列表，支持与统计概览相同的筛选条件",
-    response_model=ResponseSchema[dict],
-)
-async def get_patient_list_controller(
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:stats:query"]))],
-    query: PatientListQuery = Depends(),
-) -> JSONResponse:
-    """患者分页列表。"""
-    result = await StatsService.get_patient_list_service(auth=auth, query=query)
-    return SuccessResponse(data=result, msg="获取患者列表成功")

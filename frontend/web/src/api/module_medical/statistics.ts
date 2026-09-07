@@ -4,7 +4,7 @@
  */
 import { request } from "@utils";
 
-import {PatientData, StatsOverview} from "@/types/module_medical/hospital";
+import {StatsOverview} from "@/types/module_medical/hospital";
 
 const API_PATH = "/medical/statistics";
 
@@ -13,13 +13,6 @@ const StatisticsAPI = {
   getOverview(params?:any) {
     return request<ApiResponse<StatsOverview>>({
       url: `${API_PATH}/overview`,
-      method: "get",
-      params : params ? params : null
-    });
-  },
-  getPatients(params?:any) {
-    return request<ApiResponse<PatientData>>({
-      url: `${API_PATH}/patients`,
       method: "get",
       params : params ? params : null
     });

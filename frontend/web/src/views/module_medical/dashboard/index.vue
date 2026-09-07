@@ -8,7 +8,7 @@
         :show-reset="true"
         :show-search="true"
         style="border: 0 !important;"
-        @search="searchCall"
+        @search="()=>{searchCall()}"
         @reset="clearSearch"
       />
     </el-header>
@@ -70,68 +70,13 @@
               />
           </el-card>
         </el-col>
-        <el-col :sm="24" class="mt-5">
-          <el-card class="echarts-card">
-            <div class="pb-3.5"><span class="text-base font-medium">患者列表</span></div>
-            <FaTable
-              :data="patientData.data"
-              :border="false"
-              :height="500"
-              :stripe="false"
-              :pagination="patientData.pagination"
-              @pagination:size-change="patientList.handlePatientSizeChange"
-              @pagination:current-change="patientList.handlePatientCurrentChange"
-              style="--default-box-color:var(--el-fill-color-light)"
-            >
-              <ElTableColumn type="index" label="操作" width="120">
-                <template #default="{ row: row }">
-                  <ElButton type="primary" size="small" @click="patientList.showDicom(row)" plain>查看影像</ElButton>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn prop="patient_id" :label="getFieldLabel('patient_id')" width="120" />
-              <ElTableColumn prop="birth_date" :label="getFieldLabel('birth_date')" />
-              <ElTableColumn prop="age" :label="getFieldLabel('age')" />
-              <ElTableColumn prop="sex" :label="getFieldLabel('sex')">
-                <template #default="{ row: row }">
-                  {{ dictStore.getDictItemLabel('med_sex', row.sex) }}
-                </template>
-              </ElTableColumn>
-              <ElTableColumn prop="smoking_status" :label="getFieldLabel('smoking_status')">
-                <template #default="{ row: row }">
-                  {{ dictStore.getDictItemLabel('med_smoking_status', row.smoking_status) }}
-                </template>
-              </ElTableColumn>
-              <ElTableColumn prop="abo_blood_type" :label="getFieldLabel('abo_blood_type')">
-                <template #default="{ row: row }">
-                  {{ dictStore.getDictItemLabel('med_blood_type_abo', row.abo_blood_type) }}
-                </template>
-              </ElTableColumn>
-              <ElTableColumn prop="rh_blood_type" :label="getFieldLabel('rh_blood_type')">
-                <template #default="{ row: row }">
-                  {{ dictStore.getDictItemLabel('med_blood_type_rh', row.rh_blood_type) }}
-                </template>
-              </ElTableColumn>
-              <ElTableColumn prop="native_place" :label="getFieldLabel('native_place')"/>
-              <ElTableColumn prop="bmi" :label="getFieldLabel('bmi')" />
-              <ElTableColumn prop="first_nodule_date" :label="getFieldLabel('first_nodule_date')"  />
-            </FaTable>
-          </el-card>
-        </el-col>
       </el-row>
     </el-main>
   </el-container>
-  <el-dialog class="flex flex-col" :bodyClass="'patientDetailBody'" v-model="showPatientDetail" fullscreen>
-    <PatientDetail v-if="showPatientDetail" :data="showPatientDetailData" />
-    <template #footer>
-      <div class="dialog-footer">
-        <el-button @click="showPatientDetail = false" type="primary"  plain>关闭</el-button>
-      </div>
-    </template>
-  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import PatientDetail from "./PatientDetail.vue"
+
 import { ref , onMounted ,onBeforeMount} from "vue";
 import {useDictStore} from "@stores";
 import Total from "./components/Total.vue";
@@ -139,16 +84,16 @@ import StatisticsAPI from "@api/module_medical/statistics.ts";
 import {
   StatsDimension,
   StatsKpi,
-  type StatsOverview,
-  PatientData,
-  PatientListItem,
+  type StatsOverview
 } from "@/types/module_medical/hospital.ts";
 import type {LineDataItem} from "@/types/component/chart.ts";
 import FaSearchBar, {SearchFormItem} from "@/components/forms/fa-search-bar/index.vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
+import {useRouter} from "vue-router";
 const dictStore = useDictStore();
+const router = useRouter();
 const loading = ref(false)
-const searchForm = ref<any>({gender:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
+const searchForm = ref<any>({sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
 const searchItems = ref<SearchFormItem[]>([])
 const overviewCount = ref<StatsKpi[]>([]);
 const ageCount : any = ref({
@@ -162,56 +107,6 @@ const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
   data :[]
 })
 
-const patientData = ref<{
-  pagination:any
-  data:PatientListItem[]
-}>({
-  pagination :{
-    current: 1,
-    size: 10,
-    total: 0
-  },
-  data:[]
-})
-const showPatientDetail = ref(false)
-const showPatientDetailData = ref<PatientListItem>()
-const patientList = {
-  handlePatientSizeChange(newSize: number){
-    patientList.upData(1,newSize)
-  },
-  handlePatientCurrentChange(newCurrent: number){
-    patientList.upData(newCurrent,patientData.value.pagination.size)
-  },
-  showDicom(row:PatientListItem){
-    showPatientDetailData.value = row
-    showPatientDetail.value = true;
-  },
-  upData(current:number,size:number){
-    let params = Object.assign({},searchForm.value);
-    params.current = current
-    params.size = size
-    this.getData(params).then( (res)=>{
-      this.setData(res.data.data)
-       patientData.value.pagination.size = size
-       patientData.value.pagination.current = current
-    })
-  },
-  getData(params:object){
-    return StatisticsAPI.getPatients(Object.assign({
-      current : patientData.value.pagination.current,
-      size : patientData.value.pagination.size,
-    },params))
-  },
-  setData(newPatientData:PatientData){
-    if(newPatientData != null){
-      patientData.value.pagination = Object.assign({},patientData.value.pagination,{
-        total:newPatientData.total
-      })
-      patientData.value.data = newPatientData.items
-    }
-  }
-}
-
 const kpisIcon = {
   total_patients:"ri:user-heart-fill",
   total_exams:"ri:chat-check-fill",
@@ -219,28 +114,31 @@ const kpisIcon = {
   modality_count:"ri:mail-line",
 }
 
-async function searchCall(){
+async function searchCall(isRedirectPatient = false){
+  let params = Object.assign({is_placeholders:true},searchForm.value);
+  if(isRedirectPatient){
+    await router.push({path: '/medicalPatient', query: params});
+    return;
+  }
   loading.value = true
-  let params = searchForm.value;
   let res = await StatisticsAPI.getOverview(params)
-  let tableRes = await patientList.getData(params)
-  upDateChatsView(res?.data?.data,tableRes?.data?.data)
+  upDateChatsView(res?.data?.data)
   loading.value = false
 }
 
 function clearSearch() {
-  searchForm.value = {gender:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""}
+  searchForm.value = {sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""}
   searchCall()
 }
 
 function chartSelect(obj:any){
   if(searchForm.value[obj?.data?.filterName] !== undefined){
     searchForm.value[obj?.data?.filterName] = obj?.data?.filterValue
-    searchCall()
+    searchCall(true)
   }
 }
 
-function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
+function upDateChatsView(overview:StatsOverview){
   overviewCount.value = overview.kpis || []
   overviewCount.value.forEach(function (n){
     n.icon = kpisIcon[n.key as keyof typeof kpisIcon]
@@ -280,7 +178,7 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
         name : n.label,
         value : n.count,
         filterValue : n.sex,
-        filterName: 'gender'
+        filterName: 'sex'
       }
     })
   }
@@ -313,7 +211,7 @@ function upDateChatsView(overview:StatsOverview,newPatientData:PatientData){
       ]
     }
   }
-  patientList.setData(newPatientData);
+
 }
 onBeforeMount(async function (){
   const ageBuckets = await StatisticsAPI.getAgeBuckets()

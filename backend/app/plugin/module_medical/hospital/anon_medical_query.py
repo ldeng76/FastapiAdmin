@@ -173,7 +173,7 @@ async def anon_list_patients(
 
     筛选条件统一由 stats_query.build_patient_filters(filters) 构建，
     与仪表板统计概览共用同一套逻辑（sex/modality/age_bucket/
-    abo/rh/smoking/bmi_bucket/patient_id），新增筛选项只需改那一处。
+    abo/rh/smoking/bmi_bucket/patient_id/is_placeholders），新增筛选项只需改那一处。
 
     order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
     """

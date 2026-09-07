@@ -109,6 +109,7 @@ def build_patient_filters(
     - modality 通过 exam 表子查询过滤
     - age_bucket / bmi_bucket 通过 CASE 分档表达式过滤
     - patient_id 对患者编号做 ILIKE 模糊匹配
+    - is_placeholders 是否包含占位患者（默认 False，排除占位患者）
     """
     conditions = [_not_deleted_patient()]
     if filters is None:
@@ -138,6 +139,8 @@ def build_patient_filters(
         conditions.append(
             AnonPatientModel.patient_id.ilike(f"%{filters.patient_id}%")
         )
+    if not filters.is_placeholders:
+        conditions.append(AnonPatientModel.is_placeholder.is_(False))
     return conditions
 
 
@@ -176,6 +179,7 @@ class StatsQuery:
         self.smoking_status = filters.smoking_status if filters else None
         self.bmi_bucket = filters.bmi_bucket if filters else None
         self.patient_id = filters.patient_id if filters else None
+        self.is_placeholders = filters.is_placeholders if filters else False
         self._ref_date = date.today()
 
     # ── 过滤条件构建 ──────────────────────────
@@ -188,7 +192,8 @@ class StatsQuery:
         """构建 exam 表的过滤条件列表。
 
         sex / age_bucket / abo_blood_type / smoking_status / bmi_bucket /
-        patient_id 通过 IN 子查询关联 patient 表；modality 直接过滤 exam_type。
+        patient_id / is_placeholders 通过 IN 子查询关联 patient 表；
+        modality 直接过滤 exam_type。
         """
         conditions = []
         if self.modality:
@@ -198,7 +203,9 @@ class StatsQuery:
             or self.abo_blood_type or self.rh_blood_type or self.smoking_status
             or self.bmi_bucket or self.patient_id
         )
-        if patient_attrs:
+        # is_placeholders=False（默认）时排除占位患者
+        exclude_placeholders = not self.is_placeholders
+        if patient_attrs or exclude_placeholders:
             sub = select(AnonPatientModel.patient_id).where(_not_deleted_patient())
             if self.sex:
                 sub = sub.where(AnonPatientModel.sex == self.sex)
@@ -217,6 +224,8 @@ class StatsQuery:
                 sub = sub.where(
                     AnonPatientModel.patient_id.ilike(f"%{self.patient_id}%")
                 )
+            if exclude_placeholders:
+                sub = sub.where(AnonPatientModel.is_placeholder.is_(False))
             conditions.append(AnonExamModel.patient_id.in_(sub))
         return conditions
 

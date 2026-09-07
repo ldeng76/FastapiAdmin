@@ -50,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, ref } from "vue";
+import {  h, ref } from "vue";
 import { ElButton, ElTag } from "element-plus";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
@@ -121,7 +121,7 @@ const {
                 h(
                   ElTag,
                   { size: "small", type: "info", style: "margin-left: 6px" },
-                  () => "占位",
+                  () => "暂无影像数据",
                 ),
               ])
             : row.patient_id,
@@ -235,6 +235,18 @@ onBeforeMount(async ()=>{
   await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
   patientSearchItems.value = [
     {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 4},
+    {
+      key: "is_placeholders",
+      label: "显示没有影像数据的患者",
+      type: "switch",
+      labelWidth:180,
+      props:{
+        inlinePrompt: true,
+        activeText: "显示",
+        inactiveText: "隐藏",
+      },
+      span: 4
+    },
     {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 4},
     {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
     {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 4 },

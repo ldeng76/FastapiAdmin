@@ -29,6 +29,7 @@ class StatsFiltersIn(BaseModel):
     smoking_status: str | None = Field(None, description="吸烟状态筛选（1=从不, 2=既往, 3=现在, 9=未知）")
     bmi_bucket: str | None = Field(None, description="BMI 分档筛选（<18.5/18.5-23.9/24.0-27.9/28.0+）")
     patient_id: str | None = Field(None, description="患者编号筛选（ILIKE 模糊匹配，如 PT_001 可匹配 PT_00123）")
+    is_placeholders: bool = Field(False, description="是否包含占位患者（默认 false：排除占位患者；true：返回全部含占位）")
 
 
 class PatientListQuery(StatsFiltersIn):

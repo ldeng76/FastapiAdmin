@@ -43,6 +43,16 @@ AGE_BUCKETS = [
 
 AGE_BUCKET_OPTIONS = [{"value": label, "label": label} for _, _, label in AGE_BUCKETS]
 
+# BMI 分档（中国成人标准：偏瘦 <18.5 / 正常 18.5-23.9 / 超重 24-27.9 / 肥胖 ≥28）
+BMI_BUCKETS: list[tuple[float, float, str]] = [
+    (0, 18.5, "<18.5"),
+    (18.5, 24, "18.5-23.9"),
+    (24, 28, "24.0-27.9"),
+    (28, 10000, "28.0+"),
+]
+
+BMI_BUCKET_OPTIONS = [{"value": label, "label": label} for _, _, label in BMI_BUCKETS]
+
 def _not_deleted_patient():
     """lnrs_anon_patient 软删除过滤条件。"""
     return AnonPatientModel.deleted_at.is_(None)  # type: ignore[return-value]
@@ -68,6 +78,67 @@ def _age_bucket_expr(ref_date: date | None = None):
         ],
         else_=None,
     )
+
+
+def _bmi_bucket_expr():
+    """构造 BMI 分档的 CASE 表达式（按 BMI_BUCKETS 左闭右开分档）。"""
+    return case(
+        *[
+            (
+                AnonPatientModel.bmi.is_not(None)
+                & (AnonPatientModel.bmi >= lo)
+                & (AnonPatientModel.bmi < hi),
+                label,
+            )
+            for lo, hi, label in BMI_BUCKETS
+        ],
+        else_=None,
+    )
+
+
+def build_patient_filters(
+    filters: StatsFiltersIn | None,
+    ref_date: date | None = None,
+) -> list:
+    """构建 patient 表的过滤条件列表（仪表板统计与患者列表共用）。
+
+    这是筛选逻辑的唯一来源：新增筛选参数时只需改这里 + StatsFiltersIn，
+    统计概览（StatsQuery）与患者列表（anon_list_patients）自动同步生效。
+
+    - sex / abo / rh / smoking 直接过滤 patient 表字段
+    - modality 通过 exam 表子查询过滤
+    - age_bucket / bmi_bucket 通过 CASE 分档表达式过滤
+    - patient_id 对患者编号做 ILIKE 模糊匹配
+    """
+    conditions = [_not_deleted_patient()]
+    if filters is None:
+        return conditions
+
+    if filters.sex:
+        conditions.append(AnonPatientModel.sex == filters.sex)
+    if filters.abo_blood_type:
+        conditions.append(AnonPatientModel.abo_blood_type == filters.abo_blood_type)
+    if filters.rh_blood_type:
+        conditions.append(AnonPatientModel.rh_blood_type == filters.rh_blood_type)
+    if filters.smoking_status:
+        conditions.append(AnonPatientModel.smoking_status == filters.smoking_status)
+    if filters.modality:
+        conditions.append(
+            AnonPatientModel.patient_id.in_(
+                select(AnonExamModel.patient_id).where(
+                    AnonExamModel.exam_type == filters.modality
+                )
+            )
+        )
+    if filters.age_bucket:
+        conditions.append(_age_bucket_expr(ref_date) == filters.age_bucket)
+    if filters.bmi_bucket:
+        conditions.append(_bmi_bucket_expr() == filters.bmi_bucket)
+    if filters.patient_id:
+        conditions.append(
+            AnonPatientModel.patient_id.ilike(f"%{filters.patient_id}%")
+        )
+    return conditions
 
 
 # ── 维度注册表 ────────────────────────────────
@@ -96,67 +167,41 @@ class StatsQuery:
         filters: StatsFiltersIn | None = None,
     ) -> None:
         self.db = db
-        self.center = filters.center if filters else None
-        self.gender = filters.gender if filters else None
+        self._filters = filters
+        self.sex = filters.sex if filters else None
         self.modality = filters.modality if filters else None
         self.age_bucket = filters.age_bucket if filters else None
         self.abo_blood_type = filters.abo_blood_type if filters else None
         self.rh_blood_type = filters.rh_blood_type if filters else None
         self.smoking_status = filters.smoking_status if filters else None
+        self.bmi_bucket = filters.bmi_bucket if filters else None
+        self.patient_id = filters.patient_id if filters else None
         self._ref_date = date.today()
 
     # ── 过滤条件构建 ──────────────────────────
 
     def _patient_filters(self) -> list:
-        """构建 patient 表的过滤条件列表。
-
-        modality 通过子查询关联 exam 表；
-        age_bucket 通过年龄分桶 CASE 表达式过滤；
-        gender / abo_blood_type / smoking_status 直接过滤 patient 表字段。
-        """
-        conditions = [_not_deleted_patient()]
-        if self.center:
-            conditions.append(AnonPatientModel.center_code == self.center)
-        if self.gender:
-            conditions.append(AnonPatientModel.sex == self.gender)
-        if self.abo_blood_type:
-            conditions.append(AnonPatientModel.abo_blood_type == self.abo_blood_type)
-        if self.rh_blood_type:
-            conditions.append(AnonPatientModel.rh_blood_type == self.rh_blood_type)
-        if self.smoking_status:
-            conditions.append(AnonPatientModel.smoking_status == self.smoking_status)
-        if self.modality:
-            conditions.append(
-                AnonPatientModel.patient_id.in_(
-                    select(AnonExamModel.patient_id).where(
-                        AnonExamModel.exam_type == self.modality
-                    )
-                )
-            )
-        if self.age_bucket:
-            bucket_expr = _age_bucket_expr(self._ref_date)
-            conditions.append(bucket_expr == self.age_bucket)
-        return conditions
+        """构建 patient 表的过滤条件列表（委托给 build_patient_filters 统一实现）。"""
+        return build_patient_filters(self._filters, self._ref_date)
 
     def _exam_filters(self) -> list:
         """构建 exam 表的过滤条件列表。
 
-        gender / age_bucket / abo_blood_type / smoking_status 通过 IN 子查询
-        关联 patient 表；modality 直接过滤 exam_type。
+        sex / age_bucket / abo_blood_type / smoking_status / bmi_bucket /
+        patient_id 通过 IN 子查询关联 patient 表；modality 直接过滤 exam_type。
         """
         conditions = []
-        if self.center:
-            conditions.append(AnonExamModel.center_code == self.center)
         if self.modality:
             conditions.append(AnonExamModel.exam_type == self.modality)
         patient_attrs = (
-            self.gender or self.age_bucket
+            self.sex or self.age_bucket
             or self.abo_blood_type or self.rh_blood_type or self.smoking_status
+            or self.bmi_bucket or self.patient_id
         )
         if patient_attrs:
             sub = select(AnonPatientModel.patient_id).where(_not_deleted_patient())
-            if self.gender:
-                sub = sub.where(AnonPatientModel.sex == self.gender)
+            if self.sex:
+                sub = sub.where(AnonPatientModel.sex == self.sex)
             if self.age_bucket:
                 bucket_expr = _age_bucket_expr(self._ref_date)
                 sub = sub.where(bucket_expr == self.age_bucket)
@@ -166,6 +211,12 @@ class StatsQuery:
                 sub = sub.where(AnonPatientModel.rh_blood_type == self.rh_blood_type)
             if self.smoking_status:
                 sub = sub.where(AnonPatientModel.smoking_status == self.smoking_status)
+            if self.bmi_bucket:
+                sub = sub.where(_bmi_bucket_expr() == self.bmi_bucket)
+            if self.patient_id:
+                sub = sub.where(
+                    AnonPatientModel.patient_id.ilike(f"%{self.patient_id}%")
+                )
             conditions.append(AnonExamModel.patient_id.in_(sub))
         return conditions
 

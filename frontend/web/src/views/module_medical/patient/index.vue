@@ -6,13 +6,9 @@
       ref="searchBarRef"
       v-model="searchForm"
       :items="patientSearchItems"
-      :is-expand="false"
-      :show-expand="true"
+      :is-expand="true"
       :show-reset="true"
       :show-search="true"
-      :disabled-search="false"
-      :buttonLeftLimit="10"
-      :default-expanded="false"
       @search="handleSearchBarSearch"
       @reset="resetSearchParams"
     />
@@ -64,6 +60,7 @@ import Detail from "./detail.vue";
 import {useDictStore} from "@/store";
 import {ArrowLeft} from "@element-plus/icons-vue";
 import {getFieldLabel} from "@/components/medical/field-renderer";
+import StatisticsAPI from "@api/module_medical/statistics.ts";
 defineOptions({ name: "MedicalPatient", inheritAttrs: false });
 const dictStore = useDictStore()
 const showPatientId = ref('')
@@ -75,42 +72,7 @@ const showDetailData = ref({
 
 const searchForm = ref<any>({});
 const showSearchBar = ref(true);
-
-const patientSearchItems = computed<SearchFormItem[]>(() => [
-  {
-    key: "keyword",
-    label: "患者编号",
-    type: "input",
-    placeholder: "患者编号",
-    span: 4,
-  },
-  {
-    label: "性别",
-    key: "sex",
-    type: "select",
-    props: {
-      placeholder: "请选择",
-      options: dictStore.getDictArray('med_sex').map(function (n){
-        return {value:n.dict_value,label:n.dict_label}
-      }),
-      clearable: true,
-    },
-    span: 4,
-  },
-  {
-    label: "吸烟状态",
-    key: "smoking_status",
-    type: "select",
-    props: {
-      placeholder: "请选择",
-      options: dictStore.getDictArray('med_smoking_status').map(function (n){
-        return {value:n.dict_value,label:n.dict_label}
-      }),
-      clearable: true,
-    },
-    span: 4,
-  },
-]);
+const patientSearchItems = ref<SearchFormItem[]>([])
 
 // 跳转多模态详情（独立隐藏路由，patient_id/center 走 query 参数）
 function goDetail(row: PatientTable) {
@@ -149,7 +111,7 @@ const {
       {
         prop: "patient_id",
         label:getFieldLabel("patient_id"),
-        minWidth: 140,
+        minWidth: 90,
         sortable :'custom',
       },
       {
@@ -186,6 +148,11 @@ const {
         minWidth: 110,
         sortable :'custom',
         formatter: (row) => dictStore.getDictItemLabel("med_smoking_status",row.smoking_status),
+      },
+      {
+        prop: "bmi",
+        label: getFieldLabel("bmi"),
+        sortable :'custom'
       },
       {
         prop: "first_nodule_date",
@@ -251,7 +218,17 @@ function fmtAgeBirthday(v?: string): string {
 }
 
 onBeforeMount(async ()=>{
+  const ageBuckets = await StatisticsAPI.getAgeBuckets()
+  const bmiBuckets = await StatisticsAPI.getBmiBuckets()
   await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
+  patientSearchItems.value = [
+    {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 4},
+    {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 4},
+    {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
+    {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 4 },
+    {key: "smoking_status",label: getFieldLabel("smoking_status"),  type: "select", placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_smoking_status'), clearable: true,span: 4},
+    {key: "bmi_bucket",label: getFieldLabel("bmi"),  type: "select", placeholder: "请选择", options: bmiBuckets, clearable: true,span: 4},
+  ]
 })
 </script>
 <style>

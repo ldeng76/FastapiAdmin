@@ -21,13 +21,14 @@ ChartType = Literal["bar", "pie", "h-bar", "line"]
 class StatsFiltersIn(BaseModel):
     """仪表板查询筛选参数（封装所有 Query 参数）。"""
 
-    center: str | None = Field(None, description="中心编码筛选")
-    gender: str | None = Field(None, description="性别筛选（0=未知, 1=男, 2=女, 9=其他）")
+    sex: str | None = Field(None, description="性别筛选（0=未知, 1=男, 2=女, 9=其他）")
     modality: str | None = Field(None, description="模态筛选（如 CT/MR/US 等）")
     age_bucket: str | None = Field(None, description="年龄段筛选（0-17/18-29/30-39/40-49/50-59/60-69/70-79/80+）")
     abo_blood_type: str | None = Field(None, description="ABO血型筛选（1=A型, 2=B型, 3=O型, 4=AB型, 5=不详, 6=未查）")
     rh_blood_type: str | None = Field(None, description="RH血型筛选（1=阴性, 2=阳性, 3=不详, 4=未查）")
     smoking_status: str | None = Field(None, description="吸烟状态筛选（1=从不, 2=既往, 3=现在, 9=未知）")
+    bmi_bucket: str | None = Field(None, description="BMI 分档筛选（<18.5/18.5-23.9/24.0-27.9/28.0+）")
+    patient_id: str | None = Field(None, description="患者编号筛选（ILIKE 模糊匹配，如 PT_001 可匹配 PT_00123）")
 
 
 class PatientListQuery(StatsFiltersIn):
@@ -75,13 +76,13 @@ class FilterOption(BaseModel):
 class FiltersOut(BaseModel):
     """仪表板可用的筛选条件。"""
 
-    center: FilterOption | None = Field(None, description="按中心筛选")
-    gender: FilterOption | None = Field(None, description="按性别筛选")
+    sex: FilterOption | None = Field(None, description="按性别筛选")
     modality: FilterOption | None = Field(None, description="按模态筛选")
     age_bucket: FilterOption | None = Field(None, description="按年龄段筛选")
     abo_blood_type: FilterOption | None = Field(None, description="按ABO血型筛选")
     rh_blood_type: FilterOption | None = Field(None, description="按RH血型筛选")
     smoking_status: FilterOption | None = Field(None, description="按吸烟状态筛选")
+    bmi_bucket: FilterOption | None = Field(None, description="按 BMI 分档筛选")
     year_range: FilterOption | None = Field(None, description="按年份范围筛选")
 
 

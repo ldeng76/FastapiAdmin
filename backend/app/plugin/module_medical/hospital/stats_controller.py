@@ -16,7 +16,7 @@ from app.common.response import ResponseSchema, SuccessResponse
 from app.core.dependencies import AuthPermission
 from app.core.router_class import OperationLogRoute
 
-from .stats_query import AGE_BUCKET_OPTIONS
+from .stats_query import AGE_BUCKET_OPTIONS, BMI_BUCKET_OPTIONS
 from .stats_schema import PatientListQuery, StatsFiltersIn
 from .stats_service import StatsService
 
@@ -49,6 +49,19 @@ async def get_age_buckets_controller(
 ) -> JSONResponse:
     """年龄段字典。"""
     return SuccessResponse(data=AGE_BUCKET_OPTIONS, msg="获取年龄段字典成功")
+
+
+@StatsRouter.get(
+    "/statistics/bmi-buckets",
+    summary="BMI 分档字典",
+    description="返回可选的 BMI 分档列表（供前端筛选项渲染）",
+    response_model=ResponseSchema[list[dict]],
+)
+async def get_bmi_buckets_controller(
+    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:stats:query"]))],
+) -> JSONResponse:
+    """BMI 分档字典（中国成人标准：偏瘦/正常/超重/肥胖）。"""
+    return SuccessResponse(data=BMI_BUCKET_OPTIONS, msg="获取 BMI 分档字典成功")
 
 
 @StatsRouter.get(

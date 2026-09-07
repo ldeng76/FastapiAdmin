@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import ColumnElement, Date, asc, cast, desc, func, or_, select
+from sqlalchemy import ColumnElement, Date, asc, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .anon_model import (
@@ -42,6 +42,8 @@ from .anon_model import (
     AnonVisitDetailModel,
     AnonVisitModel,
 )
+from .stats_query import build_patient_filters
+from .stats_schema import StatsFiltersIn
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +110,7 @@ MODALITY_LABEL: dict[str, str] = {
     "genetic": "基因模态（基因检测）",
     "collection": "检验结果",
     "order": "医嘱",
+    "Other": "其他",
     "pathology": "病理模态（病理标本/免疫组化）",
     "ct": "影像模态（CT 检查）",
 }
@@ -123,6 +126,7 @@ PATIENT_LIST_COLS = [
     AnonPatientModel.rh_blood_type,
     AnonPatientModel.smoking_status,
     AnonPatientModel.first_nodule_date,
+    AnonPatientModel.bmi,
 ]
 
 # 详情查询列（含 patient_meta JSONB 兜底）
@@ -158,30 +162,20 @@ async def anon_list_centers(db: AsyncSession) -> list[str]:
 
 async def anon_list_patients(
     db: AsyncSession,
-    keyword: str | None = None,
-    sex: str | None = None,
-    smoking_status: str | None = None,
+    filters: StatsFiltersIn | None = None,
     offset: int = 0,
     limit: int = 10,
     order_by: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """患者分页列表（基于 AnonPatientModel）。返回 (行列表, 总数)。
 
+    筛选条件统一由 stats_query.build_patient_filters(filters) 构建，
+    与仪表板统计概览共用同一套逻辑（sex/modality/age_bucket/
+    abo/rh/smoking/bmi_bucket/patient_id），新增筛选项只需改那一处。
+
     order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
     """
-    conditions = [AnonPatientModel.deleted_at.is_(None)]
-    if sex:
-        conditions.append(AnonPatientModel.sex == sex)
-    if smoking_status:
-        conditions.append(AnonPatientModel.smoking_status == smoking_status)
-    if keyword:
-        kw = f"%{keyword}%"
-        conditions.append(
-            or_(
-                AnonPatientModel.patient_id.ilike(kw),
-                AnonPatientModel.center_code.ilike(kw),
-            )
-        )
+    conditions = build_patient_filters(filters)
 
     # 总数
     count_stmt = (

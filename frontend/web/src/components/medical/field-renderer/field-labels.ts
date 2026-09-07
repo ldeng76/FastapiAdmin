@@ -26,7 +26,6 @@ export const FIELD_LABELS: Record<string, string> = {
   patient_id: "患者编号",
   center_code: "中心编码",
   source_center: "来源中心",
-  gender: "性别",
   sex: "性别",
   age: "年龄",
   age_bucket: "年龄段",

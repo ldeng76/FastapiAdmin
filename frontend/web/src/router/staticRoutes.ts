@@ -13,7 +13,7 @@ import type { RouteRecordRaw } from "vue-router";
 import { RouterView, useRoute } from "vue-router";
 import { t } from "@wangeditor-next/editor";
 
-export const HOME_PAGE_PATH = "/medicalPatient";
+export const HOME_PAGE_PATH = "/medicalDashboard";
 
 /** 首页 / 仪表盘父级 meta（侧栏、静态子路由共用） */
 export const HOME_MENU_META: RouteMeta = {

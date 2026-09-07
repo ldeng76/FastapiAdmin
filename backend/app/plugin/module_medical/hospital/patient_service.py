@@ -21,6 +21,7 @@ from .anon_medical_query import (
     anon_list_patient_imaging_studies,
     anon_list_patients,
 )
+from .stats_schema import StatsFiltersIn
 
 
 class PatientService:
@@ -35,9 +36,7 @@ class PatientService:
     async def list_patients_service(
         cls,
         auth: AuthSchema,
-        keyword: str | None,
-        sex: str | None,
-        smoking_status: str | None,
+        filters: StatsFiltersIn | None,
         page: PaginationQueryParam,
         order_by: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
@@ -47,13 +46,14 @@ class PatientService:
         ``isPageResultPayload`` 与 ``normalizePageResultLike`` 都依赖这三项做响应
         解包校验；任意一项缺失都会被识别为非法分页响应，从而回退为空列表。
 
+        filters 与仪表板统计概览共用（StatsFiltersIn），筛选逻辑统一由
+        stats_query.build_patient_filters 构建。
+
         order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
         """
         items, total = await anon_list_patients(
             auth.db,
-            keyword=keyword,
-            sex=sex,
-            smoking_status=smoking_status,
+            filters=filters,
             offset=page.offset,
             limit=page.limit,
             order_by=order_by,

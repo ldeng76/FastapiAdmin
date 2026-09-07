@@ -21,6 +21,7 @@ from app.core.dependencies import AuthPermission
 from app.core.router_class import OperationLogRoute
 
 from .patient_service import PatientService
+from .stats_schema import StatsFiltersIn
 
 
 PatientRouter = APIRouter(route_class=OperationLogRoute, tags=["患者多模态"])
@@ -28,7 +29,7 @@ PatientRouter = APIRouter(route_class=OperationLogRoute, tags=["患者多模态"
 # 允许排序的字段白名单（对应 AnonPatientModel 的 ORM 属性名，防止注入任意列）
 ALLOWED_SORT_FIELDS = {
     "patient_id", "birth_date", "sex",
-    "abo_blood_type", "rh_blood_type",
+    "abo_blood_type", "rh_blood_type","bmi",
     "smoking_status", "first_nodule_date",
 }
 # 允许的排序方式
@@ -59,56 +60,32 @@ def _normalize_order_by(raw: list[dict[str, str]] | None) -> list[dict[str, str]
 
 
 @PatientRouter.get(
-    "/centers",
-    summary="枚举来源中心",
-    description="动态枚举 lnrs_anon_patient 中实际出现的 center_code",
-    response_model=ResponseSchema[list[str]],
-)
-async def list_centers_controller(
-    auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],
-) -> JSONResponse:
-    """中心列表（前端下拉选项）。"""
-    result = await PatientService.list_centers_service(auth=auth)
-    return SuccessResponse(data=result, msg="获取中心列表成功")
-
-
-@PatientRouter.get(
     "/patients",
     summary="患者分页列表",
     description=(
-        "支持按性别/吸烟情况/关键词筛选；"
+        "筛选条件与 /statistics/overview 完全一致（共用 StatsFiltersIn）："
+        "sex / modality / age_bucket / abo_blood_type / "
+        "rh_blood_type / smoking_status / bmi_bucket / patient_id；"
         "通过 order_by 控制排序，可选字段: patient_id/birth_date/sex/"
-        "abo_blood_type/rh_blood_type/smoking_status/first_nodule_date"
+        "abo_blood_type/rh_blood_type/smoking_status/first_nodule_date/bmi"
     ),
     response_model=ResponseSchema[dict],
 )
 async def list_patients_controller(
     page: Annotated[PaginationQueryParam, Depends()],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:patient:query"]))],
-    keyword: Annotated[
-        str | None,
-        Query(description="患者编号/中心 关键词（ILIKE 模糊匹配）"),
-    ] = None,
-    sex: Annotated[
-        str | None,
-        Query(description="性别（精确匹配 sex：如 男/女/未知）"),
-    ] = None,
-    smoking_status: Annotated[
-        str | None,
-        Query(description="吸烟情况（精确匹配 smoking_status）"),
-    ] = None,
+    filters: StatsFiltersIn = Depends(),
 ) -> JSONResponse:
-    """患者分页列表。
+    """患者分页列表（筛选逻辑与仪表板统计概览共用）。
 
     order_by：JSON 数组格式，如 [{"birth_date":"desc"},{"patient_id":"asc"}]；
-    不传时按 (center_code, patient_id) 升序。
+    可排序字段 patient_id/birth_date/sex/abo_blood_type/rh_blood_type/
+    smoking_status/first_nodule_date/bmi；不传时按 (center_code, patient_id) 升序。
     """
     order_by = _normalize_order_by(page.order_by)
     result = await PatientService.list_patients_service(
         auth=auth,
-        keyword=keyword,
-        sex=sex,
-        smoking_status=smoking_status,
+        filters=filters,
         page=page,
         order_by=order_by,
     )

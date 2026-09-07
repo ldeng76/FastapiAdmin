@@ -8,14 +8,6 @@ const API_PATH = "/medical";
  * 接口均为只读。
  */
 const PatientAPI = {
-  /** 来源中心枚举（动态，反映 parquet 中实际出现的中心） */
-  listCenters() {
-    return request<ApiResponse<string[]>>({
-      url: `${API_PATH}/centers`,
-      method: "get",
-    });
-  },
-
   /** 患者分页列表 */
   listPatient(query?: PatientPageQuery) {
     return request<ApiResponse<PageResult<PatientTable>>>({

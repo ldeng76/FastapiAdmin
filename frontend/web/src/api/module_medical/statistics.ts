@@ -34,6 +34,17 @@ const StatisticsAPI = {
     } catch {
       return [];
     }
+  },
+  async getBmiBuckets() {
+    try {
+      const res = await request<ApiResponse>({
+        url: `${API_PATH}/bmi-buckets`,
+        method: "get",
+      });
+      return res.data.data;
+    } catch {
+      return [];
+    }
   }
 };
 

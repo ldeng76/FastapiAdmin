@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import ColumnElement, Date, asc, cast, desc, func, select
+from sqlalchemy import ColumnElement, Date, asc, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .anon_model import (
@@ -116,6 +116,7 @@ MODALITY_LABEL: dict[str, str] = {
 }
 
 # AnonPatientModel 业务列（排除审计列 + center_code/anon_id/bmi/created_batch_id 等）
+# is_placeholder 出参：前端「显示占位患者」开关打开时用于行内标记
 PATIENT_LIST_COLS = [
     AnonPatientModel.patient_id,
     AnonPatientModel.sex,
@@ -126,6 +127,7 @@ PATIENT_LIST_COLS = [
     AnonPatientModel.rh_blood_type,
     AnonPatientModel.smoking_status,
     AnonPatientModel.first_nodule_date,
+    AnonPatientModel.is_placeholder,
     AnonPatientModel.bmi,
 ]
 

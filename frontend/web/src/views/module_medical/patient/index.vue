@@ -51,7 +51,7 @@
 
 <script setup lang="ts">
 import { computed, h, ref } from "vue";
-import { ElButton } from "element-plus";
+import { ElButton, ElTag } from "element-plus";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
 import { useTable } from "@/hooks/core/useTable";
@@ -110,9 +110,21 @@ const {
       { type: "globalIndex", width: 60, label: "序号" },
       {
         prop: "patient_id",
-        label:getFieldLabel("patient_id"),
-        minWidth: 90,
-        sortable :'custom',
+        label: getFieldLabel("patient_id"),
+        minWidth: 170,
+        sortable: "custom",
+        showOverflowTooltip: true,
+        formatter: (row) =>
+          row.is_placeholder
+            ? h("span", [
+                h("span", row.patient_id),
+                h(
+                  ElTag,
+                  { size: "small", type: "info", style: "margin-left: 6px" },
+                  () => "占位",
+                ),
+              ])
+            : row.patient_id,
       },
       {
         prop: "sex",

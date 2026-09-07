@@ -35,6 +35,8 @@ export interface PatientPageQuery extends PageQuery {
   center?: string;
   /** 患者编号 / 中心 关键词 */
   keyword?: string;
+  /** 包含占位患者（exam/visit/surgery 导入自动发号、无人口学）。默认 false 隐藏 */
+  include_placeholders?: boolean;
 }
 
 /** 患者列表行（核心字段，跨院统一，2026-07-24 改用 anon 字段名）
@@ -58,6 +60,8 @@ export interface PatientTable {
   rh_blood_type?: string;
   smoking_status?: string;
   first_nodule_date?: string;
+  /** 占位患者（无人口学，仅检查/就诊/手术导入自动发号） */
+  is_placeholder?: boolean;
 }
 
 /** 多模态详情中任一模态的一行（字段因表而异，JSONB 已顶层展开）

@@ -12,6 +12,7 @@ description: 将医院新批次 parquet 数据（如珠江 zhujiang0814.parquet�
 - 0719 珠江全量 CT（data/zhujiang/nodule_imaging.parquet，97,039 条 exam，引擎兼容格式直接导入）
 - 0825 珠江 extracted_tables 批次（7 表一次导：patient/ct/genetics/ihc/pathology/operation/inpatient；含引擎空正文守卫修复 + zhujiang spec 追加 inpatient(visit_detail) + IHC 日期改用自带列；batch `8aff203f-...`）
 - 0825r2 raw_text 补录批次（batch `ce93eaaf-...`：CT/IHC/病理 3 表 detail_json 补 `raw_text` 顶层键，源文件原始报告全文逐字符落库）
+- 0904 新桥 (xinqiao) extracted_tables 批次（3 表一次导：CT 124,045 / pathology 19,089 / genetic 4,717，49,563 占位患者；无 patient 表；CT 正文中文标题（检查所见/检查结论）需换正则，珠江英文正则 0 命中；pathology/genetic 源文件无 exam_id → 适配层合成确定性 md5 ID；xinqiao 注册种子 0017；batch `843e8c43-...`；同期修复引擎 `_import_exam_text_table` 缺 `imported = 0` 初始化（4f66e9a0 误删，首跑 UnboundLocalError））
 
 ## 流水线全景
 
@@ -335,9 +336,38 @@ PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
 - **ENGINE 配置错读 MySQL**：ETL2 CLI 必须设 `ENVIRONMENT=dev`（否则读不到 .env.dev，连接错驱动）。Command：`ENVIRONMENT=dev PYTHONPATH=. ./.venv/Scripts/python.exe -m app.plugin.module_medical.hospital.anon_etl --centers X --data-root ../data_X`。
 - **批次足迹（截至 2026-08-26）**：
   - 0825 批次已导入（batch `8aff203f-424c-40d4-a6d3-c0b887b72913`）：patient 6,714 刷新（=0814 同批人）/ CT 97,039 刷新（文本更新版）/ pathology 15,386 / genetic 1,088 / IHC exam 25（6,698 个共享 id 并入 Pathology exam 行，detail 6,723 条）/ inpatient visit 9,590 / surgery 18,058 / 新占位 patient 12,980。h59 未同步（待确认）。
-  - **raw_text 补录（2026-08-26，batch `ce93eaaf-2657-453d-b0d3-39ca4ee16b58`）**：引擎 spec 的 detail_fields 补 `raw_text`（CT/IHC/病理），CT/IHC 适配脚本同步保留该列；staging 独立目录 `data_zj0825raw/` 只放 3 个变更表，引擎按目录内容自动只导这 3 表。各文件 raw_text 最终落点：patient → `patient_meta->raw_text`；genetics → `exam_detail.detail_json->test_meta->raw_text`；inpatient → `visit_detail_json->raw_text`；CT/IHC/病理 → `exam_detail.detail_json->raw_text`（顶层键）；operation 源文件无 raw_text 列（无内容可导）。导入时因 staging 变体漂移误改了 313 body + 1,019 detail，已从备份恢复——**本批对既有数据的唯一足迹是新增 raw_text 键**（+ 簿记字段刷新）。pathology/IHC 适配器已改确定性（3 次内容哈希一致）；下次重导将一次性规范化 ~553 病理 body / 81+12 raw_text / 1,573+ 数组顺序（均为同 exam 合法值，此后不再漂移）。
+  - **raw_text 补录（2026-08-26，batch `ce93eaaf-2657-453d-b0d3-39ca4ee16b58`）**：引擎 spec 的 detail_fields 补 `raw_text`（CT/IHC/病理），CT/IHC 适配脚本同步保留该列；staging 独立目录 `data_zj0825raw/` 只放 3 个变更表，引擎按目录内容自动只导这 3 表。各文件 raw_text 最终落点：patient → `patient_meta->raw_text`；genetics → `exam_detail.detail_json->test_meta->raw_text`；inpatient → `visit_detail_json->raw_text`；CT/IHC/病理 → `exam_d...
   - 0723 sample 的 39 条病理中 26 条空正文，其中 14 条系 IHC 空 body 覆盖所致（引擎修复后不再发生；覆盖的正文源文件已删除，无法恢复）。
-  - ct0820（2026-08-20）已作为珠江全量 CT 源；0825 的 ct.parquet 是其重抽取版，重导后库内 CT 正文以 0825 为准。
+  - **引擎性能优化（2026-09-04 实施）**：
+    - **方案 1（sub-tx）**：新增常量 `SUB_TX_ROWS=1_000_000` + helper `_maybe_commit`。10 个 `_batch_upsert_*` 函数在循环内累计行数达 SUB_TX_ROWS 时 `await db.commit()` 一次。环境变量 `LNRS_ETL_SUB_TX_ROWS=0` 可关闭。R5 重跑实测 11M lab_result 95 min → 21.5 min（**4.4× 加速**）。
+    - **方案 2（COPY+staging table）**：新增 helper `_copy_then_merge`（asyncpg `copy_records_to_table` + `LIKE target INCLUDING DEFAULTS` temp table + `INSERT INTO SELECT ON CONFLICT`）。仅 `_batch_upsert_lab_results` 集成，触发阈值 `COPY_THRESHOLD=50_000`（`LNRS_ETL_COPY_THRESHOLD=0` 关闭）。性能：50K=2.3s (22K/s)、100K=3.6s (28K/s)、1M=58.7s (17K/s)、500K=127s (4K/s)。**注意**：asyncpg COPY 不自动序列化 JSON/Decimal，必须预先 `json.dumps(JSONB 列)` 和 `str(Decimal)`；PK bigserial 列需从 `column_order` 排除以让 DEFAULT 生效；INCLUDING DEFAULTS 不复制 bigserial 的 nextval DEFAULT 会失败 → 实际验证 INCLUDING DEFAULTS **会**复制 DEFAULT。
+    - **bug 修复**（同步执行中发现）：`_in_lookup_chunked` helper 之前未 `return results`，导致返回 None 触发 `'NoneType' object is not iterable`。
+    - **环境变量**：`LNRS_ETL_SUB_TX_ROWS` / `LNRS_ETL_COPY_THRESHOLD` / `LNRS_ETL_FSYNC`（已有）。
+   - **R1 patient + visit_record**（batch `ee569867-0f35-4f00-978b-df811ae01d72`，2026-09-02 22:22 ~ 23:15）
+  - **R1 patient + visit_record**（batch `ee569867-0f35-4f00-978b-df811ae01d72`，2026-09-02 22:22 ~ 23:15）：patient 87,138（新增 87,132 + 复用 6）/ visit_detail 2,381,010（admission_time 100% 回填，discharge_date 192,969 仅住院有）。引擎侧修复：`birth_date_from` 支持 `YYYY-MM-DD[ T]HH:MM:SS` 时间戳前缀（此前返回 None 导致 R1 首跑 admission_time 全 NULL，已通过 R1 重跑幂等 upsert 修复）。
+  - **R2 exam 五表**（batch `f83cc91b-0956-43da-b23e-29885e91cff6`，2026-09-02 23:15 ~ 2026-09-03 01:51）：Pathology 189,966 / Radiology 170,104 / Ultrasound 181,604 / ECG 149,072 / Genetic 0（visit_date_lookup 在 R1 修复 admission_time 之前已空，genetic 反查时仍 miss —— 待 R2 重跑可恢复 ~210 行 genetic；预计落库后会与 shengyi 历史 genetic 共存）。
+  - **R3 surgery**（batch 多次，2026-09-03 01:51 ~ 02:00）：324,637 行。两次进入（首次 8aff203f 批次之前；本次重跑）。
+  - **R4-R7 lab 4 分片**（batch 各次，2026-09-03 02:00 ~ 02:06）：runner 报 EXIT=0 但实际入库 **0 行**！已确认 `lnrs_anon_lab_result` 中 shengyi 仅 5 行（来自 c5871ad4 sample）。根因待查：可能 `source_lab_hash` 哈希碰撞或 in-memory dedup 把所有行判重；建议磁盘恢复后重跑 R4-R7 前先复现一行跟踪 dedup 路径。
+  - **R8 drug_order**（batch 各次，2026-09-03 02:06 ~ 03:03，~57 分钟）：9,748,225 行（源 11.4M，差异 ~14% 是 source_order_hash(..., patient_id, detail_key) 吸收跨患者同药同时刻碰撞与按就诊展开重复）。
+  - **R9 no_drug_order**（batch 各次，2026-09-03 03:03 ~ 04:37，~93 分钟）：10,629,344 行（源 13.3M，同上 hash 合并）。**单事务最慢**。
+  - **R10 outp_order + anesthesia_order**（2026-09-03 04:37 ~ 05:04）：outp_order 2,456,529 + anesthesia_order 344,949。门诊处方就诊编号 100% 空 → 仅挂 patient。
+  - **R11 diagnosis + diagnosis_inpatient**（2026-09-03 05:04 ~ 05:56）：4,925,535 + 1,000,030 = 5,925,565 行（实际落库 5,137,373，差异 ~13% 为 source_diagnosis_hash 哈希碰撞合并）。`diagnosis_inpatient` 含 21 个病案首页上下文字段进 detail JSONB。
+  - **R12 clinical_document**（batch 各次，2026-09-03 05:56 ~ 06:09）：**事务因 DiskFullError 回滚**，0 行入库。失败原因为根盘（PG 在 /var/lib/postgresql/18/main）满。R12-R15 挂起待磁盘扩容后继续。
+  - **R13-R15 未跑**（medical_history 1.4M / nursing_observation 13.8M / icu+anesthesia_observation 5.9M）。预计耗时：nursing 13.8M 行单事务类比 drug_order ~57 分钟；medical_history 与 obs 体量较小。
+  - **0904 新桥 xinqiao extracted_tables 批次（2026-09-05 00:21 ~ 00:27，batch `843e8c43-9c07-4bcb-b935-684e79ac0191`）**：CT 124,045 exam（staging 按 nodules[] 展开 243,241 行 detail，7,491 占位 n0）/ Pathology 19,089（19,101 行、12 组跨行合并）/ Genetic 4,717。无 patient 表 → 49,563 占位患者（sex='0'）。report_text 142,391（CT 124,045 + 病理 18,346；基因 body 空不写）。phi_audit 414,287（按唯一 exam 计：124,045×3 + 19,089+18,346 + 4,717）。
+    - 源文件 `/data/wlx/DATABASE/extracted_tables/xinqiao/{ct,pathology,genetics}.parquet`，与 zhujiang extracted_tables 同构（xinqiao ct 12 列与 zhujiang 完全同名同型）；差异：① 正文标题中文（检查所见/检查结论）② pathology/genetic 无 exam_id 列 ③ 多 `病理.送检部位` 列（组织病理/冰冻切片）④ ct 的 pat_local_id 100% NULL。
+    - ID 合成（无 exam_id 列）：pathology `specimen_id='XQP'||md5(patient_id|exam_date|送检部位)[:16]`（组键秒级时间戳，跨行同组合并）；genetic `test_id='XQG'||md5(patient_id|exam_date|sample_source|test_method)[:16]`（四元组行级唯一，NULL 以空串参与）。
+    - 引擎 spec `_CENTER_PARQUET_SPECS["xinqiao"]` 重写为 0825 同构（CT detail 原生 struct：exam_meta struct_pack + nodule_morphology 单元素 `[nodule]`，避免 0825 文档记录的 to_json 双重编码；病理 detail 含 submit_site/frozen/multi_nodules）。
+    - **引擎 bug 修复**：`_import_exam_text_table` 缺 `imported = 0`（commit 4f66e9a0 误删，父版本有），任何中心 exam 表导入首行即 UnboundLocalError → 已按父版本位置恢复（date lookup 预加载块后、行循环前）。
+    - 产物：种子 `backend/sql/postgres/0017-xinqiao-center-seed.sql`（tenant+med_hospital id=13，无 dict mapping——无 patient 枚举 + 静态 exam_type）；适配 `backend/etl2/etl1_adapt_xinqiao_{ct,pathology,genetics}.py`；staging `data_xq0904/xinqiao/{nodule_imaging,pathology_specimen,genetic_test}.parquet`（gitignore）；3 连跑内容哈希一致。
+  - **引擎扩展（已落代码，未走完整生产验证）**：
+    - `anon_etl_engine._in_lookup_chunked`（新 helper，asyncpg 参数上限 32767 修复）+ 5 处预读调用点（exam visit_date_lookup / exam_date_lookup / lab / order / observation）
+    - `_secret_bytes` 加 `dict` 缓存 + `_SECRET_WARNED` 告警去重（避免 100M 级日志风暴）
+    - `_dry_run` visit_record SKIP 文案修正：仅在中心未启用 visit_detail spec 时显示（shengyi 已启用 → 不再误显示）
+    - `_CENTER_PARQUET_SPECS["shengyi"]` 重写为 23 条目（patient/visit_record/5 exam/lab×4/4 order/2 diagnosis/clinical_document/medical_history/3 observation），所有新表 `_import_*_table` 函数（diagnosis/document/history/observation）已实现并通过 R2/R11 验证。
+  - **DBA**：已 `ALTER SYSTEM SET wal_compression='lz4'` + `pg_reload_conf()`（事务内 WAL 体积减半）。PG18 data_directory 仍在 `/var/lib/postgresql/18/main`（98G 卷 99% 满），扩容前请先迁到 `/data`（NFS 11T）或扩 vda3。
+  - **新增表 DDL**：`backend/sql/postgres/0014-shengyi-anon-extend-2026-09.sql`（4 张表 lnrs_anon_diagnosis / lnrs_anon_clinical_document / lnrs_anon_medical_history / lnrs_anon_vital_observation，单列 UNIQUE source_*_hash）。
+  - **字典种子**：`backend/sql/postgres/0015-shengyi-dict-seed-2026-09.sql`（shengyi hospital_id=3，34 项民族 HQMS 码 + `未知的性别`→0 + 新增 `MR`/`ECG` med_exam_type 值）。`med_dict_unmatched` 应保持 0 条。
 
 ## 产物清单（历史批次先例，可仿照）
 
@@ -362,3 +392,9 @@ PGCLIENTENCODING='SQL_ASCII' PGPASSWORD='admin@pwd' \
 | staging 0825r2 raw_text 补录 3 表（gitignore） | `data_zj0825raw/zhujiang/{nodule_imaging,ihc_result,pathology_specimen}.parquet` |
 | 导入日志 | `/tmp/zhujiang0814_run.log`、`/tmp/zhujiang_ct_run.log`、`/tmp/zhujiang_0825_run.log` |
 | 导入前备份（dev） | `$TEMP/lnrs_backup_zhujiang_CT_<TS>/{report_text,exam_detail,phi_audit,patient}.csv` |
+| 适配脚本（2026-09 省医 shengyi） | `backend/etl1_adapt_shengyi_202609.py` |
+| staging 2026-09 shengyi（gitignore） | `data_shengyi202609/shengyi/*.parquet`（23 文件 / ~2.7G） |
+| 字典种子 SQL（shengyi） | `backend/sql/postgres/0015-shengyi-dict-seed-2026-09.sql` |
+| 扩展 DDL（shengyi 4 新表） | `backend/sql/postgres/0014-shengyi-anon-extend-2026-09.sql` |
+| 批次 runner | `scripts/shengyi_import_202609.sh`（15 个 sub-run，lab 拆 4 片） |
+| 导入日志 | `/tmp/shengyi_import/{R1..R15}.log` + `/tmp/shengyi_import/summary.log` |

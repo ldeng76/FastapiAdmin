@@ -36,6 +36,7 @@ DROP VIEW IF EXISTS lnrs.lnrs_anon_v_exam_full;
 DROP TABLE IF EXISTS lnrs.lnrs_anon_exam_detail            CASCADE;
 DROP TABLE IF EXISTS lnrs.lnrs_anon_phi_audit               CASCADE;
 DROP TABLE IF EXISTS lnrs.lnrs_anon_dicom_uid_map          CASCADE;
+DROP TABLE IF EXISTS lnrs.lnrs_anon_imaging_study         CASCADE;
 DROP TABLE IF EXISTS lnrs.lnrs_anon_dicom_instance         CASCADE;
 DROP TABLE IF EXISTS lnrs.lnrs_anon_dicom_series           CASCADE;
 DROP TABLE IF EXISTS lnrs.lnrs_anon_exam_finding           CASCADE;

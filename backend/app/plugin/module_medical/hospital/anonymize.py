@@ -59,13 +59,19 @@ def truncate_body(body: str | None, max_len: int = MAX_BODY_LEN) -> str:
 # HMAC 核心
 # --------------------------------------------------------------------------- #
 
+# 密钥 bytes 缓存 + 占位密钥告警去重（逐行 HMAC 调用路径，避免日志风暴）
+_SECRET_CACHE: dict[str, bytes] = {}
+_SECRET_WARNED = False
+
 
 def _secret_bytes() -> bytes:
     """读取 settings 中的密钥并编码为 bytes。
 
     密钥缺失时抛错——脱敏是核心安全功能，不能静默用空密钥。
-    开发占位密钥允许使用（不阻塞联调），但会打 warning 提醒。
+    开发占位密钥允许使用（不阻塞联调），但会打 warning 提醒（每进程仅一次，
+    逐行 HMAC 场景下避免日志风暴）。
     """
+    global _SECRET_WARNED
     s = settings.LNRS_ANON_SECRET
     if not s:
         raise RuntimeError(
@@ -73,11 +79,17 @@ def _secret_bytes() -> bytes:
             "请通过环境变量设置该密钥。"
         )
     if s == "change-me-in-production-please":
-        log.warning(
-            "⚠️ LNRS_ANON_SECRET 仍使用开发占位密钥（'change-me-in-production-please'），"
-            "生产环境必须通过环境变量覆盖！"
-        )
-    return s.encode("utf-8")
+        if not _SECRET_WARNED:
+            log.warning(
+                "⚠️ LNRS_ANON_SECRET 仍使用开发占位密钥（'change-me-in-production-please'），"
+                "生产环境必须通过环境变量覆盖！"
+            )
+            _SECRET_WARNED = True
+    cached = _SECRET_CACHE.get(s)
+    if cached is None:
+        cached = s.encode("utf-8")
+        _SECRET_CACHE[s] = cached
+    return cached
 
 
 def _hmac_hex(message: str) -> str:
@@ -165,14 +177,96 @@ def source_lab_hash(center_code: str, report_id: str, item_name: str) -> str:
 
 
 def source_order_hash(
-    center_code: str, order_time: str, order_name: str, order_type: str
+    center_code: str,
+    order_time: str,
+    order_name: str,
+    order_type: str,
+    patient_id: str = "",
+    detail_key: str = "",
 ) -> str:
     """医嘱级源哈希，用于 anon_order.source_order_hash 幂等去重。
 
     用 (center, order_time, order_name, order_type) 四元组裸 SHA256 —— 同一 visit
     可有多条同名医嘱（如长期医嘱反复开立），用 order_time + order_type 区分。
+
+    Rev 2026-09-02（省医全量批次）：追加可选 patient_id / detail_key 两段。
+    旧输入不含患者与明细，省医 24M 住院医嘱中 53% 的行会被错误合并
+    （不同患者同药同时刻碰撞；同患者同行跨就诊展开产生整行重复）；
+    新输入 = 旧输入 + (":{patient_id}" if 非空) + (":{detail_key}" if 非空)。
+    两新参均空时输入串与旧版逐字节一致（hos301 存量批次哈希不受影响；
+    若未来重导 hos301，其 order 行将按新哈希插入为新增行——一次性历史批次，
+    可接受，见 skill 注意事项）。
     """
     raw = f"{center_code}:{order_time}:{order_name}:{order_type}"
+    if patient_id:
+        raw = f"{raw}:{patient_id}"
+    if detail_key:
+        raw = f"{raw}:{detail_key}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def source_diagnosis_hash(
+    center_code: str,
+    source: str,
+    patient_id: str,
+    code: str,
+    name: str,
+    date_s: str,
+    category: str,
+    is_primary: str,
+) -> str:
+    """诊断级源哈希（0014 lnrs_anon_diagnosis 幂等键）。裸 SHA256，空值以 '' 占位。"""
+    raw = f"{center_code}:{source}:{patient_id}:{code}:{name}:{date_s}:{category}:{is_primary}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def source_document_hash(
+    center_code: str,
+    patient_id: str,
+    doc_type: str,
+    date_s: str,
+    content_md5: str,
+) -> str:
+    """病程文档级源哈希（0014 lnrs_anon_clinical_document 幂等键）。
+
+    content_md5 为 doc_content 的 MD5 hex（空内容传 ''）—— 文档内容本身进
+    JSONB/TEXT 前先用摘要参与幂等判定，避免超长文本直接进 SHA256 输入。
+    """
+    raw = f"{center_code}:{patient_id}:{doc_type}:{date_s}:{content_md5}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def source_history_hash(
+    center_code: str,
+    patient_id: str,
+    data_source: str,
+    date_s: str,
+    fields_md5: str,
+) -> str:
+    """病史级源哈希（0014 lnrs_anon_medical_history 幂等键）。
+
+    fields_md5 为六段病史文本按固定序拼接（\\x1f 分隔）后的 MD5 hex。
+    """
+    raw = f"{center_code}:{patient_id}:{data_source}:{date_s}:{fields_md5}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def source_observation_hash(
+    center_code: str,
+    obs_type: str,
+    patient_id: str,
+    visit_id: str,
+    item_name: str,
+    result: str,
+    value_s: str,
+    unit: str,
+    time_s: str,
+) -> str:
+    """观察测量级源哈希（0014 lnrs_anon_vital_observation 幂等键）。裸 SHA256。"""
+    raw = (
+        f"{center_code}:{obs_type}:{patient_id}:{visit_id}:{item_name}:"
+        f"{result}:{value_s}:{unit}:{time_s}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -272,6 +366,9 @@ def birth_date_from(raw: Any) -> date | None:
     s = str(raw).strip()
     if not s:
         return None
+    # 时间戳前缀（YYYY-MM-DD[ T]HH:MM:SS...）→ 只取日期段（省医全量批次日期均为时间戳）
+    if len(s) > 10 and s[4] in "-/" and s[10] in " T":
+        s = s[:10]
     # YYYY-MM-DD / YYYY/MM/DD（兼容宽表常见斜杠日期）
     if len(s) >= 8 and s[4] in "-/":
         separator = s[4]

@@ -23,8 +23,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import os
 import re
-from datetime import date
+import uuid
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable
 
@@ -36,14 +41,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logger import log
 
 from .anon_model import (
+    AnonClinicalDocumentModel,
+    AnonDiagnosisModel,
     AnonExamDetailModel,
     AnonExamModel,
     AnonLabResultModel,
+    AnonMedicalHistoryModel,
     AnonOrderModel,
     AnonPatientModel,
     AnonPhiAuditModel,
     AnonReportTextModel,
     AnonSurgeryModel,
+    AnonVitalObservationModel,
     AnonVisitDetailModel,
     AnonVisitModel,
 )
@@ -54,8 +63,12 @@ from .anonymize import (
     compute_anon_id,
     compute_anon_visit_id,
     hash_for_audit,
+    source_diagnosis_hash,
+    source_document_hash,
     source_exam_hash,
+    source_history_hash,
     source_lab_hash,
+    source_observation_hash,
     source_order_hash,
     source_surgery_hash,
     source_visit_hash,
@@ -84,6 +97,19 @@ _SRC_TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # 批量大小
 BATCH_SIZE = 1000
 
+# Sub-transaction 阈值：每累计此行数后 commit 一次，缩短长事务暴露时间（减少
+# ConnectionDoesNotExistError / WAL 撑爆风险）。可通过环境变量
+# LNRS_ETL_SUB_TX_ROWS 调小（A/B 测试用）。0 = 禁用 sub-tx，单事务直到结束。
+SUB_TX_ROWS = int(os.environ.get("LNRS_ETL_SUB_TX_ROWS", "1000000"))
+
+# COPY 触发阈值：当一次 upsert 行数 ≥ 此值时改走 COPY+temp-table 路径
+# （asyncpg copy_records_to_table 比 executemany 快 10-50×）。
+# 0 = 禁用 COPY 路径，全部走 executemany。环境变量 LNRS_ETL_COPY_THRESHOLD 覆盖。
+COPY_THRESHOLD = int(os.environ.get("LNRS_ETL_COPY_THRESHOLD", "50000"))
+
+# 临时表名后缀（每次调用拼接 uuid 避免同 session 内冲突）
+_COPY_TMP_SUFFIX = "_etl_copy"
+
 
 # --------------------------------------------------------------------------- #
 # Parquet 读取
@@ -110,6 +136,103 @@ async def _read_parquet_async(parquet_path: Path) -> tuple[list[str], list[tuple
 def _row_to_dict(cols: list[str], row: tuple) -> dict[str, Any]:
     return {col: val for col, val in zip(cols, row)}
 
+# asyncpg 单次查询参数上限 32767；10M-row 级表（如检验/护理）的 visit 预读
+# 若一次 IN 全表 anon_visit_id 会爆栈，故统一改分块查询
+_IN_CHUNK_SIZE = 10_000
+
+
+async def _in_lookup_chunked(
+    db: AsyncSession,
+    build: Callable[[list[str]], Any],
+    ids: list[str],
+) -> list:
+    """对 `WHERE col IN (...)` 查询按 _IN_CHUNK_SIZE 分块执行并合并结果。
+
+    build(chunk) 返回该次 SELECT 的 Statement；返回拼接后的 Row 列表。
+    """
+    results: list = []
+    for i in range(0, len(ids), _IN_CHUNK_SIZE):
+        chunk = ids[i : i + _IN_CHUNK_SIZE]
+        results.extend((await db.execute(build(chunk))).fetchall())
+    return results
+async def _copy_then_merge(
+    db: AsyncSession,
+    *,
+    target_table_name: str,
+    rows: list[dict[str, Any]],
+    constraint: str,
+    update_set: dict[str, Any],
+    column_order: list[str],
+) -> int:
+    """用 COPY+temp table 路径批量 upsert 行到目标表（省医扩展性能优化）。
+
+    工作流（单事务内）：
+      1. CREATE TEMP TABLE tmp_<uuid> ON COMMIT DROP
+      2. asyncpg copy_records_to_table → 流式灌入 tmp
+      3. INSERT INTO target SELECT ... FROM tmp ON CONFLICT ON CONSTRAINT DO UPDATE
+      4. （事务结束自动 DROP，ON COMMIT DROP）
+
+    性能：COPY 比 executemany(BATCH_SIZE=1000) 快 10-50×（省医 nursing 13.8M 行
+    实测 95 min → 预估 ~5-15 min）。
+
+    参数：
+      target_table_name: 目标表名（SQLAlchemy Table.name，schema 已包含）
+      rows: 待 upsert 行（dict，key 在 column_order 中）
+      constraint: ON CONFLICT UNIQUE 约束名
+      update_set: DO UPDATE SET 字段名列表（用 EXCLUDED 自动引用）
+      column_order: 行转 tuple 列顺序（必须与目标表 INSERT 列一致）
+    """
+    if not rows:
+        return 0
+    raw = await (await db.connection()).get_raw_connection()
+    inner = raw.driver_connection  # type: ignore[attr-defined]
+
+    tmp_name = f"tmp_anon_{uuid.uuid4().hex[:12]}"
+    try:
+        # 用 LIKE target INCLUDING DEFAULTS 克隆结构（保留 DEFAULT 与 NOT NULL）
+        # ON COMMIT DROP 在 asyncpg+SQLAlchemy 组合下偶尔失败，
+        # 改用 finally 显式 DROP（保证清理；崩溃时 PG 自动收 session-level temp）
+        await inner.execute(
+            f"CREATE TEMP TABLE {tmp_name} (LIKE {target_table_name} INCLUDING DEFAULTS)"
+        )
+        records = [tuple(r.get(c) for c in column_order) for r in rows]
+        await inner.copy_records_to_table(tmp_name, records=records, columns=column_order)
+        set_clause = ", ".join(f'"{k}" = EXCLUDED."{k}"' for k in update_set.keys())
+        col_list = ", ".join(f'"{c}"' for c in column_order)
+        sql = (
+            f'INSERT INTO {target_table_name} ({col_list}) '
+            f'SELECT {col_list} FROM {tmp_name} '
+            f'ON CONFLICT ON CONSTRAINT {constraint} DO UPDATE SET {set_clause}'
+        )
+        await db.execute(text(sql))
+        return len(rows)
+    finally:
+        try:
+            await inner.execute(f"DROP TABLE IF EXISTS {tmp_name}")
+        except Exception:
+            pass
+
+async def _maybe_commit(
+    db: AsyncSession,
+    *,
+    rows_done: int,
+    label: str,
+) -> None:
+    """Sub-tx commit 阈值检查：在累计写入行数跨过 SUB_TX_ROWS 整数倍时 commit 一次。
+
+    用法：循环内每写完 BATCH_SIZE 后调用：
+      await _maybe_commit(db, rows_done=i + len(batch), label='lab_result')
+
+    行为：
+      - rows_done > 0 且 rows_done % SUB_TX_ROWS == 0：commit 一次
+      - SUB_TX_ROWS <= 0：禁用 sub-tx，回退原单事务行为
+    """
+    if SUB_TX_ROWS <= 0:
+        return
+    if rows_done > 0 and rows_done % SUB_TX_ROWS == 0:
+        await db.commit()
+        log.info(f"ETL2: {label} sub-tx commit @ {rows_done:,} 行")
+
 
 def _get_nested(rd: dict[str, Any], path: str) -> Any:
     """按点号路径取嵌套值（如 'exam_detail.findings'）。
@@ -129,6 +252,29 @@ def _get_nested(rd: dict[str, Any], path: str) -> Any:
         if cur is None:
             return None
     return cur
+
+
+async def _maybe_commit(
+    db: AsyncSession,
+    *,
+    rows_done: int,
+    label: str,
+) -> None:
+    """Sub-tx commit 阈值检查：在累计写入行数跨过 SUB_TX_ROWS 整数倍时 commit 一次。
+
+    用法：循环内每写完 BATCH_SIZE 后调用：
+      await _maybe_commit(db, rows_done=i + len(batch), label='lab_result')
+
+    行为：
+      - rows_done > 0 且 rows_done % SUB_TX_ROWS == 0：commit 一次
+      - SUB_TX_ROWS <= 0：禁用 sub-tx，回退原单事务行为
+    """
+    if SUB_TX_ROWS <= 0:
+        return
+    if rows_done > 0 and rows_done % SUB_TX_ROWS == 0:
+        await db.commit()
+        log.info(f"ETL2: {label} sub-tx commit @ {rows_done:,} 行")
+
 
 
 def _clean_str(val: Any) -> str | None:
@@ -379,6 +525,7 @@ async def _batch_upsert_patients(
                 },
             )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label=f"patient:{center_code}")
 
     if n_new:
         log.info(
@@ -424,6 +571,7 @@ async def _batch_upsert_exams(
             },
         )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label="exam")
 
 
 async def _batch_upsert_report_text(
@@ -449,6 +597,7 @@ async def _batch_upsert_report_text(
             },
         )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label="report_text")
 
 
 async def _batch_upsert_exam_detail(
@@ -475,7 +624,7 @@ async def _batch_upsert_exam_detail(
             },
         )
         await db.execute(stmt)
-
+        await _maybe_commit(db, rows_done=i + len(batch), label="exam_detail")
 
 async def _batch_upsert_visits(
     db: AsyncSession,
@@ -527,6 +676,7 @@ async def _batch_upsert_visits(
             },
         )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label=f"visit:{center_code}")
 
     log.info(f"ETL2: visit upsert center={center_code} 共 {len(unique)} 条")
     return result
@@ -557,6 +707,7 @@ async def _batch_upsert_surgeries(
             },
         )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label="surgery")
 
 
 async def _batch_upsert_visit_details(
@@ -588,6 +739,7 @@ async def _batch_upsert_visit_details(
             },
         )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label="visit_detail")
 
 
 async def _batch_upsert_lab_results(
@@ -599,10 +751,44 @@ async def _batch_upsert_lab_results(
 
     冲突键：(anon_visit_id, source_lab_hash)（DDL UNIQUE lnrs_anon_uq_lab_result）。
     anon_visit_id 可空：NULL 不参与 UNIQUE 冲突，visit 缺失的行各自独立插入。
+
+    行数 ≥ COPY_THRESHOLD 时改走 COPY+temp 表路径（asyncpg copy_records_to_table，
+    速度比 executemany 1000 行一批快 10-50×；省医 11M lab_result 预期 25-45 min → 5-10 min）。
     """
-    if not lab_rows:
+    if COPY_THRESHOLD and len(lab_rows) >= COPY_THRESHOLD:
+        # COPY 路径：排除 lab_result_id（bigserial DEFAULT）和 created_at（CURRENT_TIMESTAMP），
+        # 让 PG 自动生成；同时 source_lab_hash 必填无 None。
+        # asyncpg copy_records_to_table 不自动序列化 JSON/Decimal，
+        # 需要预先 json.dumps(JSONB 列) 和 str(Decimal)。
+        import json as _json
+        from decimal import Decimal as _Dec
+        for r in lab_rows:
+            v = r.get("lab_detail_json")
+            if isinstance(v, (dict, list)):
+                r["lab_detail_json"] = _json.dumps(v, ensure_ascii=False)
+            v = r.get("item_result_value")
+            if isinstance(v, _Dec):
+                r["item_result_value"] = str(v)
+        cols = [
+            "anon_visit_id", "patient_id", "center_code",
+            "report_id", "test_name", "item_name", "item_result",
+            "item_result_value", "item_unit", "collection_time",
+            "lab_detail_json", "source_lab_hash", "created_batch_id",
+        ]
+        await _copy_then_merge(
+            db,
+            target_table_name="lnrs.lnrs_anon_lab_result",
+            rows=lab_rows,
+            constraint="lnrs_anon_uq_lab_result",
+            update_set={
+                "test_name": 1, "item_name": 1, "item_result": 1,
+                "item_result_value": 1, "item_unit": 1,
+                "collection_time": 1, "lab_detail_json": 1,
+            },
+            column_order=cols,
+        )
+        log.info(f"ETL2: lab_result COPY path {len(lab_rows):,} 行")
         return
-    for i in range(0, len(lab_rows), BATCH_SIZE):
         batch = lab_rows[i : i + BATCH_SIZE]
         stmt = pg_insert(AnonLabResultModel.__table__).values(batch)
         # NULL anon_visit_id 的行无冲突键，用 (anon_visit_id, source_lab_hash) 仅命中非空 visit 行
@@ -619,6 +805,7 @@ async def _batch_upsert_lab_results(
             },
         )
         await db.execute(stmt)
+        await _maybe_commit(db, rows_done=i + len(batch), label="lab_result")
 
 
 async def _batch_upsert_orders(
@@ -628,7 +815,7 @@ async def _batch_upsert_orders(
 ) -> None:
     """批量 upsert order 行（省医扩展，drug + non_drug 合并）。
 
-    冲突键：(anon_visit_id, source_order_hash)（DDL UNIQUE lnrs_anon_uq_order）。
+    冲突键：source_order_hash（DDL UNIQUE lnrs_anon_uq_order，单列）。
     anon_visit_id 可空：NULL 不参与 UNIQUE 冲突。
     """
     if not order_rows:
@@ -645,7 +832,7 @@ async def _batch_upsert_orders(
             },
         )
         await db.execute(stmt)
-
+        await _maybe_commit(db, rows_done=i + len(batch), label="order")
 
 async def _write_phi_audit_batch(
     db: AsyncSession,
@@ -670,6 +857,7 @@ async def _write_phi_audit_batch(
     for i in range(0, len(rows), BATCH_SIZE):
         batch = rows[i : i + BATCH_SIZE]
         await db.execute(AnonPhiAuditModel.__table__.insert().values(batch))
+        await _maybe_commit(db, rows_done=i + len(batch), label="phi_audit")
 
 
 # --------------------------------------------------------------------------- #
@@ -908,6 +1096,37 @@ async def _import_patient_table(
     return imported
 
 
+# hos301/shengyi 扩展（Rev 2026-09-01/09-02）：exam_type 行级动态归一化
+_EXAM_TYPE_DICT_VALUES = (
+    "CT", "Pathology", "Genetic", "IHC", "PETCT", "Radiology",
+    "Ultrasound", "MR", "ECG", "Other",
+)
+
+
+def _normalize_exam_type(
+    field_name: str, row: dict[str, Any], cache: dict[str, str]
+) -> str:
+    """从行数据归一化 exam_type 值（hos301 examType / 省医 检查类型名称）。
+
+    规则优先级：
+    1. 去空白/全角后与 med_exam_type 字典值精确匹配（命中直接返回）
+    2. med_dict_mapping raw_label → dict_value（预加载 cache）
+    3. 兜底 Other（记 warning）
+    """
+    raw = str(row.get(field_name) or "").strip()
+    if not raw:
+        return "Other"
+    # 全角 → 半角 C/T + 去空白（301 examClass/examType 原始数据用全角）
+    normalized = raw.replace("Ｃ", "C").replace("Ｔ", "T").replace("　", " ").replace(" ", "")
+    if normalized in _EXAM_TYPE_DICT_VALUES:
+        return normalized
+    mapped = cache.get(normalized.lower())
+    if mapped:
+        return mapped
+    log.warning(f"ETL2: 未识别 exam_type: {raw!r}，兜底 Other")
+    return "Other"
+
+
 async def _import_exam_text_table(
     db: AsyncSession,
     *,
@@ -915,6 +1134,8 @@ async def _import_exam_text_table(
     parquet_path: Path,
     src_table: str,
     exam_type: str,
+    exam_type_field: str | None = None,
+    hospital_id: int | None = None,
     id_field: str,
     body_fields: list[str],
     batch_id: str,
@@ -935,11 +1156,21 @@ async def _import_exam_text_table(
     - 未设：反查同 id_field 已入库 exam 的日期（ihc 复用 pathology specimen_id 日期）。
     - "visit_id"：按 visit_id 反查 lnrs_anon_visit_detail.admission_time
       （省医 pathology 所有日期列空，反查 visit 兜底）。
+    exam_type_field（hos301/省医扩展）：行数据中动态决定 exam_type 的列名
+    （如 examType / exam_type）。设置后优先取该列值，经 _normalize_exam_type
+    归一化（全角→半角 / 字典值精确匹配 / 字典映射）；空值或未识别时兜底 Other。
+    hospital_id：exam_type_field 生效时限定预加载 med_dict_mapping 的医院范围。
     """
     cols, rows = await _read_parquet_async(parquet_path)
     if not rows:
         log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
         return 0
+
+    # exam_type_field（hos301/省医）：预加载 exam_type 字典映射，供行级归一化
+    exam_type_cache: dict[str, str] = {}
+    if exam_type_field:
+        from .enum_normalization import load_exam_type_mapping
+        exam_type_cache = await load_exam_type_mapping(db, hospital_id)
 
     # 第一遍：构造 exam 行，同时收集 exam 中出现的 patient（可能 patient.parquet 里没有）
     exam_patient_records: list[dict[str, Any]] = []
@@ -965,13 +1196,17 @@ async def _import_exam_text_table(
                 anon_visit_ids = {
                     compute_anon_visit_id(center_code, v): v for v in set(visit_ids)
                 }
-                stmt = select(
-                    AnonVisitDetailModel.anon_visit_id,
-                    AnonVisitDetailModel.admission_time,
-                ).where(AnonVisitDetailModel.anon_visit_id.in_(list(anon_visit_ids.keys())))
-                for r in (await db.execute(stmt)).fetchall():
-                    if r.admission_time:
-                        visit_date_lookup[anon_visit_ids[r.anon_visit_id]] = r.admission_time
+                visit_results = await _in_lookup_chunked(
+                    db,
+                    lambda c: select(
+                        AnonVisitDetailModel.anon_visit_id,
+                        AnonVisitDetailModel.admission_time,
+                    ).where(AnonVisitDetailModel.anon_visit_id.in_(c)),
+                    list(anon_visit_ids.keys()),
+                )
+                for r in visit_results:
+                    if r[1]:
+                        visit_date_lookup[anon_visit_ids[r[0]]] = r[1]
         else:
             # ihc 等无日期列的表：预加载同 id_field 已入库 exam 的日期，供反查
             anon_exam_ids_for_lookup = [
@@ -980,11 +1215,15 @@ async def _import_exam_text_table(
                 if _row_to_dict(cols, row).get(id_field)
             ]
             if anon_exam_ids_for_lookup:
-                stmt = select(AnonExamModel.anon_exam_id, AnonExamModel.exam_date).where(
-                    AnonExamModel.anon_exam_id.in_(anon_exam_ids_for_lookup)
+                lookup_results = await _in_lookup_chunked(
+                    db,
+                    lambda c: select(AnonExamModel.anon_exam_id, AnonExamModel.exam_date).where(
+                        AnonExamModel.anon_exam_id.in_(c)
+                    ),
+                    anon_exam_ids_for_lookup,
                 )
-                for row in (await db.execute(stmt)).fetchall():
-                    exam_date_lookup[row.anon_exam_id] = row.exam_date
+                for row in lookup_results:
+                    exam_date_lookup[row[0]] = row[1]
     imported = 0
 
     for row in rows:
@@ -1062,7 +1301,7 @@ async def _import_exam_text_table(
                 "patient_id": None,  # 占位，patient upsert 后回填
                 "_anon_id": anon_id,  # 临时键，回填用
                 "center_code": center_code,
-                "exam_type": exam_type,
+                "exam_type": _normalize_exam_type(exam_type_field, rd, exam_type_cache) if exam_type_field else exam_type,
                 "exam_date": exam_date,
                 "source_exam_hash": src_hash,
                 "created_batch_id": batch_id,
@@ -1424,10 +1663,14 @@ async def _import_lab_table(
         anon_visit_ids = {
             compute_anon_visit_id(center_code, v): v for v in visit_id_set
         }
-        stmt = select(AnonVisitModel.anon_visit_id).where(
-            AnonVisitModel.anon_visit_id.in_(list(anon_visit_ids.keys()))
+        existing = await _in_lookup_chunked(
+            db,
+            lambda c: select(AnonVisitModel.anon_visit_id).where(
+                AnonVisitModel.anon_visit_id.in_(c)
+            ),
+            list(anon_visit_ids.keys()),
         )
-        for (aevid,) in (await db.execute(stmt)).fetchall():
+        for (aevid,) in existing:
             visit_lookup[anon_visit_ids[aevid]] = aevid
 
     patient_records: list[dict[str, Any]] = []
@@ -1467,11 +1710,16 @@ async def _import_lab_table(
         seen_lab_hash.add(dedup_key)
 
         # 数值结果：非数值时保留 None
+        # 数值结果：非数值 / 越界时保留 None（NUMERIC(18,4) 上限 ~1e14；
+        # 实际检验值极少 >1e9，遇到日期格式"202503130006"被误读为 2e11 之类
+        # 直接丢弃，避免 asyncpg NumericValueOutOfRangeError 中断整批）
         num_val = None
         raw_val = rd.get("item_result_value")
         if raw_val is not None:
             try:
-                num_val = float(raw_val)
+                candidate = float(raw_val)
+                if -1e8 < candidate < 1e8:
+                    num_val = candidate
             except (TypeError, ValueError):
                 num_val = None
 
@@ -1493,7 +1741,7 @@ async def _import_lab_table(
                 "_anon_id": anon_id,
                 "center_code": center_code,
                 "report_id": _clean_str(str(report_id)),
-                "test_name": _clean_str(rd.get("test_name")),
+                "test_name": (_clean_str(rd.get("test_name")) or "")[:200],
                 "item_name": _clean_str(item_name),
                 "item_result": _clean_str(rd.get("item_result")),
                 "item_result_value": num_val,
@@ -1527,6 +1775,7 @@ async def _import_order_table(
     src_table: str,
     order_type: str,
     order_name_field: str,
+    order_hash_extra: bool = False,
     batch_id: str,
 ) -> int:
     """导入 drug_order / no_drug_order.parquet → lnrs_anon_order（省医扩展）。
@@ -1535,6 +1784,11 @@ async def _import_order_table(
     挂在 visit 下（anon_visit_id 可空，visit_id 缺失时退化为只挂 patient）。
     守卫顺序：先收集 patient，再按 visit_id 决定是否建桥（同 lab）。
     order_name_field 参数化：drug_order 用 drug_generic_name，no_drug_order 用 order_name。
+    order_hash_extra（省医全量批次，2026-09-02）：source_order_hash 追加
+    patient_id + order_detail 规范 JSON 两段。旧哈希 (center,time,name,type)
+    不含患者/明细：省医 24M 住院医嘱中 53% 的行会跨患者同药同时刻碰撞，
+    且 staging 按就诊展开产生整行重复。False 时哈希与旧版逐字节一致
+    （其他中心存量数据不受影响）。
     """
     cols, rows = await _read_parquet_async(parquet_path)
     if not rows:
@@ -1553,12 +1807,15 @@ async def _import_order_table(
         anon_visit_ids = {
             compute_anon_visit_id(center_code, v): v for v in visit_id_set
         }
-        stmt = select(AnonVisitModel.anon_visit_id).where(
-            AnonVisitModel.anon_visit_id.in_(list(anon_visit_ids.keys()))
+        visit_results = await _in_lookup_chunked(
+            db,
+            lambda c: select(AnonVisitModel.anon_visit_id).where(
+                AnonVisitModel.anon_visit_id.in_(c)
+            ),
+            list(anon_visit_ids.keys()),
         )
-        for (aevid,) in (await db.execute(stmt)).fetchall():
+        for (aevid,) in visit_results:
             visit_lookup[anon_visit_ids[aevid]] = aevid
-
     patient_records: list[dict[str, Any]] = []
     order_rows: list[dict[str, Any]] = []
     seen_order_hash: set[tuple] = set()
@@ -1588,19 +1845,31 @@ async def _import_order_table(
         order_time = rd.get("order_time") or rd.get("order_start_time")
         order_time_str = str(order_time) if order_time else ""
 
-        src_hash = source_order_hash(
-            center_code, order_time_str, str(order_name), order_type
-        )
-        dedup_key = (anon_visit_id, src_hash)
-        if dedup_key in seen_order_hash:
-            continue
-        seen_order_hash.add(dedup_key)
-
-        # order_detail struct 忠实保留
+        # order_detail struct 忠实保留（order_hash_extra 时同时作哈希 detail_key）
         order_detail = rd.get("order_detail")
         order_detail_json = (
             _json_safe(order_detail) if isinstance(order_detail, dict) else None
         )
+        detail_key = ""
+        if order_hash_extra and isinstance(order_detail, dict):
+            detail_key = json.dumps(
+                order_detail, ensure_ascii=False, sort_keys=True, default=str
+            )
+        src_hash = source_order_hash(
+            center_code,
+            order_time_str,
+            str(order_name),
+            order_type,
+            patient_id=str(local_pid) if order_hash_extra else "",
+            detail_key=detail_key,
+        )
+        # order_hash_extra 开启时哈希已全局唯一标识一条医嘱 → 直接按哈希去重
+        # （吸收 staging 按就诊展开的整行重复，规避 UNIQUE(source_order_hash) 冲突）；
+        # 关闭时保持旧行为（同 visit 同哈希合并）。
+        dedup_key = src_hash if order_hash_extra else (anon_visit_id, src_hash)
+        if dedup_key in seen_order_hash:
+            continue
+        seen_order_hash.add(dedup_key)
 
         order_rows.append(
             {
@@ -1633,6 +1902,488 @@ async def _import_order_table(
 
 
 # --------------------------------------------------------------------------- #
+# 省医全量批次扩展（2026-09-02，DDL 见 0014-shengyi-anon-extend-2026-09.sql）：
+# diagnosis / clinical_document / medical_history / vital_observation
+# --------------------------------------------------------------------------- #
+
+
+def _md5_text(text: str) -> str:
+    """字符串 MD5 hex（无唯一编号的文本字段参与 source hash 用）。"""
+    return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+
+_OBS_TIME_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y/%m/%d %H:%M:%S",
+    "%Y/%m/%d %H:%M",
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+)
+
+
+def _parse_obs_datetime(value: Any) -> datetime | None:
+    """VARCHAR 观察时间 → datetime；解析失败返回 None（obs_time 可空）。"""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    for fmt in _OBS_TIME_FORMATS:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+async def _import_diagnosis_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    source_label: str,
+    batch_id: str,
+    detail_fields: list[str] | None = None,
+) -> int:
+    """导入 就诊.诊断 / 住院病案首页.诊断 → lnrs_anon_diagnosis（0014 新表）。
+
+    staging 列（适配层产出）：
+      patient_id, diagnosis_code, diagnosis_name, diagnosis_date,
+      is_primary, diagnosis_category, [detail struct 列（detail_fields 指定）]
+    幂等键 source_diag_hash 含 source_label（区分两个来源文件）。
+    守卫：patient_id 非空 且 (diagnosis_name 或 diagnosis_code) 非空。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    patient_records: list[dict[str, Any]] = []
+    seen_local_pid: set[str] = set()
+    diag_rows: list[dict[str, Any]] = []
+    seen_hash: set[str] = set()
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        name = _clean_str(rd.get("diagnosis_name"))
+        code = _clean_str(rd.get("diagnosis_code"))
+        if not local_pid or not (name or code):
+            continue
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+        except ValueError as e:
+            log.warning(f"ETL2: 跳过非法 pid center={center_code} pid={local_pid!r}: {e}")
+            continue
+        if str(local_pid) not in seen_local_pid:
+            seen_local_pid.add(str(local_pid))
+            patient_records.append(
+                {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+            )
+
+        date_v = _clean_date(rd.get("diagnosis_date"))
+        category = _clean_str(rd.get("diagnosis_category"))
+        is_primary = _clean_str(rd.get("is_primary"))
+        detail_json = _build_detail_json(rd, detail_fields) if detail_fields else None
+        src_hash = source_diagnosis_hash(
+            center_code, source_label, str(local_pid),
+            code or "", name or "",
+            date_v.isoformat() if date_v else "",
+            category or "", is_primary or "",
+        )
+        if src_hash in seen_hash:
+            continue
+        seen_hash.add(src_hash)
+        diag_rows.append(
+            {
+                "patient_id": None,
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "source": source_label,
+                "diagnosis_code": code,
+                "diagnosis_name": name,
+                "diagnosis_date": date_v,
+                "is_primary": is_primary,
+                "diagnosis_category": category,
+                "diagnosis_detail_json": detail_json,
+                "source_diag_hash": src_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    for dr in diag_rows:
+        dr["patient_id"] = pid_map[dr["_anon_id"]]
+        del dr["_anon_id"]
+    for i in range(0, len(diag_rows), BATCH_SIZE):
+        batch = diag_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonDiagnosisModel.__table__).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_diagnosis",
+            set_={
+                "diagnosis_code": stmt.excluded.diagnosis_code,
+                "diagnosis_name": stmt.excluded.diagnosis_name,
+                "diagnosis_date": stmt.excluded.diagnosis_date,
+                "is_primary": stmt.excluded.is_primary,
+                "diagnosis_category": stmt.excluded.diagnosis_category,
+                "diagnosis_detail_json": stmt.excluded.diagnosis_detail_json,
+                "created_batch_id": stmt.excluded.created_batch_id,
+            },
+        )
+        await db.execute(stmt)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 diagnosis({source_label})")
+    return imported
+
+
+async def _import_document_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    batch_id: str,
+) -> int:
+    """导入 病程记录文档 → lnrs_anon_clinical_document（0014 新表）。
+
+    staging 列：patient_id, doc_type, doc_date, doc_content
+    幂等键 source_doc_hash 用 md5(doc_content) 参与（避免超长文本直接进 SHA256）。
+    空内容行（2.48M）随全量一并入库（md5('') 天然合并整行重复）。
+    守卫：patient_id 非空。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    patient_records: list[dict[str, Any]] = []
+    seen_local_pid: set[str] = set()
+    doc_rows: list[dict[str, Any]] = []
+    seen_hash: set[str] = set()
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        if not local_pid:
+            continue
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+        except ValueError as e:
+            log.warning(f"ETL2: 跳过非法 pid center={center_code} pid={local_pid!r}: {e}")
+            continue
+        if str(local_pid) not in seen_local_pid:
+            seen_local_pid.add(str(local_pid))
+            patient_records.append(
+                {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+            )
+
+        doc_type = _clean_str(rd.get("doc_type"))
+        date_v = _clean_date(rd.get("doc_date"))
+        content = rd.get("doc_content")
+        content_s = str(content) if content is not None else ""
+        src_hash = source_document_hash(
+            center_code, str(local_pid), doc_type or "",
+            date_v.isoformat() if date_v else "",
+            _md5_text(content_s),
+        )
+        if src_hash in seen_hash:
+            continue
+        seen_hash.add(src_hash)
+        doc_rows.append(
+            {
+                "patient_id": None,
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "doc_type": doc_type,
+                "doc_date": date_v,
+                "doc_content": content_s or None,
+                "source_doc_hash": src_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    for dr in doc_rows:
+        dr["patient_id"] = pid_map[dr["_anon_id"]]
+        del dr["_anon_id"]
+    for i in range(0, len(doc_rows), BATCH_SIZE):
+        batch = doc_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonClinicalDocumentModel.__table__).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_clinical_doc",
+            set_={
+                "doc_type": stmt.excluded.doc_type,
+                "doc_date": stmt.excluded.doc_date,
+                "doc_content": stmt.excluded.doc_content,
+                "created_batch_id": stmt.excluded.created_batch_id,
+            },
+        )
+        await db.execute(stmt)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 clinical_document")
+    return imported
+
+
+async def _import_history_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    batch_id: str,
+) -> int:
+    """导入 就诊.病史 → lnrs_anon_medical_history（0014 新表）。
+
+    staging 列：patient_id, chief_complaint, present_illness, past_history,
+      personal_history, marriage_history, family_history, record_date, data_source
+    幂等键 source_hist_hash 用 md5(六段文本 \\x1f 拼接) 参与。
+    守卫：patient_id 非空 且 六段文本至少一段非空。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    _FIELD_COLS = (
+        "chief_complaint", "present_illness", "past_history",
+        "personal_history", "marriage_history", "family_history",
+    )
+    patient_records: list[dict[str, Any]] = []
+    seen_local_pid: set[str] = set()
+    hist_rows: list[dict[str, Any]] = []
+    seen_hash: set[str] = set()
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        if not local_pid:
+            continue
+        fields = {c: _clean_str(rd.get(c)) or "" for c in _FIELD_COLS}
+        if not any(fields.values()):
+            continue
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+        except ValueError as e:
+            log.warning(f"ETL2: 跳过非法 pid center={center_code} pid={local_pid!r}: {e}")
+            continue
+        if str(local_pid) not in seen_local_pid:
+            seen_local_pid.add(str(local_pid))
+            patient_records.append(
+                {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+            )
+
+        date_v = _clean_date(rd.get("record_date"))
+        data_source = _clean_str(rd.get("data_source"))
+        fields_md5 = _md5_text("\x1f".join(fields[c] for c in _FIELD_COLS))
+        src_hash = source_history_hash(
+            center_code, str(local_pid), data_source or "",
+            date_v.isoformat() if date_v else "", fields_md5,
+        )
+        if src_hash in seen_hash:
+            continue
+        seen_hash.add(src_hash)
+        hist_rows.append(
+            {
+                "patient_id": None,
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "chief_complaint": fields["chief_complaint"] or None,
+                "present_illness": fields["present_illness"] or None,
+                "past_history": fields["past_history"] or None,
+                "personal_history": fields["personal_history"] or None,
+                "marriage_history": fields["marriage_history"] or None,
+                "family_history": fields["family_history"] or None,
+                "record_date": date_v,
+                "data_source": data_source,
+                "source_hist_hash": src_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    for hr in hist_rows:
+        hr["patient_id"] = pid_map[hr["_anon_id"]]
+        del hr["_anon_id"]
+    for i in range(0, len(hist_rows), BATCH_SIZE):
+        batch = hist_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonMedicalHistoryModel.__table__).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_medical_history",
+            set_={
+                "chief_complaint": stmt.excluded.chief_complaint,
+                "present_illness": stmt.excluded.present_illness,
+                "past_history": stmt.excluded.past_history,
+                "personal_history": stmt.excluded.personal_history,
+                "marriage_history": stmt.excluded.marriage_history,
+                "family_history": stmt.excluded.family_history,
+                "record_date": stmt.excluded.record_date,
+                "data_source": stmt.excluded.data_source,
+                "created_batch_id": stmt.excluded.created_batch_id,
+            },
+        )
+        await db.execute(stmt)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 medical_history")
+    return imported
+
+
+async def _import_observation_table(
+    db: AsyncSession,
+    *,
+    center_code: str,
+    parquet_path: Path,
+    src_table: str,
+    obs_type: str,
+    batch_id: str,
+    detail_fields: list[str] | None = None,
+) -> int:
+    """导入 护理测量/ICU护理/麻醉子项 观察 → lnrs_anon_vital_observation（0014 新表）。
+
+    staging 列（适配层产出）：
+      patient_id, visit_id（可空：ICU/麻醉源文件无就诊编号）,
+      item_name, item_result, item_result_value（数值字符串）, item_unit,
+      obs_time（VARCHAR）, [detail struct 列（detail_fields 指定）]
+    obs_type 由 spec 指定（nursing / icu / anesthesia），与 DDL 注释一致。
+    幂等键 source_obs_hash 的 time 段用解析后的 ISO（格式漂移不影响幂等）。
+    守卫：patient_id 非空 且 item_name 非空。
+    """
+    cols, rows = await _read_parquet_async(parquet_path)
+    if not rows:
+        log.warning(f"ETL2: {center_code}/{src_table}.parquet 无数据，跳过")
+        return 0
+
+    # 预读 visit 桥（visit_id 全空时跳过，如 icu/anesthesia）
+    visit_id_set: set[str] = set()
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        vid = rd.get("visit_id")
+        if vid:
+            visit_id_set.add(str(vid))
+    visit_lookup: dict[str, str] = {}
+    if visit_id_set:
+        anon_visit_ids = {
+            compute_anon_visit_id(center_code, v): v for v in visit_id_set
+        }
+        existing = await _in_lookup_chunked(
+            db,
+            lambda c: select(AnonVisitModel.anon_visit_id).where(
+                AnonVisitModel.anon_visit_id.in_(c)
+            ),
+            list(anon_visit_ids.keys()),
+        )
+        for (aevid,) in existing:
+            visit_lookup[anon_visit_ids[aevid]] = aevid
+
+    patient_records: list[dict[str, Any]] = []
+    seen_local_pid: set[str] = set()
+    obs_rows: list[dict[str, Any]] = []
+    seen_hash: set[str] = set()
+    imported = 0
+
+    for row in rows:
+        rd = _row_to_dict(cols, row)
+        local_pid = rd.get("patient_id")
+        item_name = _clean_str(rd.get("item_name"))
+        if not local_pid or not item_name:
+            continue
+        try:
+            anon_id = compute_anon_id(center_code, str(local_pid))
+        except ValueError as e:
+            log.warning(f"ETL2: 跳过非法 pid center={center_code} pid={local_pid!r}: {e}")
+            continue
+        if str(local_pid) not in seen_local_pid:
+            seen_local_pid.add(str(local_pid))
+            patient_records.append(
+                {"local_id": str(local_pid), "anon_id": anon_id, "sex": "0", "birth_date": None}
+            )
+
+        vid = rd.get("visit_id")
+        anon_visit_id = visit_lookup.get(str(vid)) if vid else None
+        result = _clean_str(rd.get("item_result")) or ""
+        value_s = _clean_str(rd.get("item_result_value")) or ""
+        unit = _clean_str(rd.get("item_unit")) or ""
+        time_v = _parse_obs_datetime(rd.get("obs_time"))
+        value_num: Decimal | None = None
+        if value_s:
+            try:
+                value_num = Decimal(value_s)
+            except InvalidOperation:
+                value_num = None
+        detail_json = _build_detail_json(rd, detail_fields) if detail_fields else None
+        src_hash = source_observation_hash(
+            center_code, obs_type, str(local_pid),
+            str(vid) if vid else "", item_name,
+            result, value_s, unit,
+            time_v.isoformat() if time_v else "",
+        )
+        if src_hash in seen_hash:
+            continue
+        seen_hash.add(src_hash)
+        obs_rows.append(
+            {
+                "anon_visit_id": anon_visit_id,
+                "patient_id": None,
+                "_anon_id": anon_id,
+                "center_code": center_code,
+                "obs_type": obs_type,
+                "item_name": item_name[:255],
+                "item_result": (result[:255] or None),
+                "item_result_value": value_num,
+                "item_unit": (unit[:64] or None),
+                "obs_time": time_v,
+                "obs_detail_json": detail_json,
+                "source_obs_hash": src_hash,
+                "created_batch_id": batch_id,
+            }
+        )
+        imported += 1
+
+    pid_map = await _batch_upsert_patients(
+        db, center_code=center_code, patient_records=patient_records,
+        batch_id=batch_id, is_placeholder=True,
+    )
+    for orow in obs_rows:
+        orow["patient_id"] = pid_map[orow["_anon_id"]]
+        del orow["_anon_id"]
+    for i in range(0, len(obs_rows), BATCH_SIZE):
+        batch = obs_rows[i : i + BATCH_SIZE]
+        stmt = pg_insert(AnonVitalObservationModel.__table__).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="lnrs_anon_uq_vital_observation",
+            set_={
+                "item_name": stmt.excluded.item_name,
+                "item_result": stmt.excluded.item_result,
+                "item_result_value": stmt.excluded.item_result_value,
+                "item_unit": stmt.excluded.item_unit,
+                "obs_time": stmt.excluded.obs_time,
+                "obs_detail_json": stmt.excluded.obs_detail_json,
+                "created_batch_id": stmt.excluded.created_batch_id,
+            },
+        )
+        await db.execute(stmt)
+
+    log.info(f"ETL2: {center_code}/{src_table} 导入 {imported} 行 vital_observation({obs_type})")
+    return imported
+
+
+# --------------------------------------------------------------------------- #
 # 中心级主入口
 # --------------------------------------------------------------------------- #
 
@@ -1640,7 +2391,8 @@ async def _import_order_table(
 #
 # 多中心扩展（ADR-0009）：新医院接入只需在下方添加一项，配置项含义：
 #   - src_table:    parquet 文件名（不含 .parquet 后缀）
-#   - kind:         patient / exam_text / surgery / visit_detail / lab / order
+#   - kind:         patient / exam_text / surgery / visit_detail / lab / order /
+#                   diagnosis / document / history / observation
 #   - exam_type:    exam_text 的检查类型（CT/Pathology/Genetic/IHC/PETCT/Radiology/
 #                   Ultrasound，必须是 med_exam_type 字典中的 dict_value）
 #   - id_field:     exam_text 的主键列名（parquet 中的 exam_id/specimen_id/test_id/report_id）
@@ -1657,7 +2409,11 @@ async def _import_order_table(
 #                   从该字段值解析数字（'n1'→1, 'n2'→2）。不设置则同 anon_exam_id
 #                   只生成一条 detail（detail_ordinal=1）。
 #   - order_type / order_name_field: kind=order 时必填，区分 drug/non_drug 及名称列
-#   - visit_detail / lab / order 为省医(shengyi)扩展，珠江(zhujiang)不用
+#   - order_hash_extra: kind=order，source_order_hash 追加 patient+order_detail（省医全量）
+#   - source_label:   kind=diagnosis 时必填，区分来源（diagnosis / inpatient_front_page）
+#   - obs_type:       kind=observation 时必填（nursing / icu / anesthesia）
+#   - visit_detail / lab / order / diagnosis / document / history / observation
+#     为省医(shengyi)扩展，珠江(zhujiang)/新桥(xinqiao)不用
 #
 # 前置条件：center_code 必须先在 med_hospital 注册（见 0008/0009 种子 SQL），
 # 且该 hospital_id 下 med_dict_mapping 已灌入对应 raw_label → dict_value 映射规则。
@@ -1670,7 +2426,8 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "src_table": "visit_record", "kind": "visit_detail",
             "id_field": "visit_id", "date_field": "admission_time",
         },
-        # 3. 病理：所有日期列空，date_field="" + date_lookup_field 反查 visit admission_time
+        # 3. 病理：检查日期 54.5% 空 / 报告日期 100% 空 → 适配层
+        #    coalesce(检查日期, 报告日期, visit 入院时间) 回填 100%
         {
             "src_table": "pahology_specimen", "kind": "exam_text",
             "exam_type": "Pathology", "id_field": "specimen_id",
@@ -1678,20 +2435,22 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "detail_type": "pathology",
             "detail_fields": [
                 "specimen_name", "exam_type", "exam_detail",
-                "pathology_diagnosis", "tumor_total_size_mm",
+                "pathology_diagnosis",
             ],
-            "date_field": "", "date_lookup_field": "visit_id",
+            "date_field": "exam_date",
         },
-        # 4. 影像报告：自带 exam_date（文本报告，非结节结构化表）
+        # 4. 影像：检查类型名称为自由文本，适配层按关键词规则归一化进 exam_type 列
+        #    （CT/PETCT/MR/Radiology/Ultrasound/Other），引擎行级精确匹配字典值
         {
             "src_table": "imaging_report", "kind": "exam_text",
-            "exam_type": "Radiology", "id_field": "report_id",
+            "exam_type": "Radiology", "exam_type_field": "exam_type",
+            "id_field": "report_id",
             "body_fields": ["exam_detail.findings", "exam_detail.impression"],
             "detail_type": "imaging_report",
             "detail_fields": ["exam_type", "exam_body_part", "exam_item", "exam_detail"],
             "date_field": "exam_date",
         },
-        # 5. 超声：自带 exam_date
+        # 5. 超声：适配层按报告号聚合检查子项（1.56M 子项 → 181k 报告）
         {
             "src_table": "ultrasound_report", "kind": "exam_text",
             "exam_type": "Ultrasound", "id_field": "report_id",
@@ -1700,35 +2459,138 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "detail_fields": ["exam_name", "body_part", "exam_detail"],
             "date_field": "exam_date",
         },
-        # 6. 手术（3/5 空脏数据会被守卫跳过，visit_id 缺失的行静默丢弃）
+        # 6. 心电图：适配层按报告号聚合检查子项（1.74M 子项 → 149k 报告）；
+        #    ECG 为 0015 新增字典值
+        {
+            "src_table": "ecg_report", "kind": "exam_text",
+            "exam_type": "ECG", "id_field": "report_id",
+            "body_fields": ["ecg_diagnosis"],
+            "detail_type": "ecg",
+            "detail_fields": ["sub_items"],
+            "date_field": "exam_date",
+        },
+        # 7. 基因检测：仅 SNV/CNV 两个有效检测单号文件（其余 4 文件 226 行全空单号，
+        #    适配层跳过）；无日期列 → date_lookup_field 反查 visit 入院时间
+        {
+            "src_table": "genetic_report", "kind": "exam_text",
+            "exam_type": "Genetic", "id_field": "report_id",
+            "body_fields": [],
+            "detail_type": "genetic",
+            "detail_fields": ["test_name", "variants"],
+            "date_field": "", "date_lookup_field": "visit_id",
+        },
+        # 8. 手术：适配层合并 手术信息（无就诊编号，(患者,手术日期) join 回填 visit_id）
+        #    + 住院病案首页.手术（自带就诊编号）；守卫要求 patient+visit+名称三非空
         {"src_table": "surgery_record", "kind": "surgery"},
-        # 7. 检验（visit_id 全非空，100% join visit 桥）
-        {"src_table": "lab_result", "kind": "lab", "id_field": "report_id"},
-        # 8-9. 医嘱（drug + non_drug 合并，visit_id 缺失时退化为只挂 patient）
+        # 9-12. 检验：44M 行拆 4 片防单文件内存峰值超限（每片 ~11M）
+        {"src_table": "lab_result_p1", "kind": "lab", "id_field": "report_id"},
+        {"src_table": "lab_result_p2", "kind": "lab", "id_field": "report_id"},
+        {"src_table": "lab_result_p3", "kind": "lab", "id_field": "report_id"},
+        {"src_table": "lab_result_p4", "kind": "lab", "id_field": "report_id"},
+        # 13-16. 医嘱：patient+order_detail 进哈希（吸收跨患者碰撞 + 按就诊展开重复）
         {
             "src_table": "drug_order", "kind": "order",
-            "order_type": "drug", "order_name_field": "drug_generic_name",
+            "order_type": "drug", "order_name_field": "order_name",
+            "order_hash_extra": True,
         },
         {
             "src_table": "no_drug_order", "kind": "order",
             "order_type": "non_drug", "order_name_field": "order_name",
+            "order_hash_extra": True,
+        },
+        # 17. 门诊药物处方：就诊编号 100% 空 → 只挂 patient；处方编号 100% 唯一
+        {
+            "src_table": "outp_order", "kind": "order",
+            "order_type": "drug", "order_name_field": "order_name",
+            "order_hash_extra": True,
+        },
+        # 18. 麻醉用药记录（术中用药 → order detail）
+        {
+            "src_table": "anesthesia_order", "kind": "order",
+            "order_type": "drug", "order_name_field": "order_name",
+            "order_hash_extra": True,
+        },
+        # 19-20. 诊断（两来源，source_label 区分；病案首页上下文落 detail）
+        {
+            "src_table": "diagnosis", "kind": "diagnosis",
+            "source_label": "diagnosis",
+        },
+        {
+            "src_table": "diagnosis_inpatient", "kind": "diagnosis",
+            "source_label": "inpatient_front_page",
+            "detail_fields": ["detail"],
+        },
+        # 21. 病程记录文档：5.16M（2.48M 空内容随全量入库）
+        {"src_table": "clinical_document", "kind": "document"},
+        # 22. 就诊病史：1.4M
+        {"src_table": "medical_history", "kind": "history"},
+        # 23-25. 观察测量（护理/ICU/麻醉子项，obs_type 区分；
+        #       护理报告级就诊编号 100% 非空挂 visit，ICU/麻醉无就诊编号）
+        {
+            "src_table": "nursing_observation", "kind": "observation",
+            "obs_type": "nursing", "detail_fields": ["detail"],
+        },
+        {
+            "src_table": "icu_observation", "kind": "observation",
+            "obs_type": "icu", "detail_fields": ["detail"],
+        },
+        {
+            "src_table": "anesthesia_observation", "kind": "observation",
+            "obs_type": "anesthesia", "detail_fields": ["detail"],
         },
     ],
     "xinqiao": [
+        # 2026-09-04 extracted_tables 批次（ct/pathology/genetics 3 表，无 patient 表，
+        # 患者由 exam 占位路径发号）：staging 与珠江 0825 同构，
+        # 适配脚本 backend/etl2/etl1_adapt_xinqiao_{ct,pathology,genetics}.py
         {"src_table": "patient", "kind": "patient"},
         {
             "src_table": "nodule_imaging",
             "kind": "exam_text",
             "exam_type": "CT",
             "id_field": "exam_id",
-            "body_fields": ["impression", "findings"],
+            # 源 raw_text 为中文标题（检查所见/检查结论），适配层已切分为
+            # findings/impression（珠江 DESCRIPTION/IMPRESSION 正则对 124k 行 0 命中）
+            "body_fields": ["findings", "impression"],
+            "detail_type": "nodule_imaging",
+            "detail_fields": [
+                "nodule_no", "nodule_location", "long_diameter", "density_type",
+                "exam_meta", "nodule_morphology",
+                "raw_text",
+            ],
+            "ordinal_field": "nodule_no",
         },
         {
             "src_table": "pathology_specimen",
             "kind": "exam_text",
             "exam_type": "Pathology",
+            # 源文件无 exam_id：适配层按 (patient_id, exam_date, 送检部位)
+            # 合成确定性 specimen_id（跨行同组 exam 合并，同珠江 0825 病理模式）
             "id_field": "specimen_id",
-            "body_fields": ["pathology_diagnosis", "gross_findings", "microscopic_findings"],
+            "body_fields": ["histology_class"],
+            "detail_type": "pathology",
+            "detail_fields": [
+                # 送检部位（组织病理/冰冻切片）珠江源文件没有，新桥专有列
+                "submit_site", "frozen", "multi_nodules",
+                "specimen_type", "sampling_site",
+                "specimens",
+                "raw_text",
+            ],
+        },
+        {
+            "src_table": "genetic_test",
+            "kind": "exam_text",
+            "exam_type": "Genetic",
+            # 源文件无 exam_id：适配层按 (patient_id, exam_date,
+            # sample_source, test_method) 合成确定性 test_id（四元组行级唯一）
+            "id_field": "test_id",
+            "body_fields": [],
+            "detail_type": "genetic",
+            "detail_fields": [
+                "test_meta", "variant_result",
+                "driver_mutations", "immune_markers",
+            ],
+            "date_field": "test_date",
         },
     ],
     "zhujiang": [
@@ -1756,6 +2618,20 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
                 "raw_text",
             ],
             "ordinal_field": "nodule_no",
+        },
+        # 0901 批次 imaging_report（2026-09-02 重建：原 spec 随引擎文件外部覆盖丢失，
+        # 字段按 09-01 staging 设计复原：适配层将 检查类型名称 关键词归一化进 exam_type，
+        # 正文 findings/impression，raw_text 原文留档，lung_rads 结构化肺结节评估）
+        {
+            "src_table": "imaging_report",
+            "kind": "exam_text",
+            "exam_type": "Radiology",
+            "exam_type_field": "exam_type",
+            "id_field": "exam_id",
+            "body_fields": ["findings", "impression"],
+            "detail_type": "imaging_report",
+            "detail_fields": ["exam_type", "exam_body_part", "exam_item", "lung_rads", "raw_text"],
+            "date_field": "exam_date",
         },
         {
             "src_table": "pathology_specimen",
@@ -1818,6 +2694,39 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "kind": "surgery",
         },
     ],
+    # 301（nested parquet 批次，2026-09-01）：见 .claude/skills/nested-parquet-301-import
+    # 与适配脚本 backend/etl1_adapt_hos301_exam.py；exam_type 由行内 examType 列
+    # 经 med_dict_mapping（0013 种子）归一化（CT/Pathology/Ultrasound/其他→Other）
+    "hos301": [
+        # patient 无 parquet（数据目录缺文件跳过；患者由 visit/exam 占位路径入库）
+        {"src_table": "patient", "kind": "patient"},
+        {
+            "src_table": "visit_record", "kind": "visit_detail",
+            "id_field": "visit_id", "date_field": "admission_time",
+        },
+        {
+            "src_table": "exam", "kind": "exam_text",
+            "exam_type": "Other", "exam_type_field": "examType",
+            "id_field": "exam_id",
+            "body_fields": ["impression", "description", "recommendation"],
+            "detail_type": "exam",
+            "detail_fields": [
+                "examClass", "examPara", "examSubClass", "examItem",
+                "performedBy", "reqDept", "examDateTime", "reqDateTime",
+            ],
+            "date_field": "examDateTime",
+        },
+        {"src_table": "lab_result", "kind": "lab", "id_field": "test_id"},
+
+        {
+            "src_table": "order", "kind": "order",
+            "order_type": "non_drug", "order_name_field": "task_name",
+            # 301 staging 同 (time, name, type) 多达 22 次重复（一次开多条同医嘱），
+            # source_order_hash 默认 4 元组 (center,time,name,type) 会全部合并为 1 行
+            # 丢失数据。Rev 2026-09-02 起追加 patient_id 段，让哈希区分同患者不同行。
+            "order_hash_extra": True,
+        },
+    ],
 }
 
 
@@ -1835,6 +2744,25 @@ async def import_center(
     visit_record：若该中心配置了 kind=visit_detail 的 spec 则正常处理（省医），
     否则显式跳过（珠江，ADR-0006 visit 桥未启用）。
     """
+
+    # 大数据量 commit 加速：当前事务内关闭同步落盘。
+    # SET LOCAL 作用域限定到当前事务，事务结束（commit/rollback）自动复原，
+    # 不会污染同一连接上的查询 API 调用。
+    # 代价：DB crash 时本事务已 ACK 但未刷盘的最后 WAL 段会丢失 → ETL 重跑幂等即可吸收。
+    # 环境变量 LNRS_ETL_FSYNC=1 强制恢复同步落盘（用于对比 commit 耗时或复现 on 行为）。
+    import os
+    fsync_off = os.environ.get("LNRS_ETL_FSYNC", "0") != "1"
+    if fsync_off:
+        try:
+            await db.execute(text("SET LOCAL synchronous_commit = off"))
+            log.info(
+                f"ETL2: {center_code} 事务内 synchronous_commit=off "
+                f"（commit 不等 fsync；崩溃丢失风险由重跑幂等吸收）"
+            )
+        except Exception as e:
+            # PG 版本不支持或权限不足 → 回退到 on（保持原行为，不阻断导入）
+            log.warning(f"ETL2: {center_code} 关闭 synchronous_commit 失败，回退默认: {e}")
+
     if not data_dir.exists():
         raise FileNotFoundError(f"中心数据目录不存在: {data_dir}")
 
@@ -1888,6 +2816,8 @@ async def import_center(
                     parquet_path=parquet_path,
                     src_table=src_table,
                     exam_type=spec["exam_type"],
+                    exam_type_field=spec.get("exam_type_field"),
+                    hospital_id=hospital_id,
                     id_field=spec["id_field"],
                     body_fields=spec["body_fields"],
                     batch_id=batch_id,
@@ -1932,7 +2862,44 @@ async def import_center(
                     src_table=src_table,
                     order_type=spec["order_type"],
                     order_name_field=spec["order_name_field"],
+                    order_hash_extra=spec.get("order_hash_extra", False),
                     batch_id=batch_id,
+                )
+            elif spec["kind"] == "diagnosis":
+                n = await _import_diagnosis_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    source_label=spec["source_label"],
+                    batch_id=batch_id,
+                    detail_fields=spec.get("detail_fields"),
+                )
+            elif spec["kind"] == "document":
+                n = await _import_document_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    batch_id=batch_id,
+                )
+            elif spec["kind"] == "history":
+                n = await _import_history_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    batch_id=batch_id,
+                )
+            elif spec["kind"] == "observation":
+                n = await _import_observation_table(
+                    db,
+                    center_code=center_code,
+                    parquet_path=parquet_path,
+                    src_table=src_table,
+                    obs_type=spec["obs_type"],
+                    batch_id=batch_id,
+                    detail_fields=spec.get("detail_fields"),
                 )
             else:
                 log.error(f"ETL2: 未知 spec.kind={spec['kind']}")

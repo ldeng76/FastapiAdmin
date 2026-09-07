@@ -83,6 +83,16 @@ async def load_all_enum_mappings(db: Any, hospital_id: int | None = None) -> Non
     await load_rh_blood_type_mapping(db, hospital_id)
 
 
+async def load_exam_type_mapping(db: Any, hospital_id: int | None = None) -> dict[str, str]:
+    """预加载 exam_type 映射（hos301/省医 行级 exam_type 归一化，Rev 2026-09-01）。
+
+    与 5 个固定枚举字段不同：exam_type 归一化只被引擎行级动态归一化
+    （_import_exam_text_table exam_type_field）使用，不进 patient 表列，
+    故直接返回映射而不写模块级缓存。
+    """
+    return await _load_enum_mapping(db, "med_exam_type", hospital_id)
+
+
 def _is_empty(raw: Any) -> bool:
     """空值判定：None 或纯空白字符串视为缺失。"""
     return raw is None or not str(raw).strip()

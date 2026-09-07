@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -162,6 +163,11 @@ class AnonPatientModel(MappedBase):
     native_place: Mapped[str | None] = mapped_column(String(100), nullable=True)
     first_nodule_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     bmi: Mapped[float | None] = mapped_column(Numeric(5, 1), nullable=True)
+    # 占位标记：True = 由 exam/visit/surgery 导入路径为保证 FK 自动发号的占位患者
+    # （无人口学，sex 恒为 '0'）；完整 patient 记录 upsert 时翻回 False。
+    is_placeholder: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     # 兜底 JSONB：家族史/既往肿瘤/合并症/发现途径/吸烟包年等终身属性
     patient_meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_batch_id: Mapped[str] = mapped_column(

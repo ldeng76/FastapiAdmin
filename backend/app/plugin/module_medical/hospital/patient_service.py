@@ -39,6 +39,7 @@ class PatientService:
         sex: str | None,
         smoking_status: str | None,
         page: PaginationQueryParam,
+        include_placeholders: bool = False,
         order_by: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """患者分页列表。
@@ -54,6 +55,7 @@ class PatientService:
             keyword=keyword,
             sex=sex,
             smoking_status=smoking_status,
+            include_placeholders=include_placeholders,
             offset=page.offset,
             limit=page.limit,
             order_by=order_by,

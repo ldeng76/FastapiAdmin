@@ -97,6 +97,10 @@ async def list_patients_controller(
         str | None,
         Query(description="吸烟情况（精确匹配 smoking_status）"),
     ] = None,
+    include_placeholders: Annotated[
+        bool,
+        Query(description="包含占位患者（exam/visit/surgery 导入自动发号、无人口学）。默认 false 隐藏"),
+    ] = False,
 ) -> JSONResponse:
     """患者分页列表。
 
@@ -110,6 +114,7 @@ async def list_patients_controller(
         sex=sex,
         smoking_status=smoking_status,
         page=page,
+        include_placeholders=include_placeholders,
         order_by=order_by,
     )
     return SuccessResponse(data=result, msg="获取患者列表成功")

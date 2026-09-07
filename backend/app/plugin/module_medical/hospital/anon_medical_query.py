@@ -113,6 +113,7 @@ MODALITY_LABEL: dict[str, str] = {
 }
 
 # AnonPatientModel 业务列（排除审计列 + center_code/anon_id/bmi/created_batch_id 等）
+# is_placeholder 出参：前端「显示占位患者」开关打开时用于行内标记
 PATIENT_LIST_COLS = [
     AnonPatientModel.patient_id,
     AnonPatientModel.sex,
@@ -123,6 +124,7 @@ PATIENT_LIST_COLS = [
     AnonPatientModel.rh_blood_type,
     AnonPatientModel.smoking_status,
     AnonPatientModel.first_nodule_date,
+    AnonPatientModel.is_placeholder,
 ]
 
 # 详情查询列（含 patient_meta JSONB 兜底）
@@ -161,15 +163,21 @@ async def anon_list_patients(
     keyword: str | None = None,
     sex: str | None = None,
     smoking_status: str | None = None,
+    include_placeholders: bool = False,
     offset: int = 0,
     limit: int = 10,
     order_by: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """患者分页列表（基于 AnonPatientModel）。返回 (行列表, 总数)。
 
+    include_placeholders=False（默认）隐藏占位患者——exam/visit/surgery
+    导入自动发号、无人口学的记录（is_placeholder=TRUE），避免患者列表被
+    「未知的性别」淹没（2026-09-07 根因：占位 137,490 / 231,352 = 59.4%）。
     order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
     """
     conditions = [AnonPatientModel.deleted_at.is_(None)]
+    if not include_placeholders:
+        conditions.append(AnonPatientModel.is_placeholder.is_(False))
     if sex:
         conditions.append(AnonPatientModel.sex == sex)
     if smoking_status:

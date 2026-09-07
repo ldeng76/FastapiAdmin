@@ -55,7 +55,7 @@
 
 <script setup lang="ts">
 import { computed, h, ref } from "vue";
-import { ElButton } from "element-plus";
+import { ElButton, ElTag } from "element-plus";
 import type { SearchFormItem } from "@/components/forms/fa-search-bar/index.vue";
 import type { ColumnOption } from "@/types/component";
 import { useTable } from "@/hooks/core/useTable";
@@ -73,7 +73,18 @@ const showDetailData = ref({
   center: ""
 });
 
-const searchForm = ref<any>({});
+// 搜索表单
+interface PatientSearchForm {
+  center: string;
+  keyword: string;
+  include_placeholders?: boolean;
+}
+const searchForm = ref<PatientSearchForm>({
+  center: "",
+  keyword: "",
+  // 默认隐藏占位患者（无人口学，仅检查/就诊/手术导入自动发号）
+  include_placeholders: false,
+});
 const showSearchBar = ref(true);
 
 const patientSearchItems = computed<SearchFormItem[]>(() => [
@@ -107,6 +118,17 @@ const patientSearchItems = computed<SearchFormItem[]>(() => [
         return {value:n.dict_value,label:n.dict_label}
       }),
       clearable: true,
+    },
+    span: 4,
+  },
+  {
+    key: "include_placeholders",
+    label: "占位患者",
+    type: "switch",
+    props: {
+      inlinePrompt: true,
+      activeText: "显示",
+      inactiveText: "隐藏",
     },
     span: 4,
   },
@@ -148,9 +170,21 @@ const {
       { type: "globalIndex", width: 60, label: "序号" },
       {
         prop: "patient_id",
-        label:getFieldLabel("patient_id"),
-        minWidth: 140,
-        sortable :'custom',
+        label: getFieldLabel("patient_id"),
+        minWidth: 170,
+        sortable: "custom",
+        showOverflowTooltip: true,
+        formatter: (row) =>
+          row.is_placeholder
+            ? h("span", [
+                h("span", row.patient_id),
+                h(
+                  ElTag,
+                  { size: "small", type: "info", style: "margin-left: 6px" },
+                  () => "占位",
+                ),
+              ])
+            : row.patient_id,
       },
       {
         prop: "sex",

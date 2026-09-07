@@ -471,6 +471,9 @@ async def _batch_upsert_patients(
                 "center_code": center_code,
                 "birth_date": r["birth_date"],
                 "sex": r["sex"],
+                # 占位语义随记录类型落库：占位路径 True；完整档案 False，
+                # 且冲突时翻回 False（见下方非占位 DO UPDATE 的 set_）。
+                "is_placeholder": is_placeholder,
                 "ethnicity": r.get("ethnicity"),
                 "smoking_status": r.get("smoking_status"),
                 "abo_blood_type": r.get("abo_blood_type"),
@@ -510,6 +513,8 @@ async def _batch_upsert_patients(
                 set_={
                     "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
                     "sex": stmt.excluded.sex,
+                    # 档案到达：占位翻转为真实（已为 False 时无副作用）
+                    "is_placeholder": False,
                     "birth_date": stmt.excluded.birth_date,
                     "ethnicity": stmt.excluded.ethnicity,
                     "smoking_status": stmt.excluded.smoking_status,

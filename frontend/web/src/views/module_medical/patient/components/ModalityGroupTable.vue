@@ -105,6 +105,11 @@
     <template v-else-if="getIsImage()">
       <ElTableColumn prop="exam_date" :label="getFieldLabel('exam_date')" width="120" />
       <ElTableColumn prop="nodule_no" :label="getFieldLabel('nodule_no')" width="120" />
+      <ElTableColumn prop="lung_rads" :label="getFieldLabel('lung_rads')" width="110">
+        <template #default="{ row }">
+          <span>{{ row.lung_rads || '-' }}</span>
+        </template>
+      </ElTableColumn>
       <ElTableColumn prop="report_text.body_clean" :label="getFieldLabel('body_clean')">
         <template #default="{ row }" >
           <div class="marked-content" v-html="marked(row?.report_text?.body_clean)"></div>

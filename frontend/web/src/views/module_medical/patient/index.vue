@@ -178,6 +178,17 @@ const {
         formatter: (row) => fmtDate(row.first_nodule_date),
       },
       {
+        prop: "latest_lung_rads",
+        label: `${getFieldLabel("lung_rads")}（最新）`,
+        minWidth: 130,
+        formatter: (row) => {
+          if (!row.latest_lung_rads) return "-"
+          return row.latest_lung_rads_date
+            ? `${row.latest_lung_rads} (${fmtDate(row.latest_lung_rads_date)})`
+            : row.latest_lung_rads
+        },
+      },
+      {
         prop: "operation",
         label: "操作",
         width: 120,

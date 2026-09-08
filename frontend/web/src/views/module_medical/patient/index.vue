@@ -181,13 +181,7 @@ const {
         prop: "latest_lung_rads",
         label: `${getFieldLabel("lung_rads")}`,
         minWidth: 130,
-        sortable :'custom',
-        formatter: (row) => {
-          if (!row.latest_lung_rads) return "-"
-          return row.latest_lung_rads_date
-            ? `${row.latest_lung_rads} (${fmtDate(row.latest_lung_rads_date)})`
-            : row.latest_lung_rads
-        },
+        sortable :'custom'
       },
       {
         prop: "operation",

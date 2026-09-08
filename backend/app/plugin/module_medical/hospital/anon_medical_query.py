@@ -177,7 +177,7 @@ async def anon_list_patients(
 
     order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
     """
-    conditions = build_patient_filters(filters)
+    conditions = build_patient_filters(filters or StatsFiltersIn())
 
     # 总数
     count_stmt = (
@@ -185,16 +185,49 @@ async def anon_list_patients(
     )
     total = (await db.execute(count_stmt)).scalar_one()
 
-    # 分页
+    # 最新一次 lung_rads 子查询（LEFT JOIN LATERAL，2026-09 新增）
+    # 语义：取该 patient 最新一次有 lung_rads 值的 detail 行
+    latest_lr = (
+        select(
+            AnonExamDetailModel.detail_json["lung_rads"].astext.label("lung_rads"),
+        )
+        .join(AnonExamModel, AnonExamModel.anon_exam_id == AnonExamDetailModel.anon_exam_id)
+        .where(
+            AnonExamModel.patient_id == AnonPatientModel.patient_id,
+            AnonExamDetailModel.detail_json.has_key("lung_rads"),
+        )
+        .order_by(AnonExamModel.exam_date.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    latest_lr_date = (
+        select(AnonExamModel.exam_date)
+        .join(AnonExamDetailModel, AnonExamDetailModel.anon_exam_id == AnonExamModel.anon_exam_id)
+        .where(
+            AnonExamModel.patient_id == AnonPatientModel.patient_id,
+            AnonExamDetailModel.detail_json.has_key("lung_rads"),
+        )
+        .order_by(AnonExamModel.exam_date.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    # 分页（PATIENT_LIST_COLS + lung_rads 聚合列）
     list_stmt = (
-        select(*PATIENT_LIST_COLS)
+        select(*PATIENT_LIST_COLS, latest_lr.label("latest_lung_rads"), latest_lr_date.label("latest_lung_rads_date"))
         .where(*conditions)
         .order_by(*_resolve_order_by(AnonPatientModel, order_by))
         .limit(limit)
         .offset(offset)
     )
     rows = (await db.execute(list_stmt)).all()
-    items = [_row_to_dict(row, PATIENT_LIST_COLS) for row in rows]
+    items = []
+    for row in rows:
+        d = _row_to_dict(row, PATIENT_LIST_COLS)
+        lr_date = row.latest_lung_rads_date
+        d["latest_lung_rads"] = row.latest_lung_rads
+        d["latest_lung_rads_date"] = lr_date.isoformat() if hasattr(lr_date, "isoformat") else lr_date
+        items.append(d)
     return items, total
 
 
@@ -242,6 +275,35 @@ async def anon_get_patient_detail(
     patient = _flatten_jsonb(
         _row_to_dict(p_row, PATIENT_DETAIL_COLS), "patient_meta"
     )
+
+    # 1b) 最近一次 lung_rads（2026-09 新增；策略 ② = MAX(exam_date) 那条）
+    #     数据源：lnrs_anon_exam JOIN lnrs_anon_exam_detail
+    #     语义：取该 patient 最新一次有 lung_rads 值的 detail 行
+    latest_lr_stmt = (
+        select(
+            AnonExamModel.exam_date,
+            AnonExamDetailModel.detail_json["lung_rads"].astext.label("lung_rads"),
+        )
+        .join(
+            AnonExamDetailModel,
+            AnonExamDetailModel.anon_exam_id == AnonExamModel.anon_exam_id,
+        )
+        .where(
+            AnonExamModel.patient_id == patient_id,
+            AnonExamDetailModel.detail_json.has_key("lung_rads"),
+        )
+        .order_by(AnonExamModel.exam_date.desc())
+        .limit(1)
+    )
+    lr_row = (await db.execute(latest_lr_stmt)).first()
+    if lr_row:
+        patient["latest_lung_rads"] = lr_row.lung_rads
+        patient["latest_lung_rads_date"] = (
+            lr_row.exam_date.isoformat() if hasattr(lr_row.exam_date, "isoformat") else lr_row.exam_date
+        )
+    else:
+        patient["latest_lung_rads"] = None
+        patient["latest_lung_rads_date"] = None
 
     modalities: dict[str, list[dict[str, Any]]] = {m: [] for m in MODALITIES}
 

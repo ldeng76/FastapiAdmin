@@ -139,7 +139,8 @@ def build_patient_filters(
         conditions.append(
             AnonPatientModel.patient_id.ilike(f"%{filters.patient_id}%")
         )
-    if not filters.is_placeholders:
+    # 按患者编号搜索时允许定位占位患者；无编号时仍保持列表默认隐藏占位患者。
+    if not filters.is_placeholders and not filters.patient_id:
         conditions.append(AnonPatientModel.is_placeholder.is_(False))
     return conditions
 

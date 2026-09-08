@@ -188,12 +188,24 @@ class TestListPlaceholderFilter:
     def test_hidden_by_default_and_total_diff(self):
         asyncio.run(self._body())
 
+    def test_patient_id_search_includes_placeholder_records(self):
+        from app.plugin.module_medical.hospital.stats_query import build_patient_filters
+        from app.plugin.module_medical.hospital.stats_schema import StatsFiltersIn
+
+        conditions = build_patient_filters(StatsFiltersIn(patient_id="PT_00039060"))
+
+        assert len(conditions) == 2, (
+            "按患者编号搜索时不应额外排除占位患者；"
+            "否则占位患者无法通过唯一编号被定位"
+        )
+
     @staticmethod
     async def _body():
         from sqlalchemy import text
 
         from app.core.database import async_db_session, async_engine
         from app.plugin.module_medical.hospital.anon_medical_query import anon_list_patients
+        from app.plugin.module_medical.hospital.stats_schema import StatsFiltersIn
 
         try:
             async with async_db_session() as session:
@@ -206,18 +218,21 @@ class TestListPlaceholderFilter:
                     )
                 ).fetchone()[0]
 
-                _, total_all = await anon_list_patients(session, include_placeholders=True, limit=1)
-                _, total_hide = await anon_list_patients(session, include_placeholders=False, limit=1)
+                _, total_all = await anon_list_patients(
+                    session, filters=StatsFiltersIn(is_placeholders=True), limit=1
+                )
+                _, total_hide = await anon_list_patients(
+                    session, filters=StatsFiltersIn(is_placeholders=False), limit=1
+                )
                 assert total_all - total_hide == ph_count, (
                     f"两模式总数差必须等于占位数: {total_all} - {total_hide} != {ph_count}"
                 )
 
-                # 默认（不传 include_placeholders）等价于隐藏模式
                 _, total_default = await anon_list_patients(session, limit=1)
                 assert total_default == total_hide, "默认必须隐藏占位患者"
 
                 items_hide, _ = await anon_list_patients(
-                    session, include_placeholders=False, limit=100
+                    session, filters=StatsFiltersIn(is_placeholders=False), limit=100
                 )
                 assert items_hide, "dev 库应有非占位患者"
                 assert all(it["is_placeholder"] is False for it in items_hide), (
@@ -225,9 +240,17 @@ class TestListPlaceholderFilter:
                 )
 
                 items_all, _ = await anon_list_patients(
-                    session, include_placeholders=True, limit=100
+                    session, filters=StatsFiltersIn(is_placeholders=True), limit=100
                 )
                 assert all("is_placeholder" in it for it in items_all), "出参必须含 is_placeholder 字段"
+                items_by_id, total_by_id = await anon_list_patients(
+                    session,
+                    filters=StatsFiltersIn(patient_id="PT_00039060"),
+                    limit=10,
+                )
+                assert total_by_id == 1, "目标患者编号应返回唯一记录"
+                assert items_by_id[0]["patient_id"] == "PT_00039060"
+                assert items_by_id[0]["is_placeholder"] is True
                 await session.rollback()
         finally:
             await async_engine.dispose()

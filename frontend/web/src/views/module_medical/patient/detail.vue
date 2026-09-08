@@ -12,7 +12,7 @@
       <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
       <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
       <!-- 最新 Lung-RADS（2026-09 新增）：取最新一次含 lung_rads 的 detail -->
-      <ElDescriptionsItem :label="`${getFieldLabel('lung_rads')}（最新）`">
+      <ElDescriptionsItem :label="`${getFieldLabel('lung_rads')}`">
         <span>{{ patient?.latest_lung_rads || "-" }}</span>
         <span v-if="patient?.latest_lung_rads_date" style="color: var(--el-text-color-secondary); margin-left: 6px;">
           ({{ fmtDate(patient.latest_lung_rads_date) }})
@@ -121,6 +121,7 @@ const FIXED_BASIC_KEYS = new Set([
   "smoking_status",
   "first_nodule_date",
   "raw_text",
+  "is_placeholder"
 ]);
 const PRIORITY_EXT_KEYS = ["demographics", "medical_history"];
 function isEmpty(v: unknown): boolean {

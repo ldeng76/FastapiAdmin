@@ -48,12 +48,49 @@ from .stats_schema import StatsFiltersIn
 log = logging.getLogger(__name__)
 
 
+# ── 模块级共享子查询 ──────────────────────────────────
+# 最新一次 lung_rads（correlated scalar subquery，绑定到外层 AnonPatientModel.patient_id）。
+# 语义：取该 patient 最新一次有 lung_rads 值的 detail 行。
+# 提取为模块级是为了让排序/筛选/出参三处共享同一份 SQLAlchemy 表达式。
+_LATEST_LUNG_RADS = (
+    select(
+        AnonExamDetailModel.detail_json["lung_rads"].astext.label("lung_rads"),
+    )
+    .join(AnonExamModel, AnonExamModel.anon_exam_id == AnonExamDetailModel.anon_exam_id)
+    .where(
+        AnonExamModel.patient_id == AnonPatientModel.patient_id,
+        AnonExamDetailModel.detail_json.has_key("lung_rads"),
+    )
+    .order_by(AnonExamModel.exam_date.desc())
+    .limit(1)
+    .scalar_subquery()
+)
+_LATEST_LUNG_RADS_DATE = (
+    select(AnonExamModel.exam_date)
+    .join(AnonExamDetailModel, AnonExamDetailModel.anon_exam_id == AnonExamModel.anon_exam_id)
+    .where(
+        AnonExamModel.patient_id == AnonPatientModel.patient_id,
+        AnonExamDetailModel.detail_json.has_key("lung_rads"),
+    )
+    .order_by(AnonExamModel.exam_date.desc())
+    .limit(1)
+    .scalar_subquery()
+)
+
+# 非 ORM 列的排序字段白名单：key=查询参数字段名，value=对应的 SQLAlchemy 排序列
+EXTRA_ORDER_COLS: dict[str, ColumnElement] = {
+    "latest_lung_rads": _LATEST_LUNG_RADS,
+}
+
+
 def _resolve_order_by(model, order_by: list[dict[str, str]] | None) -> list[ColumnElement]:
     """把 list[dict[str, str]] 转成 SQLAlchemy 排序表达式。
 
     None 或空时使用模型默认排序 (center_code asc, patient_id asc)，
     与改造前的硬编码行为一致；非法字段已被 controller 层过滤，
     此处不做白名单二次拦截，字段不存在会抛 AttributeError。
+
+    latest_lung_rads 等非 ORM 列走 EXTRA_ORDER_COLS 映射到 scalar subquery。
     """
     if not order_by:
         return [model.center_code, model.patient_id]
@@ -62,7 +99,10 @@ def _resolve_order_by(model, order_by: list[dict[str, str]] | None) -> list[Colu
         if not isinstance(item, dict):
             continue
         for field, direction in item.items():
-            col = getattr(model, field)
+            if field in EXTRA_ORDER_COLS:
+                col = EXTRA_ORDER_COLS[field]
+            else:
+                col = getattr(model, field)
             cols.append(desc(col) if str(direction).lower() == "desc" else asc(col))
     return cols or [model.center_code, model.patient_id]
 
@@ -175,9 +215,17 @@ async def anon_list_patients(
     与仪表板统计概览共用同一套逻辑（sex/modality/age_bucket/
     abo/rh/smoking/bmi_bucket/patient_id/is_placeholders），新增筛选项只需改那一处。
 
-    order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序。
+    此外 latest_lung_rads 走本函数内追加（按患者最新一次 lung_rads 等级精确匹配）。
+
+    order_by 形如 [{"field": "asc"}]；不传则按 (center_code, patient_id) 升序；
+    latest_lung_rads 走模块级 _LATEST_LUNG_RADS 共享子查询。
     """
     conditions = build_patient_filters(filters or StatsFiltersIn())
+
+    # 最新 lung_rads 等级精确匹配（NULL 患者自然不匹配任何非空等级）
+    f = filters or StatsFiltersIn()
+    if f.latest_lung_rads:
+        conditions.append(_LATEST_LUNG_RADS == f.latest_lung_rads)
 
     # 总数
     count_stmt = (
@@ -185,36 +233,13 @@ async def anon_list_patients(
     )
     total = (await db.execute(count_stmt)).scalar_one()
 
-    # 最新一次 lung_rads 子查询（LEFT JOIN LATERAL，2026-09 新增）
-    # 语义：取该 patient 最新一次有 lung_rads 值的 detail 行
-    latest_lr = (
-        select(
-            AnonExamDetailModel.detail_json["lung_rads"].astext.label("lung_rads"),
-        )
-        .join(AnonExamModel, AnonExamModel.anon_exam_id == AnonExamDetailModel.anon_exam_id)
-        .where(
-            AnonExamModel.patient_id == AnonPatientModel.patient_id,
-            AnonExamDetailModel.detail_json.has_key("lung_rads"),
-        )
-        .order_by(AnonExamModel.exam_date.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-    latest_lr_date = (
-        select(AnonExamModel.exam_date)
-        .join(AnonExamDetailModel, AnonExamDetailModel.anon_exam_id == AnonExamModel.anon_exam_id)
-        .where(
-            AnonExamModel.patient_id == AnonPatientModel.patient_id,
-            AnonExamDetailModel.detail_json.has_key("lung_rads"),
-        )
-        .order_by(AnonExamModel.exam_date.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-
-    # 分页（PATIENT_LIST_COLS + lung_rads 聚合列）
+    # 分页（PATIENT_LIST_COLS + lung_rads 聚合列；子查询表达式复用模块级 _LATEST_LUNG_RADS）
     list_stmt = (
-        select(*PATIENT_LIST_COLS, latest_lr.label("latest_lung_rads"), latest_lr_date.label("latest_lung_rads_date"))
+        select(
+            *PATIENT_LIST_COLS,
+            _LATEST_LUNG_RADS.label("latest_lung_rads"),
+            _LATEST_LUNG_RADS_DATE.label("latest_lung_rads_date"),
+        )
         .where(*conditions)
         .order_by(*_resolve_order_by(AnonPatientModel, order_by))
         .limit(limit)

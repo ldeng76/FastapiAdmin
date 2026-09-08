@@ -57,6 +57,8 @@ export interface PatientTable {
   ethnicity?: string;
   native_place?: string;
   abo_blood_type?: string;
+  rh_blood_type?: string;
+  smoking_status?: string;
   first_nodule_date?: string;
   /** 占位患者（无人口学，仅检查/就诊/手术导入自动发号） */
   is_placeholder?: boolean;

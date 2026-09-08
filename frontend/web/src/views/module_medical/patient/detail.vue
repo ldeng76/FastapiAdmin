@@ -12,12 +12,7 @@
       <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
       <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
       <!-- 最新 Lung-RADS（2026-09 新增）：取最新一次含 lung_rads 的 detail -->
-      <ElDescriptionsItem :label="`${getFieldLabel('lung_rads')}`">
-        <span>{{ patient?.latest_lung_rads || "-" }}</span>
-        <span v-if="patient?.latest_lung_rads_date" style="color: var(--el-text-color-secondary); margin-left: 6px;">
-          ({{ fmtDate(patient.latest_lung_rads_date) }})
-        </span>
-      </ElDescriptionsItem>
+      <ElDescriptionsItem :label="`${getFieldLabel('lung_rads')}(最新)`">{{ patient?.latest_lung_rads || "-" }}</ElDescriptionsItem>
       <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
       <ElDescriptionsItem v-for="n in getExtRow(patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
     </ElDescriptions>

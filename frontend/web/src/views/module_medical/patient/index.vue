@@ -179,8 +179,8 @@ const {
       },
       {
         prop: "latest_lung_rads",
-        label: `${getFieldLabel("lung_rads")}`,
-        minWidth: 130,
+        label: `${getFieldLabel("lung_rads")}(最新)`,
+        minWidth: 140,
         sortable :'custom'
       },
       {
@@ -262,7 +262,7 @@ onBeforeMount(async ()=>{
     {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 4 },
     {key: "smoking_status",label: getFieldLabel("smoking_status"),  type: "select", placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_smoking_status'), clearable: true,span: 4},
     {key: "bmi_bucket",label: getFieldLabel("bmi"),  type: "select", placeholder: "请选择", options: bmiBuckets, clearable: true,span: 4},
-    {key: "latest_lung_rads",label: getFieldLabel("lung_rads"), labelWidth:120,  type: "select", placeholder: "请选择",
+    {key: "latest_lung_rads",label: getFieldLabel("lung_rads")+"(最新)", labelWidth:150,  type: "select", placeholder: "请选择",
       options:[
         {label:'1',value:"1"},
         {label:'2',value:"2"},

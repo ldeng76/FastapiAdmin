@@ -20,9 +20,6 @@
           <!-- 是否缓存以后端菜单 keep_alive → meta.keepAlive 为准；此处 !== false 即包 KeepAlive（与 MenuProcessor 一致） -->
           <KeepAlive
             v-if="wrapPageWithKeepAlive"
-            :max="10"
-            :include="keepAliveInclude"
-            :exclude="keepAliveExclude"
           >
             <component
               class="fa-page-view min-h-0 min-w-0 w-full flex-1"
@@ -62,7 +59,7 @@
 import type { CSSProperties } from "vue";
 import { useMediaQuery } from "@vueuse/core";
 import { useRoute, type RouteLocationNormalizedLoaded } from "vue-router";
-import { useSettingsStore, useWorktabStore } from "@stores";
+import { useSettingsStore } from "@stores";
 
 defineOptions({ name: "FaPageContent" });
 
@@ -90,19 +87,7 @@ const isNarrowViewport = useMediaQuery("(max-width: 800px)");
 const backtopScrollTarget = computed(() => (isNarrowViewport.value ? "" : "#app-content"));
 const backtopTargetKey = computed(() => (isNarrowViewport.value ? "win" : "main"));
 
-const { pageTransition, containerWidth, refresh, showWorkTab } = storeToRefs(useSettingsStore());
-const { keepAliveExclude, opened } = storeToRefs(useWorktabStore());
-
-/** 多标签开启时：仅已打开且允许缓存的标签组件名进入 include；关闭多标签时不传 include，避免 opened 过窄误伤缓存。 */
-const keepAliveInclude = computed(() => {
-  if (!showWorkTab.value) return undefined;
-  const names = new Set<string>();
-  for (const t of opened.value) {
-    if (t.name && t.keepAlive !== false) names.add(String(t.name));
-  }
-  return names.size ? Array.from(names) : undefined;
-});
-
+const { pageTransition, containerWidth, refresh } = storeToRefs(useSettingsStore());
 const isRefresh = shallowRef(true);
 const isOpenRouteInfo = import.meta.env.VITE_OPEN_ROUTE_INFO;
 

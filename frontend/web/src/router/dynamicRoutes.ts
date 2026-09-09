@@ -281,8 +281,6 @@ export class RouteTransformer {
 
     if (route.meta.isIframe) {
       this.handleIframeRoute(converted, route, depth);
-    } else if (this.isFirstLevelLeaf(route, depth)) {
-      this.handleFirstLevelLeaf(converted, route, component as string);
     } else {
       this.handleNormalRoute(converted, component as string, depth);
     }
@@ -313,9 +311,6 @@ export class RouteTransformer {
     return absPath.split("/").filter(Boolean).pop() ?? absPath;
   }
 
-  private isFirstLevelLeaf(route: AppRouteRecord, depth: number): boolean {
-    return depth === 0 && (!route.children || route.children.length === 0);
-  }
 
   private handleIframeRoute(
     targetRoute: ConvertedRoute,
@@ -339,26 +334,6 @@ export class RouteTransformer {
       targetRoute.component = this.componentLoader.loadIframe();
     }
     this.iframeManager.add(sourceRoute);
-  }
-
-  private handleFirstLevelLeaf(
-    converted: ConvertedRoute,
-    route: AppRouteRecord,
-    component: string | undefined
-  ): void {
-    converted.component = this.shellChild
-      ? this.componentLoader.loadNestedParent()
-      : this.componentLoader.loadLayout();
-    converted.name = "";
-    route.meta.isFirstLevel = true;
-    const leafPath = this.shellChild ? "" : route.path || "";
-    converted.children = [
-      {
-        ...route,
-        path: leafPath,
-        component: component ? this.componentLoader.load(component) : undefined,
-      } as ConvertedRoute,
-    ];
   }
 
   private handleNormalRoute(

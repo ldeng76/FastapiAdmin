@@ -11,6 +11,8 @@
       <ElDescriptionsItem :label="getFieldLabel('rh_blood_type')">{{ dictStore.getDictItemLabel('med_blood_type_rh',patient?.rh_blood_type) }}</ElDescriptionsItem>
       <ElDescriptionsItem :label="getFieldLabel('smoking_status')">{{ dictStore.getDictItemLabel('med_smoking_status',patient?.smoking_status) }}</ElDescriptionsItem>
       <ElDescriptionsItem :label="getFieldLabel('first_nodule_date')">{{ fmtDate(patient?.first_nodule_date) }}</ElDescriptionsItem>
+      <!-- 最新 Lung-RADS（2026-09 新增）：取最新一次含 lung_rads 的 detail -->
+      <ElDescriptionsItem :label="`${getFieldLabel('lung_rads')}(最新)`">{{ patient?.latest_lung_rads || "-" }}</ElDescriptionsItem>
       <!-- 人口学/病史等 JSON 扩展（按来源中心不同） -->
       <ElDescriptionsItem v-for="n in getExtRow(patient)" :key="n.key" :label="getFieldLabel(n.key)">{{ n.value }}</ElDescriptionsItem>
     </ElDescriptions>
@@ -114,6 +116,7 @@ const FIXED_BASIC_KEYS = new Set([
   "smoking_status",
   "first_nodule_date",
   "raw_text",
+  "is_placeholder"
 ]);
 const PRIORITY_EXT_KEYS = ["demographics", "medical_history"];
 function isEmpty(v: unknown): boolean {
@@ -151,7 +154,7 @@ onMounted(fetchDetail);
 .medical-detail {
   height: 100%;
 }
-.patient-detail-tab-324{
+.patient-detail-tab{
   height: calc(100% - 150px);
 }
 hr{

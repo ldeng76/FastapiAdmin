@@ -62,7 +62,11 @@ export interface PatientTable {
   first_nodule_date?: string;
   /** 占位患者（无人口学，仅检查/就诊/手术导入自动发号） */
   is_placeholder?: boolean;
-}
+  /** 最新一次 Lung-RADS（2026-09 新增）；聚合策略 = MAX(exam_date) */
+  latest_lung_rads?: string | null;
+  /** 最新 Lung-RADS 对应的 exam_date（ISO YYYY-MM-DD） */
+  latest_lung_rads_date?: string | null;
+ }
 
 /** 多模态详情中任一模态的一行（字段因表而异，JSONB 已顶层展开）
  *

@@ -77,7 +77,7 @@
 
 <script setup lang="ts">
 
-import { ref , onMounted ,onBeforeMount,onActivated} from "vue";
+import { ref , onMounted ,onBeforeMount} from "vue";
 import {useDictStore} from "@stores";
 import Total from "./components/Total.vue";
 import StatisticsAPI from "@api/module_medical/statistics.ts";
@@ -224,14 +224,10 @@ onBeforeMount(async function (){
     { key: "smoking_status", label: getFieldLabel("smoking_status"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_smoking_status, placeholder: "请选择", span: 4 },
   ];
 })
-console.log("4564356")
+
 onMounted(async function () {
-  console.log('onMounted')
   await searchCall();
 });
-onActivated(async function (){
-    console.log('onActivated')
-})
 </script>
 <style>
 .patientDetailBody{

@@ -70,12 +70,16 @@ const showDetailData = ref({
   detail: '',
   center: ""
 });
-let query:any = route.query;
-query.is_placeholders = query.is_placeholders === 'true';
+let query:any = getNewQuery(route.query);
 
 const searchForm = ref<any>(query);
 const showSearchBar = ref(true);
 const patientSearchItems = ref<SearchFormItem[]>([])
+
+function getNewQuery(query:any){
+  query.is_placeholders = query.is_placeholders === 'true';
+  return query
+}
 
 // 跳转多模态详情（独立隐藏路由，patient_id/center 走 query 参数）
 function goDetail(row: PatientTable) {
@@ -275,6 +279,13 @@ onBeforeMount(async ()=>{
       span: 4
     }
   ]
+})
+onActivated(function (){
+  let newQuery = getNewQuery(route.query)
+  if(JSON.stringify(searchForm.value) !== JSON.stringify(newQuery)){
+    searchForm.value = newQuery
+    handleSearchBarSearch()
+  }
 })
 </script>
 <style>

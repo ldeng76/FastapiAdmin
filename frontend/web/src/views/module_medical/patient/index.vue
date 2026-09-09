@@ -119,7 +119,7 @@ const {
       {
         prop: "patient_id",
         label: getFieldLabel("patient_id"),
-        minWidth: 170,
+        minWidth: 250,
         sortable: "custom",
         showOverflowTooltip: true,
         formatter: (row) =>
@@ -137,28 +137,28 @@ const {
       {
         prop: "sex",
         label: getFieldLabel("sex"),
-        minWidth: 80,
+        minWidth: 120,
         sortable :'custom',
         formatter: (row) => dictStore.getDictItemLabel("med_sex",row.sex),
       },
       {
         prop: "birth_date",
         label: "年龄（出生日期）",
-        minWidth: 150,
+        minWidth: 160,
         sortable :'custom',
         formatter: (row) => fmtAgeBirthday(row.birth_date),
       },
       {
         prop: "abo_blood_type",
         label: getFieldLabel("abo_blood_type"),
-        minWidth: 80,
+        minWidth: 120,
         sortable :'custom',
         formatter: (row) => dictStore.getDictItemLabel("med_blood_type_abo",row.abo_blood_type),
       },
       {
         prop: "med_blood_type_rh",
         label: getFieldLabel("rh_blood_type"),
-        minWidth: 80,
+        minWidth: 110,
         sortable :'custom',
         formatter: (row) => dictStore.getDictItemLabel("med_blood_type_rh",row.rh_blood_type),
       },
@@ -172,6 +172,7 @@ const {
       {
         prop: "bmi",
         label: getFieldLabel("bmi"),
+        minWidth: 80,
         sortable :'custom'
       },
       {
@@ -184,7 +185,7 @@ const {
       {
         prop: "latest_lung_rads",
         label: `${getFieldLabel("lung_rads")}(最新)`,
-        minWidth: 140,
+        minWidth: 170,
         sortable :'custom'
       },
       {
@@ -248,24 +249,24 @@ onBeforeMount(async ()=>{
   const bmiBuckets = await StatisticsAPI.getBmiBuckets()
   await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
   patientSearchItems.value = [
-    {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 4},
+    {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 5},
     {
       key: "is_placeholders",
       label: "显示没有影像数据的患者",
       type: "switch",
-      labelWidth:180,
+      labelWidth:170,
       props:{
         inlinePrompt: true,
         activeText: "显示",
         inactiveText: "隐藏",
       },
-      span: 4
+      span: 5
     },
-    {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 4},
-    {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
-    {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 4 },
-    {key: "smoking_status",label: getFieldLabel("smoking_status"),  type: "select", placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_smoking_status'), clearable: true,span: 4},
-    {key: "bmi_bucket",label: getFieldLabel("bmi"),  type: "select", placeholder: "请选择", options: bmiBuckets, clearable: true,span: 4},
+    {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 5},
+    {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 5 },
+    {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:80, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 5 },
+    {key: "smoking_status",label: getFieldLabel("smoking_status"),  type: "select", placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_smoking_status'), clearable: true,span: 5},
+    {key: "bmi_bucket",label: getFieldLabel("bmi"),  type: "select", placeholder: "请选择", options: bmiBuckets, clearable: true,span: 5},
     {key: "latest_lung_rads",label: getFieldLabel("lung_rads")+"(最新)", labelWidth:150,  type: "select", placeholder: "请选择",
       options:[
         {label:'1',value:"1"},
@@ -276,7 +277,7 @@ onBeforeMount(async ()=>{
         {label:'4X',value:"4X"}
       ],
       clearable: true,
-      span: 4
+      span: 5
     }
   ]
 })

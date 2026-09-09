@@ -10,12 +10,19 @@ export interface FilesTable {
   file_size?: number;
   id?:number
 }
-
+export interface StatisticsCountType{
+  count:number,
+  label:string,
+  value:string,
+  percentage:number
+}
 export interface StatisticsCount {
   file_count?:number,
   patient_count?:number,
   total_size_bytes?:number,
-  total_size_text?:string
+  total_size_text?:string,
+  by_exam_type?:StatisticsCountType[],
+  by_file_type?:StatisticsCountType[]
 }
 
 const FilesApi = {

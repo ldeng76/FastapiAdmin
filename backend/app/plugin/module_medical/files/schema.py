@@ -62,6 +62,15 @@ class MedFilesDictOutSchema(BaseModel):
     )
 
 
+class GroupStatItem(BaseModel):
+    """分组统计单项。"""
+
+    value: str = Field(description="分组原始值")
+    label: str = Field(description="展示名（模态取字典翻译，文件类型同 value）")
+    count: int = Field(description="该组文件数")
+    percentage: float = Field(description="占比（0-100，保留两位小数）")
+
+
 class MedFilesStatisticsOutSchema(BaseModel):
     """医疗文件统计响应。"""
 
@@ -69,6 +78,12 @@ class MedFilesStatisticsOutSchema(BaseModel):
     patient_count: int = Field(description="去重后的患者个数")
     total_size_bytes: int = Field(description="所有文件总大小（字节）")
     total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")
+    by_exam_type: list[GroupStatItem] = Field(
+        default_factory=list, description="各模态文件数及占比"
+    )
+    by_file_type: list[GroupStatItem] = Field(
+        default_factory=list, description="各文件类型文件数及占比"
+    )
 
 
 class FileExistenceOutSchema(BaseModel):

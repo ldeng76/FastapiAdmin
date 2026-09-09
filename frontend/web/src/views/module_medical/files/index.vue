@@ -5,12 +5,18 @@
          <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
           <el-collapse-item title="模态类型" name="examType">
             <el-checkbox-group v-model="selectedExamType">
-              <el-checkbox class="checkbox-block" v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />
+              <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value">
+                <el-checkbox :label="item.dict_label" :value="item.dict_value" />
+                <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_exam_type') }}</div>
+              </div>
             </el-checkbox-group>
           </el-collapse-item>
           <el-collapse-item title="文件类型" name="fileType">
             <el-checkbox-group v-model="selectedFileType">
-              <el-checkbox class="checkbox-block" v-for="item in fileTypeDict" :key="item.dict_value" :label="item.dict_label" :value="item.dict_value" border />
+              <div class="flex justify-between"  v-for="item in fileTypeDict" :key="item.dict_value">
+                <el-checkbox :label="item.dict_label" :value="item.dict_value" />
+                <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_file_type') }}</div>
+              </div>
             </el-checkbox-group>
           </el-collapse-item>
         </el-collapse>
@@ -79,7 +85,17 @@ function onSortChange({ prop, order }:any){
     sort_order:order
   }
 }
-
+function statisticsTypeText(type:string,key:'by_exam_type'|'by_file_type'){
+  let text = '0(0%)'
+  if(statisticsCount.value[key] instanceof Array){
+    let data = statisticsCount.value[key];
+    let item = data.find(function (n){ return n.value === type })
+    if(item !== undefined){
+      text = `${item.count}(${item.percentage}%)`
+    }
+  }
+  return text
+}
 watch([selectedExamType,selectedFileType,sortParams],async function (arr){
   let examType = arr[0]
   let fileType = arr[1]
@@ -149,6 +165,7 @@ const {
       {
         prop: "file_size",
         label: "文件大小",
+        sortable :'custom',
         formatter(row){
           return fileSize(row.file_size)
         }
@@ -188,11 +205,5 @@ onBeforeMount(async ()=>{
 .files-container{
   height: 100%;
 }
-.checkbox-block{
-  display: flex;
-  width: 100%;
-}
-.checkbox-block +.checkbox-block{
-  margin-top: 10px;
-}
+
 </style>

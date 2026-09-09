@@ -115,7 +115,7 @@ async def statistics_controller(
     search: Annotated[MedicalFilesQueryParam, Depends()],
     auth: Annotated[AuthSchema, Depends(AuthPermission(["module_medical:files:query"]))],
 ) -> JSONResponse:
-    """统计满足筛选条件的：文件个数、患者数（去重）、所有文件总大小。
+    """统计满足筛选条件的：文件个数、患者数（去重）、所有文件总大小、各模态/文件类型分组。
 
     - exam_type：模态类型，多选逗号分隔（如 ?exam_type=CT,PETCT）
     - file_type：文件类型，多选逗号分隔（如 ?file_type=dicom,nii）

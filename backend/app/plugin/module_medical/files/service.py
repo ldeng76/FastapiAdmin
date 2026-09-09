@@ -129,7 +129,7 @@ class MedFilesService:
         exam_type: list[str] | None = None,
         file_type: list[str] | None = None,
     ) -> dict:
-        """统计满足条件的数据：文件个数、患者数、总文件大小。
+        """统计满足条件的数据：文件个数、患者数、总文件大小、各模态/文件类型分组。
 
         参数:
             auth:       当前用户鉴权信息（控制行级可见性）
@@ -157,11 +157,57 @@ class MedFilesService:
             patient_count = int(row[1] or 0)
             # total_size_bytes = int(row[2] or 0)
 
+        # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
+        by_exam_type: list[dict] = []
+        exam_sql = select(
+            m.exam_type,
+            func.count(m.id),
+        ).where(m.exam_type.is_not(None), m.exam_type != "")
+        exam_sql = cls._apply_search_conditions(exam_sql, exam_type=exam_type, file_type=file_type)
+        exam_sql = await cls._apply_permission(auth, exam_sql)
+        exam_sql = exam_sql.group_by(m.exam_type)
+        exam_result = await auth.db.execute(exam_sql)
+        exam_rows = exam_result.all()
+
+        for value, count in exam_rows:
+            cnt = int(count or 0)
+            pct = round(cnt / file_count * 100, 2) if file_count > 0 else 0.0
+            by_exam_type.append({
+                "value": str(value),
+                "label": str(value),
+                "count": cnt,
+                "percentage": pct,
+            })
+
+        # 各文件类型分组统计
+        by_file_type: list[dict] = []
+        ft_sql = select(
+            m.file_type,
+            func.count(m.id),
+        ).where(m.file_type.is_not(None), m.file_type != "")
+        ft_sql = cls._apply_search_conditions(ft_sql, exam_type=exam_type, file_type=file_type)
+        ft_sql = await cls._apply_permission(auth, ft_sql)
+        ft_sql = ft_sql.group_by(m.file_type)
+        ft_result = await auth.db.execute(ft_sql)
+        ft_rows = ft_result.all()
+
+        for value, count in ft_rows:
+            cnt = int(count or 0)
+            pct = round(cnt / file_count * 100, 2) if file_count > 0 else 0.0
+            by_file_type.append({
+                "value": str(value),
+                "label": str(value),
+                "count": cnt,
+                "percentage": pct,
+            })
+
         return {
             "file_count": file_count,
             "patient_count": patient_count,
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),
+            "by_exam_type": by_exam_type,
+            "by_file_type": by_file_type,
         }
 
     @classmethod

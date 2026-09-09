@@ -1,5 +1,6 @@
 <template>
-  <ElTable :data="rows" border size="small" height="100%" :stripe="true" :header-cell-style="{ color:'#333' }">
+  <div class="fa-full-height" style="height: 100%">
+    <ElTable :data="pagedRows" border size="small" style="flex: 1" :stripe="true" :header-cell-style="{ color:'#333' }">
     <ElTableColumn type="expand" v-if="isShowExpand">
       <template #default="{ row }" >
         <div v-if="expandTableList[rows.indexOf(row)] !== undefined" style="padding: 20px">
@@ -118,6 +119,18 @@
     </template>
   </ElTable>
 
+    <div  class="flex justify-center mt-2">
+      <ElPagination
+        v-model:current-page="currentPage"
+        :page-size="pageSize"
+        :total="rows.length"
+        background
+        small
+      />
+    </div>
+  </div>
+
+
   <el-dialog class="flex flex-col" :bodyClass="'mdDialogDetailBody'" v-model="showFsq" fullscreen>
     <div v-if="showFsq" style="height: 100%">
       <FastqRawView :text="onLoadSample()" colored />
@@ -128,8 +141,8 @@
       </div>
     </template>
   </el-dialog>
-   <el-dialog v-model="isShowRawText">
-     <div v-html="marked(rawText)"></div>
+  <el-dialog v-model="isShowRawText">
+    <div v-html="marked(rawText)"></div>
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="isShowRawText = false" type="primary"  plain>关闭</el-button>
@@ -140,8 +153,8 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref} from "vue";
-import {ElTable, ElTableColumn} from "element-plus";
+import {computed, ref, watch} from "vue";
+import {ElTable, ElTableColumn, ElPagination} from "element-plus";
 import {getFieldLabel} from "@/components/medical/field-renderer";
 import FastqRawView from "@/components/others/fa-fastq-viewer/components/FastqRawView.vue";
 import {marked} from "marked";
@@ -165,6 +178,14 @@ const rawText = ref<any>('');
 // const fsq = ref(``);
 
 const props = defineProps<Props>();
+
+const pageSize = 20;
+const currentPage = ref(1);
+const pagedRows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize;
+  return (props.rows || []).slice(start, start + pageSize);
+});
+watch(() => props.rows, () => { currentPage.value = 1; });
 function isObjectKey(value:any,key:string){
   if(value instanceof Array){
     return value.length > 0 && typeof value[0] === 'object'

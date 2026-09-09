@@ -154,7 +154,7 @@ onMounted(fetchDetail);
 .medical-detail {
   height: 100%;
 }
-.patient-detail-tab-324{
+.patient-detail-tab{
   height: calc(100% - 150px);
 }
 hr{

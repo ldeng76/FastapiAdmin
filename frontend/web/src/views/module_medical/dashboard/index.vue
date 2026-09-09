@@ -220,7 +220,6 @@ onBeforeMount(async function (){
     { key: "sex", label: getFieldLabel("sex"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_sex, placeholder: "请选择", span: 4 },
     { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
     { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_abo, placeholder: "请选择", span: 4 },
-    { key: "rh_blood_type", label: getFieldLabel("rh_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_rh, placeholder: "请选择", span: 4 },
     { key: "smoking_status", label: getFieldLabel("smoking_status"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_smoking_status, placeholder: "请选择", span: 4 },
   ];
 })

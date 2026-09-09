@@ -77,7 +77,8 @@ const showSearchBar = ref(true);
 const patientSearchItems = ref<SearchFormItem[]>([])
 
 function getNewQuery(query:any){
-  query.is_placeholders = query.is_placeholders === 'true';
+  // query.is_placeholders = query.is_placeholders === 'true';
+  query.is_placeholders = true
   return query
 }
 
@@ -122,17 +123,17 @@ const {
         minWidth: 250,
         sortable: "custom",
         showOverflowTooltip: true,
-        formatter: (row) =>
-          row.is_placeholder
-            ? h("span", [
-                h("span", row.patient_id),
-                h(
-                  ElTag,
-                  { size: "small", type: "info", style: "margin-left: 6px" },
-                  () => "暂无影像数据",
-                ),
-              ])
-            : row.patient_id,
+        // formatter: (row) =>
+        //   row.is_placeholder
+        //     ? h("span", [
+        //         h("span", row.patient_id),
+        //         h(
+        //           ElTag,
+        //           { size: "small", type: "info", style: "margin-left: 6px" },
+        //           () => "暂无影像数据",
+        //         ),
+        //       ])
+        //     : row.patient_id,
       },
       {
         prop: "sex",
@@ -250,18 +251,18 @@ onBeforeMount(async ()=>{
   await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
   patientSearchItems.value = [
     {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 5},
-    {
-      key: "is_placeholders",
-      label: "显示没有影像数据的患者",
-      type: "switch",
-      labelWidth:170,
-      props:{
-        inlinePrompt: true,
-        activeText: "显示",
-        inactiveText: "隐藏",
-      },
-      span: 5
-    },
+    // {
+    //   key: "is_placeholders",
+    //   label: "显示没有影像数据的患者",
+    //   type: "switch",
+    //   labelWidth:170,
+    //   props:{
+    //     inlinePrompt: true,
+    //     activeText: "显示",
+    //     inactiveText: "隐藏",
+    //   },
+    //   span: 5
+    // },
     {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 5},
     {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 5 },
     {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:80, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 5 },

@@ -170,12 +170,21 @@ class MedFilesService:
         root = Path(settings.DICOM_DATA_DIR)
         p = Path(raw)
 
-        # 已在根目录下，直接返回
+        # raw 的前缀部分与 DICOM_DATA_DIR 重合（如 raw=D:\data\dicom\x.dcm，
+        # root=D:\data\dicom），说明已是绝对路径且在数据目录下，直接返回
         try:
-            p.relative_to(root)
-            return p
-        except ValueError:
+            raw_resolved = str(p.resolve())
+            root_resolved = str(root.resolve())
+            if raw_resolved.startswith(root_resolved):
+                return p
+        except Exception:
             pass
+
+        # 也处理未 resolve 的字符串前缀匹配（路径不存在时 resolve 会失败）
+        raw_st = raw.replace("\\", "/").rstrip("/")
+        root_st = str(root).replace("\\", "/").rstrip("/")
+        if raw_st.startswith(root_st):
+            return p
 
         # 去掉锚点（盘符 D:\\ 或开头的 / \\），取纯相对部分
         rel = raw.lstrip("/\\")

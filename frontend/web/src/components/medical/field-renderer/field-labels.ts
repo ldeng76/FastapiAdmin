@@ -435,7 +435,7 @@ export const FIELD_LABELS: Record<string, string> = {
   mean_ct_value_hu: "平均CT值(HU)",
   solid_ratio_pct: "实性占比(%)",
   solid_component_mm: "实性成分大小(mm)",
-  lung_rads: "肺结节风险评级",
+  lung_rads: "Lung-RADS",
   dicom_slice: "DICOM切片号",
   follow_up_comparison: "对比变化",
   vs_prior: "与既往片对比",

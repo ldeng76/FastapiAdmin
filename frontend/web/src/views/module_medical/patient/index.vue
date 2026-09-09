@@ -39,7 +39,7 @@
     </ElCard>
   </div>
   <el-dialog :bodyClass="'patientDetailBody'" v-model="showDetail" fullscreen>
-    <template #title>
+    <template #header>
       <ElButton :icon="ArrowLeft" link @click="showDetail = false">返回列表</ElButton>
       <span class="patient-title">
         患者多模态数据 ·  <el-tag type="primary" round>{{ showPatientId }}</el-tag>

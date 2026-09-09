@@ -125,7 +125,7 @@
         :page-size="pageSize"
         :total="rows.length"
         background
-        small
+        size="small"
       />
     </div>
   </div>

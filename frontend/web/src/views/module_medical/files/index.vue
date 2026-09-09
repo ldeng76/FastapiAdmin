@@ -41,8 +41,8 @@
         />
       </ElCard>
     </el-main>
+    <Viewer ref="viewer" />
   </el-container>
-  <Viewer ref="viewer" />
 </template>
 <script setup lang="ts">
 import {useDictStore} from "@/store";

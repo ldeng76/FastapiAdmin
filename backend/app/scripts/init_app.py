@@ -231,16 +231,19 @@ def register_files(app: FastAPI) -> None:
         settings.DICOM_STATIC_DIR.mkdir(parents=True, exist_ok=True)
         app.mount("/medical/dicom", StaticFiles(directory=settings.DICOM_STATIC_DIR), name="dicom_static")
 
-    # 挂载前端静态文件
+    # 挂载前端静态文件（仅当 dist 目录存在时注册，避免 dev 模式下误拦截 Vite 管理的资源）
     from pathlib import Path as _Path
     _frontend_dist = _Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "web" / "dist"
     if _frontend_dist.is_dir():
+        import mimetypes
+
         @app.get("/web/{full_path:path}", include_in_schema=False)
         async def _serve_frontend_files(full_path: str):
             from fastapi.responses import FileResponse as FR, Response
             file_path = _frontend_dist / full_path
             if file_path.is_file():
-                return FR(str(file_path))
+                media_type, _ = mimetypes.guess_type(str(file_path))
+                return FR(str(file_path), media_type=media_type)
             index_file = _frontend_dist / "index.html"
             if index_file.is_file():
                 return FR(str(index_file), media_type="text/html")

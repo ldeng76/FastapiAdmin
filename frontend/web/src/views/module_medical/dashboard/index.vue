@@ -114,8 +114,8 @@ const kpisIcon = {
   modality_count:"ri:mail-line",
 }
 
-async function searchCall(isRedirectPatient = false){
-  let params = Object.assign({is_placeholders:true},searchForm.value);
+async function searchCall(isRedirectPatient = false,query = {}){
+  const params = Object.assign({is_placeholders:true},searchForm.value,query);
   if(isRedirectPatient){
     await router.push({path: '/medicalPatient', query: params});
     return;
@@ -133,8 +133,9 @@ function clearSearch() {
 
 function chartSelect(obj:any){
   if(searchForm.value[obj?.data?.filterName] !== undefined){
-    searchForm.value[obj?.data?.filterName] = obj?.data?.filterValue
-    searchCall(true)
+    let query:any = {}
+    query[obj?.data?.filterName] = obj?.data?.filterValue
+    searchCall(true,query)
   }
 }
 

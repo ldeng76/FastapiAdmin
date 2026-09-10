@@ -28,7 +28,7 @@ export const FIELD_LABELS: Record<string, string> = {
   source_center: "来源中心",
   sex: "性别",
   age: "年龄",
-  age_bucket: "年龄段",
+  age_bucket: "年龄",
   birth_date: "出生日期",
   ethnicity: "民族",
   native_place: "籍贯",

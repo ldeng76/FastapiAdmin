@@ -272,6 +272,7 @@ export const FIELD_LABELS: Record<string, string> = {
 
   // ───── 检查 + 报告 + detail ─────
   exam_type: "检查类型",
+  modality: "模态类型",
   exam_date: "检查日期",
   exam_name: "检查名称",
   exam_body_part: "检查部位",

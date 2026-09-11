@@ -73,6 +73,10 @@ export const useChartOps = (): ChartThemeConfig => ({
     "#14DEBA",
     "#FFAF20",
     "#c5d3ff",
+    "#FF80C8",
+    "#B48DF3",
+    "#1D84FF",
+    "#60C041",
   ],
 });
 // 常量定义

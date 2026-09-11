@@ -123,20 +123,9 @@ const {
       {
         prop: "patient_id",
         label: getFieldLabel("patient_id"),
-        minWidth: 250,
+        minWidth: 120,
         sortable: "custom",
-        showOverflowTooltip: true,
-        formatter: (row) =>
-          row.is_placeholder
-            ? h("span", [
-                h("span", row.patient_id),
-                h(
-                  ElTag,
-                  { size: "small", type: "info", style: "margin-left: 6px" },
-                  () => "暂无影像数据",
-                ),
-              ])
-            : row.patient_id,
+        showOverflowTooltip: true
       },
       {
         prop: "sex",
@@ -256,7 +245,7 @@ onBeforeMount(async ()=>{
     {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 5},
     {
       key: "is_placeholders",
-      label: "显示暂无影像数据的患者",
+      label: "显示暂无基本数据的患者",
       type: "switch",
       labelWidth:170,
       props:{

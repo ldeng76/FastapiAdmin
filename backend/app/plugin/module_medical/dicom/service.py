@@ -480,7 +480,11 @@ class DicomService:
         if samples_per_pixel >= 3 and planar == 1 and photometric in (
             "RGB", "RGBA", "YBR_FULL", "YBR_FULL_422", "YBR_PARTIAL_422"
         ):
-            result["00280106"] = {"vr": "US", "Value": [0]}
+            # (0028,0006) PlanarConfiguration → 0（按像素交错）。
+            # 注意别写成 (0028,0106)：那是 Smallest Image Pixel Value，
+            # 写错会导致 PlanarConfiguration 仍是 1，客户端把交错字节按平面解读，
+            # 出现 R/G/B 通道错乱（frames 接口发的确是交错字节）。
+            result["00280006"] = {"vr": "US", "Value": [0]}
         return result
 
     @classmethod
@@ -776,6 +780,59 @@ class DicomService:
         return buf.getvalue(), "image/png"
 
     @classmethod
+    def _frame_from_pixel_array(cls, pixel_array: Any, frame_number: int) -> Any:
+        """从解码后的 pixel_array 中按 frame_number 取出单帧。
+
+        关键：只有「帧维」才在 shape[0]。单帧彩色（RGB/RGBA）的形状是
+        (Rows, Columns, Samples)，最后一维是采样数而不是帧数；若误把 shape[0]
+        当帧数，512 行的图会被切成 1 行（只取到第 0 行 800×3 个字节）。
+
+        形状判定：
+          - ndim == 2                       → 单帧灰度 (H, W)
+          - ndim == 3 且 shape[2] ∈ (3, 4)  → 单帧彩色 (H, W, SPP)
+          - ndim == 3 其他                  → 多帧灰度 (Frames, H, W)
+          - ndim >= 4                       → 多帧彩色 (Frames, H, W, SPP)
+
+        单帧图像仅接受 frame_number == 1，其余抛 404。
+        """
+        if pixel_array.ndim == 2 or (
+            pixel_array.ndim == 3 and pixel_array.shape[2] in (3, 4)
+        ):
+            is_multi_frame = False
+        else:
+            is_multi_frame = True
+
+        if not is_multi_frame:
+            if frame_number != 1:
+                raise CustomException(
+                    msg=f"Frame {frame_number} 不存在（单帧图像）",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+            return pixel_array
+
+        total_frames = int(pixel_array.shape[0])
+        if frame_number < 1 or frame_number > total_frames:
+            raise CustomException(
+                msg=f"Frame {frame_number} 不存在（共 {total_frames} 帧）",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        return pixel_array[frame_number - 1]
+
+    @classmethod
+    def _frame_to_bytes(cls, frame_data: Any) -> bytes:
+        """把单帧数组转成 WADO-RS 的裸像素字节。
+
+        pydicom 在 reshape 阶段已按 PlanarConfiguration 做过转置（见
+        pydicom.pixel_data_handlers.util.reshape_pixel_array），因此
+        ``tobytes()`` 出来的 C 序就是「按像素交错」的 RGBRGB...，
+        与 /metadata 中把 PlanarConfiguration 改写为 0 的行为保持一致。
+        这里不要再做平面→交错转换，否则会把正确数据二次打乱。
+        """
+        if hasattr(frame_data, "tobytes"):
+            return frame_data.tobytes()
+        return bytes(frame_data)
+
+    @classmethod
     def get_instance_frames(
         cls,
         sop_uid: str,
@@ -815,34 +872,12 @@ class DicomService:
             return raw_bytes, part_content_type
 
         # 未压缩 → 尝试 pixel_array 解码
-        import io as _io
         try:
             pixel_array = ds.pixel_array
-            if pixel_array.ndim >= 3:
-                if frame_number <= 0 or frame_number > pixel_array.shape[0]:
-                    raise CustomException(
-                        msg=f"Frame {frame_number} 不存在",
-                        status_code=status.HTTP_404_NOT_FOUND,
-                    )
-                frame_data = pixel_array[frame_number - 1]
-            else:
-                if frame_number != 1:
-                    raise CustomException(
-                        msg=f"Frame {frame_number} 不存在（单帧图像）",
-                        status_code=status.HTTP_404_NOT_FOUND,
-                    )
-                frame_data = pixel_array
-
-            frame_data = cls._normalize_planar_configuration(ds, frame_data)
-
-            buf = _io.BytesIO()
-            try:
-                import numpy as np
-                np.save(buf, frame_data, allow_pickle=False)
-            except Exception:
-                raw_bytes = frame_data.tobytes() if hasattr(frame_data, "tobytes") else bytes(frame_data)
-                buf.write(raw_bytes)
-            return buf.getvalue(), "application/octet-stream"
+            frame_data = cls._frame_from_pixel_array(pixel_array, frame_number)
+            # 直接返回裸像素字节（按像素交错）。此前用 np.save 封装成 .npy 容器，
+            # 客户端按 application/octet-stream 裸像素解析必然失败。
+            return cls._frame_to_bytes(frame_data), "application/octet-stream"
         except CustomException:
             raise
         except Exception as e:
@@ -903,38 +938,10 @@ class DicomService:
             # 未压缩：走 pixel_array 解码，失败再回退字节切分
             try:
                 pixel_array = ds.pixel_array
-                if pixel_array.ndim >= 3:
-                    # (frames, rows, cols) 或 (frames, rows, cols, samples)
-                    # 最后一维如果是 3/4 则是 samples，不是帧数
-                    last_shape = pixel_array.shape[-1]
-                    if last_shape in (3, 4) and pixel_array.ndim == 4:
-                        # (frames, H, W, SPP) → 真帧维 shape[0]
-                        pass
-                    else:
-                        # ndim == 3 且 last_dim 非 3/4 → 真帧维 shape[0]（灰度多帧）
-                        pass
-                    total_frames = pixel_array.shape[0]
-                    if frame_number <= 0 or frame_number > total_frames:
-                        raise CustomException(
-                            msg=f"Frame {frame_number} 不存在（共 {total_frames} 帧）",
-                            status_code=status.HTTP_404_NOT_FOUND,
-                        )
-                    frame_data = pixel_array[frame_number - 1]
-                else:
-                    if frame_number != 1:
-                        raise CustomException(
-                            msg=f"Frame {frame_number} 不存在（单帧 SOP 仅 frame=1）",
-                            status_code=status.HTTP_404_NOT_FOUND,
-                        )
-                    frame_data = pixel_array
-
-                # PlanarConfiguration=1 转 0（按像素交错）
-                frame_data = cls._normalize_planar_configuration(ds, frame_data)
-                raw_bytes = (
-                    frame_data.tobytes()
-                    if hasattr(frame_data, "tobytes")
-                    else bytes(frame_data)
-                )
+                frame_data = cls._frame_from_pixel_array(pixel_array, frame_number)
+                # pydicom 已按 PlanarConfiguration 转置，tobytes() 即按像素交错，
+                # 与 /metadata 里 PlanarConfiguration=0 的声明一致，无需再转换。
+                raw_bytes = cls._frame_to_bytes(frame_data)
             except CustomException:
                 raise
             except Exception as e:
@@ -1002,50 +1009,6 @@ class DicomService:
             + boundary + b"--\r\n"
         )
         return body, top_content_type
-
-    @classmethod
-    def _normalize_planar_configuration(cls, ds: "pydicom.Dataset", frame_data: Any) -> Any:
-        """将 RGB/RGBA 帧数据从 PlanarConfiguration=1 转成 0（按像素交错）。
-
-        OHIF/cornerstone 默认期望 PlanarConfiguration=0。
-        - 0: 按像素交错 RGBRGBRGB...
-        - 1: 按平面存储 RRR...GGG...BBB...
-
-        仅对 SamplesPerPixel>=3 且 PlanarConfiguration=1 的图像生效，其他原样返回。
-        """
-        try:
-            samples_per_pixel = int(getattr(ds, "SamplesPerPixel", 1) or 1)
-            planar = int(getattr(ds, "PlanarConfiguration", 0) or 0)
-            photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
-        except Exception:
-            return frame_data
-
-        if samples_per_pixel < 3 or planar != 1:
-            return frame_data
-        if photometric not in ("RGB", "RGBA", "YBR_FULL", "YBR_FULL_422", "YBR_PARTIAL_422"):
-            return frame_data
-
-        try:
-            import numpy as np
-            arr = np.frombuffer(frame_data.tobytes(), dtype=np.uint8)
-            rows = int(getattr(ds, "Rows", 0) or 0)
-            cols = int(getattr(ds, "Columns", 0) or 0)
-            if rows == 0 or cols == 0:
-                return frame_data
-            # 按平面存储: [R plane][G plane][B plane]，每个 plane = rows * cols
-            plane_size = rows * cols
-            if arr.size < plane_size * samples_per_pixel:
-                return frame_data
-            planes = []
-            for i in range(samples_per_pixel):
-                plane = arr[i * plane_size:(i + 1) * plane_size].reshape(rows, cols)
-                planes.append(plane)
-            # 按像素交错: shape=(rows, cols, samples)
-            interleaved = np.stack(planes, axis=-1)
-            return interleaved.tobytes()
-        except Exception as e:
-            log.warning(f"PlanarConfiguration 转换失败，返回原始数据: {e}")
-            return frame_data
 
     @classmethod
     def _extract_frame_bytes_from_pixel_data(

@@ -49,8 +49,11 @@ F_FILE = {
     "diagnosis": f"{C}.就诊.诊断",
     "genetic_snv": f"{C}.就诊.实体肿瘤基因检测报告.单核苷酸变异基因",
     "genetic_cnv": f"{C}.就诊.实体肿瘤基因检测报告.拷贝数变异基因",
+    "genetic_indel": f"{C}.就诊.实体肿瘤基因检测报告.插入缺失突变基因",
+    "genetic_fusion": f"{C}.就诊.实体肿瘤基因检测报告.融合基因",
+    "genetic_other": f"{C}.就诊.实体肿瘤基因检测报告.其他变异基因",
+    "genetic_drugref": f"{C}.就诊.实体肿瘤基因检测报告.用药参考",
 }
-
 # 列前缀基名（嵌套文件用报告级基名，其余同文件名）
 F_COL = dict(F_FILE)
 F_COL.update(
@@ -66,6 +69,10 @@ F_COL.update(
         "icu": f"{C}.就诊.ICU护理记录",
         "genetic_snv": f"{C}.就诊.实体肿瘤基因检测报告",
         "genetic_cnv": f"{C}.就诊.实体肿瘤基因检测报告",
+        "genetic_indel": f"{C}.就诊.实体肿瘤基因检测报告",
+        "genetic_fusion": f"{C}.就诊.实体肿瘤基因检测报告",
+        "genetic_other": f"{C}.就诊.实体肿瘤基因检测报告",
+        "genetic_drugref": f"{C}.就诊.实体肿瘤基因检测报告",
     }
 )
 
@@ -82,8 +89,11 @@ SUB = {
     "surgery_fp": "手术",
     "genetic_snv": "单核苷酸变异基因",
     "genetic_cnv": "拷贝数变异基因",
+    "genetic_indel": "插入缺失突变基因",
+    "genetic_fusion": "融合基因",
+    "genetic_other": "其他变异基因",
+    "genetic_drugref": "用药参考",
 }
-
 
 def q(f: str) -> str:
     """列引用的双引号包装。"""
@@ -256,12 +266,23 @@ GROUP BY 1, 2, 3
 """
 
 SQL_GENETIC = f"""
-WITH u AS (
-    SELECT {q('患者编号')} AS patient_id,
+WITH
+snv AS (
+    SELECT 'snv' AS src,
+           {q('患者编号')} AS patient_id,
            {c('genetic_snv', '就诊编号')} AS visit_id,
-           {cs('genetic_snv', '检测单号')} AS report_id,
+           CASE
+             WHEN {cs('genetic_snv', '检测单号')} IS NOT NULL
+              AND {cs('genetic_snv', '检测单号')} <> ''
+             THEN {cs('genetic_snv', '检测单号')}
+             ELSE 'SYG-' || CAST(
+               ROW_NUMBER() OVER (
+                 PARTITION BY {q('患者编号')},
+                              {c('genetic_snv', '就诊编号')}
+                 ORDER BY {cs('genetic_snv', '子项编号')}
+               ) AS VARCHAR) || '-' || SUBSTRING(SHA256('snv' || '|' || CAST({q('患者编号')} AS VARCHAR) || '|' || CAST({c('genetic_snv', '就诊编号')} AS VARCHAR) || '|' || COALESCE(CAST({cs('genetic_snv', '子项编号')} AS VARCHAR), ''))::VARCHAR, 1, 8)
+           END AS report_id,
            {c('genetic_snv', '检测项目名称')} AS test_name,
-           'snv' AS src,
            {{'子项编号': {cs('genetic_snv', '子项编号')},
              '基因名称': {cs('genetic_snv', '基因名称')},
              '结果正常标志': {cs('genetic_snv', '结果正常标志')},
@@ -276,14 +297,23 @@ WITH u AS (
              '纯合/杂合': {cs('genetic_snv', '纯合/杂合')},
              '变异类型': {cs('genetic_snv', '变异类型')}}} AS variant
     FROM {src('genetic_snv')}
-    WHERE {cs('genetic_snv', '检测单号')} IS NOT NULL
-      AND {cs('genetic_snv', '检测单号')} <> ''
-    UNION ALL
-    SELECT {q('患者编号')} AS patient_id,
+),
+cnv AS (
+    SELECT 'cnv' AS src,
+           {q('患者编号')} AS patient_id,
            {c('genetic_cnv', '就诊编号')} AS visit_id,
-           {cs('genetic_cnv', '检测单号')} AS report_id,
+           CASE
+             WHEN {cs('genetic_cnv', '检测单号')} IS NOT NULL
+              AND {cs('genetic_cnv', '检测单号')} <> ''
+             THEN {cs('genetic_cnv', '检测单号')}
+             ELSE 'SYG-' || CAST(
+               ROW_NUMBER() OVER (
+                 PARTITION BY {q('患者编号')},
+                              {c('genetic_cnv', '就诊编号')}
+                 ORDER BY {cs('genetic_cnv', '子项编号')}
+               ) AS VARCHAR) || '-' || SUBSTRING(SHA256('cnv' || '|' || CAST({q('患者编号')} AS VARCHAR) || '|' || CAST({c('genetic_cnv', '就诊编号')} AS VARCHAR) || '|' || COALESCE(CAST({cs('genetic_cnv', '子项编号')} AS VARCHAR), ''))::VARCHAR, 1, 8)
+           END AS report_id,
            {c('genetic_cnv', '检测项目名称')} AS test_name,
-           'cnv' AS src,
            {{'子项编号': {cs('genetic_cnv', '子项编号')},
              '基因名称': {cs('genetic_cnv', '基因名称')},
              '结果正常标志': {cs('genetic_cnv', '结果正常标志')},
@@ -295,13 +325,155 @@ WITH u AS (
              '纯合/杂合': {cs('genetic_cnv', '纯合/杂合')},
              '变异类型': {cs('genetic_cnv', '变异类型')}}} AS variant
     FROM {src('genetic_cnv')}
-    WHERE {cs('genetic_cnv', '检测单号')} IS NOT NULL
-      AND {cs('genetic_cnv', '检测单号')} <> ''
+),
+indel AS (
+    SELECT 'indel' AS src,
+           {q('患者编号')} AS patient_id,
+           {c('genetic_indel', '就诊编号')} AS visit_id,
+           CASE
+             WHEN {cs('genetic_indel', '检测单号')} IS NOT NULL
+              AND {cs('genetic_indel', '检测单号')} <> ''
+             THEN {cs('genetic_indel', '检测单号')}
+             ELSE 'SYG-' || CAST(
+               ROW_NUMBER() OVER (
+                 PARTITION BY {q('患者编号')},
+                              {c('genetic_indel', '就诊编号')}
+                 ORDER BY {cs('genetic_indel', '子项编号')}
+               ) AS VARCHAR) || '-' || SUBSTRING(SHA256('indel' || '|' || CAST({q('患者编号')} AS VARCHAR) || '|' || CAST({c('genetic_indel', '就诊编号')} AS VARCHAR) || '|' || COALESCE(CAST({cs('genetic_indel', '子项编号')} AS VARCHAR), ''))::VARCHAR, 1, 8)
+           END AS report_id,
+           {c('genetic_indel', '检测项目名称')} AS test_name,
+           {{'子项编号': {cs('genetic_indel', '子项编号')},
+             '基因名称': {cs('genetic_indel', '基因名称')},
+             '结果正常标志': {cs('genetic_indel', '结果正常标志')},
+             '转录本': {cs('genetic_indel', '转录本')},
+             '外显子': {cs('genetic_indel', '外显子')},
+             'CDS突变': {cs('genetic_indel', 'CDS突变')},
+             '氨基酸突变': {cs('genetic_indel', '氨基酸突变')},
+             'DNA片段总数': {cs('genetic_indel', 'DNA片段总数')},
+             'DNA异常片段总数': {cs('genetic_indel', 'DNA异常片段总数')},
+             '突变丰度': {cs('genetic_indel', '突变丰度')},
+             '结果解读': {cs('genetic_indel', '结果解读')},
+             '检测方法': {cs('genetic_indel', '检测方法')},
+             '变异意义': {cs('genetic_indel', '变异意义')},
+             '纯合/杂合': {cs('genetic_indel', '纯合/杂合')},
+             '变异类型': {cs('genetic_indel', '变异类型')},
+             '遗传性疾病/遗传方式': {cs('genetic_indel', '遗传性疾病/遗传方式')},
+             '遗传风险评估建议': {cs('genetic_indel', '遗传风险评估建议')}}} AS variant
+    FROM {src('genetic_indel')}
+),
+fusion AS (
+    SELECT 'fusion' AS src,
+           {q('患者编号')} AS patient_id,
+           {c('genetic_fusion', '就诊编号')} AS visit_id,
+           CASE
+             WHEN {cs('genetic_fusion', '检测单号')} IS NOT NULL
+              AND {cs('genetic_fusion', '检测单号')} <> ''
+             THEN {cs('genetic_fusion', '检测单号')}
+             ELSE 'SYG-' || CAST(
+               ROW_NUMBER() OVER (
+                 PARTITION BY {q('患者编号')},
+                              {c('genetic_fusion', '就诊编号')}
+                 ORDER BY {cs('genetic_fusion', '子项编号')}
+               ) AS VARCHAR) || '-' || SUBSTRING(SHA256('fusion' || '|' || CAST({q('患者编号')} AS VARCHAR) || '|' || CAST({c('genetic_fusion', '就诊编号')} AS VARCHAR) || '|' || COALESCE(CAST({cs('genetic_fusion', '子项编号')} AS VARCHAR), ''))::VARCHAR, 1, 8)
+           END AS report_id,
+           {c('genetic_fusion', '检测项目名称')} AS test_name,
+           {{'子项编号': {cs('genetic_fusion', '子项编号')},
+             '融合类型': {cs('genetic_fusion', '融合类型')},
+             '融合位置': {cs('genetic_fusion', '融合位置')},
+             '融合基因名称': {cs('genetic_fusion', '融合基因名称')},
+             '结果正常标志': {cs('genetic_fusion', '结果正常标志')},
+             '融合基因染色体': {cs('genetic_fusion', '融合基因染色体')},
+             '融合位点': {cs('genetic_fusion', '融合位点')},
+             'DNA片段总数': {cs('genetic_fusion', 'DNA片段总数')},
+             'DNA异常片段总数': {cs('genetic_fusion', 'DNA异常片段总数')},
+             '突变丰度': {cs('genetic_fusion', '突变丰度')},
+             '结果解读': {cs('genetic_fusion', '结果解读')},
+             '检测方法': {cs('genetic_fusion', '检测方法')},
+             '变异意义': {cs('genetic_fusion', '变异意义')},
+             '纯合/杂合': {cs('genetic_fusion', '纯合/杂合')}}} AS variant
+    FROM {src('genetic_fusion')}
+),
+other AS (
+    SELECT 'other' AS src,
+           {q('患者编号')} AS patient_id,
+           {c('genetic_other', '就诊编号')} AS visit_id,
+           CASE
+             WHEN {cs('genetic_other', '检测单号')} IS NOT NULL
+              AND {cs('genetic_other', '检测单号')} <> ''
+             THEN {cs('genetic_other', '检测单号')}
+             ELSE 'SYG-' || CAST(
+               ROW_NUMBER() OVER (
+                 PARTITION BY {q('患者编号')},
+                              {c('genetic_other', '就诊编号')}
+                 ORDER BY {cs('genetic_other', '子项编号')}
+               ) AS VARCHAR) || '-' || SUBSTRING(SHA256('other' || '|' || CAST({q('患者编号')} AS VARCHAR) || '|' || CAST({c('genetic_other', '就诊编号')} AS VARCHAR) || '|' || COALESCE(CAST({cs('genetic_other', '子项编号')} AS VARCHAR), ''))::VARCHAR, 1, 8)
+           END AS report_id,
+           {c('genetic_other', '检测项目名称')} AS test_name,
+           {{'子项编号': {cs('genetic_other', '子项编号')},
+             '基因名称': {cs('genetic_other', '基因名称')},
+             '结果正常标志': {cs('genetic_other', '结果正常标志')},
+             '转录本': {cs('genetic_other', '转录本')},
+             '外显子': {cs('genetic_other', '外显子')},
+             'CDS突变': {cs('genetic_other', 'CDS突变')},
+             '氨基酸突变': {cs('genetic_other', '氨基酸突变')},
+             '突变丰度': {cs('genetic_other', '突变丰度')},
+             '融合类型': {cs('genetic_other', '融合类型')},
+             '融合位置': {cs('genetic_other', '融合位置')},
+             '融合基因染色体': {cs('genetic_other', '融合基因染色体')},
+             '融合位点': {cs('genetic_other', '融合位点')},
+             '拷贝数': {cs('genetic_other', '拷贝数')},
+             'DNA片段总数': {cs('genetic_other', 'DNA片段总数')},
+             'DNA异常片段总数': {cs('genetic_other', 'DNA异常片段总数')},
+             '结果解读': {cs('genetic_other', '结果解读')},
+             '检测方法': {cs('genetic_other', '检测方法')},
+             '变异意义': {cs('genetic_other', '变异意义')},
+             '纯合/杂合': {cs('genetic_other', '纯合/杂合')},
+             '变异类型': {cs('genetic_other', '变异类型')},
+             '遗传性疾病/遗传方式': {cs('genetic_other', '遗传性疾病/遗传方式')},
+             '遗传风险评估建议': {cs('genetic_other', '遗传风险评估建议')}}} AS variant
+    FROM {src('genetic_other')}
+),
+drugref AS (
+    SELECT 'drugref' AS src,
+           {q('患者编号')} AS patient_id,
+           {c('genetic_drugref', '就诊编号')} AS visit_id,
+           CASE
+             WHEN {cs('genetic_drugref', '检测单号')} IS NOT NULL
+              AND {cs('genetic_drugref', '检测单号')} <> ''
+             THEN {cs('genetic_drugref', '检测单号')}
+             ELSE 'SYG-' || CAST(
+               ROW_NUMBER() OVER (
+                 PARTITION BY {q('患者编号')},
+                              {c('genetic_drugref', '就诊编号')}
+                 ORDER BY {cs('genetic_drugref', '子项编号')}
+               ) AS VARCHAR) || '-' || SUBSTRING(SHA256('drugref' || '|' || CAST({q('患者编号')} AS VARCHAR) || '|' || CAST({c('genetic_drugref', '就诊编号')} AS VARCHAR) || '|' || COALESCE(CAST({cs('genetic_drugref', '子项编号')} AS VARCHAR), ''))::VARCHAR, 1, 8)
+           END AS report_id,
+           {c('genetic_drugref', '检测项目名称')} AS test_name,
+           {{'子项编号': {cs('genetic_drugref', '子项编号')},
+             '药物编号': {cs('genetic_drugref', '药物编号')},
+             '药物名称': {cs('genetic_drugref', '药物名称')},
+             '临床意义': {cs('genetic_drugref', '临床意义')},
+             '适用疾病': {cs('genetic_drugref', '适用疾病')},
+             '证据级别': {cs('genetic_drugref', '证据级别')},
+             '参考文献': {cs('genetic_drugref', '参考文献')}}} AS variant
+    FROM {src('genetic_drugref')}
+),
+u AS (
+    SELECT * FROM snv
+    UNION ALL SELECT * FROM cnv
+    UNION ALL SELECT * FROM indel
+    UNION ALL SELECT * FROM fusion
+    UNION ALL SELECT * FROM other
+    UNION ALL SELECT * FROM drugref
 )
 SELECT patient_id, visit_id, report_id,
        ANY_VALUE(test_name) AS test_name,
-       {{'snv': LIST(variant) FILTER (WHERE src = 'snv'),
-         'cnv': LIST(variant) FILTER (WHERE src = 'cnv')}} AS variants
+       {{'snv':      LIST(variant) FILTER (WHERE src = 'snv'),
+         'cnv':      LIST(variant) FILTER (WHERE src = 'cnv'),
+         'indel':    LIST(variant) FILTER (WHERE src = 'indel'),
+         'fusion':   LIST(variant) FILTER (WHERE src = 'fusion'),
+         'other':    LIST(variant) FILTER (WHERE src = 'other'),
+         'drug_ref': LIST(variant) FILTER (WHERE src = 'drugref')}} AS variants
 FROM u
 GROUP BY 1, 2, 3
 """

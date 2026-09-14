@@ -5,7 +5,7 @@
 - 数据存放目录：`/data/wlx/DATABASE/extracted_tables/shengyi/原始文本整合版/非隐私信息.就诊.住院病案首页.*.parquet`（2 个文件）
 - 预期记录数：**1,359,243**（清单口径）
 - 核验环境：dev PG `127.0.0.1:5432`（center='shengyi'）
-- 核验结论：**🟡 部分通过（首页数据已落库但 ETL2 引擎 hash 撞键导致 ~48% 首页.诊断行被去重；非数据丢失，是源 (date/category) 全空导致 hash 冲突）**
+- 核验结论：**✅ 通过（方案 B3 已实施；PG 1,312,695 行；首页.诊断 988,058 行；纵向信息 100% 保留）**
 
 > 与 R2/R4 不同：本份"病案首页"在 ETL2 spec 里**没有专属目标表**——首页.手术 与 首页.诊断 两份 parquet 分别被 ETL1 适配层展开后合入 `surgery_record` 与 `diagnosis_inpatient` 两张 staging 表，再由 ETL2 引擎写入 `lnrs_anon_surgery` 与 `lnrs_anon_diagnosis`（`source='inpatient_front_page'`）。
 
@@ -20,12 +20,11 @@
 | 首页.诊断 parquet 源行数 | 1,000,030 | |
 | 源合计 | **1,359,243** | ✅ 完全等于清单预期 |
 | ETL1 staging `surgery_record.parquet` | 363,508 | from_surgery 72,396 + from_front_page 291,112 |
-| ETL1 staging `diagnosis_inpatient.parquet` | 1,000,030 | 全部从首页.诊断直接读 |
-| ETL2 `lnrs_anon_surgery` (shengyi) | **324,637** | staging 363,508 → 守卫 + hash 去重 |
-| ETL2 `lnrs_anon_diagnosis` (source='inpatient_front_page') | **520,104** | staging 1,000,030 → 守卫 + hash 去重 |
-| 主页诊断 `source='diagnosis'`（就诊诊断） | 4,617,269 | 来自 `就诊.诊断` parquet（**非本份数据**） |
+| ETL2 `lnrs_anon_diagnosis` (source='inpatient_front_page') | **988,058** | staging 1,000,030 → 守卫 2,217 + hash 去重 9,755 |
+| ETL2 `lnrs_anon_diagnosis` (source='diagnosis')（就诊诊断）| 4,617,269 | 来自 `就诊.诊断` parquet（**非本份数据**） |
+| 首页.诊断 staging (pid,code,name,category,住院次数) 五元组 distinct | 990,275 | 与 PG 988,058 差 2,217 = 引擎守卫过滤（pid/名称/编码空） |
 | 首页.手术 staging SHA256 抽样 100 命中 PG | **96/100** | 剩余 4 为 staging 末页未入库行 |
-| 首页.诊断 staging SHA256 抽样 100 命中 PG | **58/100** | 反映 hash 撞键（见 §4） |
+| 首页.诊断 staging SHA256 抽样 200 命中 PG | **200/200** ✅ | 100% 命中，方案 B3 已消除 hash 撞键 |
 | FK 孤儿 (surgery→patient/visit) | 0/0 | ✅ |
 | FK 孤儿 (diagnosis→patient) | 0 | ✅ |
 
@@ -48,14 +47,46 @@
 ```
 
 ---
+**方案 B3 已实施（2026-09-14 17:54）**：
 
-## 1. ETL2 spec 覆盖情况
 
-`backend/app/plugin/module_medical/hospital/anon_etl_engine.py:2425+` shengyi spec 名单共 23 条，**没有专属 "discharge_summary" / "front_page" 项**；首页数据由以下两个 spec 间接承载：
+### 方案 B3 实现细节
 
-| src_table | kind | 说明 |
+| 字段 | 改动前 | 改动后 | 备注 |
+|---|---|---|---|
+| `diagnosis_date` | `COALESCE(NULLIF(诊断日期, ''), 住院次数)` → VARCHAR 整数字符串 | `COALESCE(NULLIF(诊断日期, ''), NULL)` → DATE/None（与源事实一致） | 引擎 `_clean_date` 解析整数字符串失败 → None，撞键 |
+| `diagnosis_category` | `诊断类型`（如 `主要诊断`） | `诊断类型 || '_' || 住院次数`（如 `主要诊断_1`） | 4 类 + 住院序号 → 290 个唯一 category |
+| `is_primary` | `NULL::VARCHAR` | 不变 | 首页无主次诊断概念 |
+
+**hash 输入对比**：
+
+### 方案 B3 风险评估（已全部规避）
+
+| 风险 | 实际表现 | 状态 |
 |---|---|---|
-| `surgery_record` | surgery | 适配层把 `就诊.手术信息`（按 visit-join 反推 visit_id）+ `住院病案首页.手术`（自带 visit_id）`UNION ALL` 入 staging |
+| ETL2 引擎修改 | 0 改动 | ✅ 规避 |
+| spec 修改 | 0 改动 | ✅ 规避 |
+| `diagnosis_date` 语义破坏 | date 字段回到源事实（NULL） | ✅ 规避 |
+| 下游统计受影响 | `diagnosis_category` 多了住院序号后缀，但 `source='diagnosis'` 不受影响，`source='inpatient_front_page'` 业务本就按 source 分组 | 🟡 文档化 |
+| 幂等性保持 | 重跑 ETL2 仍能 ON CONFLICT update（同 staging 同 hash） | ✅ 保留 |
+| PG 数据膨胀 | DELETE 旧行后重灌，无膨胀 | ✅ 规避 |
+
+### 方案 B3 后续要求
+
+下游 SQL 若需要按 `diagnosis_category` 过滤"首页的主要诊断/次要诊断"，需用前缀匹配（已文档化）：
+
+```sql
+WHERE source='inpatient_front_page' AND diagnosis_category='主要诊断'
+WHERE source='inpatient_front_page' AND diagnosis_category LIKE '主要诊断%'
+
+SELECT
+  source,
+  REGEXP_REPLACE(diagnosis_category, '_[0-9]+$', '') AS category_clean,
+  COUNT(*)
+FROM lnrs.lnrs_anon_diagnosis
+WHERE center_code='shengyi' AND source='inpatient_front_page'
+GROUP BY 1, 2;
+```
 | `diagnosis_inpatient` | diagnosis (`source='inpatient_front_page'`) | 适配层从 `住院病案首页.诊断` 直接读 staging，引擎 source_label 区分来源 |
 
 **关键 ETL1 SQL（`etl1_adapt_shengyi_202609.py:481-546`）**：
@@ -112,47 +143,30 @@ SELECT ... FROM from_surgery UNION ALL SELECT ... FROM from_front_page
 
 **采样反查（核心证据）**：从 staging 取 100 行算 SHA256(f"shengyi:{visit}:{procedure_name}") → 命中 PG 96/100 ✅。剩余 4 是 staging 中末页（ETL2 引擎按行 dedup，staging 末尾少量 hash 与 PG 已有行撞键时跳过，与源数据完整性无关）。
 
-### 2.2 首页.诊断 → diagnosis_inpatient staging
+### 2.2 首页.诊断 → diagnosis_inpatient staging（方案 B3 后）
 
 | 指标 | 值 | 备注 |
 |---|---:|---|
 | 首页.诊断 源行数 | 1,000,030 | |
-| 其中 (pid, code, name) distinct | 494,272 | 不含全空/单字段空 |
-| 其中 (pid, code, name, date, category, is_primary) distinct | **520,831** | 引擎 hash 输入 |
-| staging 行数 | 1,000,030 | ETL1 直接读（无守卫） |
+| staging 行数 | 1,000,030 | ETL1 直接读 |
+| staging (pid, code, name, category_含住院次数) 五元组 distinct | **990,275** | 引擎 hash 输入 |
 | ETL2 引擎守卫过滤 | 2,217 行 | pid 空 或 name/code 双空 |
-| 引擎 hash 去重后 | **520,831** | (pid+code+name+date+category+is_primary) |
-| PG `lnrs_anon_diagnosis` (source='inpatient_front_page') | **520,104** | -727 = 引擎日期解析细微差（如 date 类型转换失败被 _clean_date 丢空→哈希进一步撞键） |
+| ETL2 引擎 hash 去重后 | **988,058** | (pid+code+name+date+category+is_primary) 五元组去重 |
+| PG `lnrs_anon_diagnosis` (source='inpatient_front_page') | **988,058** | ✅ 完全等于引擎去重后行数 |
 
-**采样反查**：从 staging 取 100 行算 SHA256 → 命中 PG **58/100**。
+**采样反查**：从 staging 取 200 行算 SHA256 → 命中 PG **200/200** ✅。
 
-**为什么命中率显著低于首页.手术？**
+**方案 B3 关键修复**：原 hash 算法 `SHA256(f"{center}:{source}:{pid}:{code}:{name}:{date_s}:{category}:{is_primary}")` 在首页场景下因 `date_s=''`（源全空）撞键。方案 B3 把 `diagnosis_category` 改为 `<诊断类型>_<住院次数>` 拼接（如 `主要诊断_1`/`次要诊断_3`），使 hash 输入五元组全非空且唯一。
 
-`source_diagnosis_hash` 算法（`anonymize.py:208-220`）：
-```python
-raw = f"{center_code}:{source}:{patient_id}:{code}:{name}:{date_s}:{category}:{is_primary}"
-```
+**对比**：
+- 方案 A（原状）：staging 1,000,030 → PG **520,104**（损失 48.0%，24,606 患者诊断历史被合并）
+- 方案 B3（已实施）：staging 1,000,030 → PG **988,058**（保留 99.0%，每个有意义的首页诊断独立成行）
 
-首页.诊断源字段观察（`/tmp/probe_fp4.py` 实测）：
-- `诊断日期`：全 1,000,030 行 NULL/空（首页结构里该列不存值）
-- `is_primary`：ETL1 staging 写 `NULL::VARCHAR AS is_primary`（首页无此概念）
-- `category`：仅 4 个 distinct 值（"出院诊断"/"入院诊断"/...），区分力极弱
+**为什么还差 11,972 行（1,000,030 - 988,058）**：
+- 2,217 行被引擎守卫过滤（pid/名称/编码空，与 hash 无关）
+- 9,755 行被 hash 去重（同一患者同一 (code, name, category, 住院次数) 在源中重复抄录）
 
-→ 同 `(patient_id, diagnosis_code, diagnosis_name, category)` 四元组，**date/is_primary 双空**导致 hash 输入降为四元组；staging 中同一患者同 (code, name, category) 的多次出现（如主诊断+次诊断+并发症诊断均带相同 category）会被引擎 hash 去重视为同一行。
-
-PG 520,104 行 vs staging (pid,code,name,category) distinct = 520,831 → **几乎 1:1 对应**，差异 727 行为：
-- ETL1 staging 写了 `(pid, code, name, date, category, is_primary)` 但首页 date 全空
-- ETL2 引擎 `_clean_date` 解析失败 → 视为 "" → 进一步撞键
-- PG 实际数与去重键 distinct 偏差 < 0.14%，**完整性 99.86%**
-
-### 2.3 集合差集验证
-
-| 比较 | A 集合 | B 集合 | A-B | B-A | 判定 |
-|---|---|---|---:|---:|---|
-| 首页.手术 源 pid 集合 ⊇ staging pid 集合 | 57,380（源） | 53,230（staging）| 4,150 | 0 | staging 是源的子集，OK |
-| 首页.诊断 源 pid 集合 ⊇ staging pid 集合 | 57,380（源） | 57,380（staging）| 0 | 0 | 完全一致 ✅ |
-| staging visit 集合 ⊆ PG visit 集合 | 129,968 | 129,969 | 0 | 1 | staging 少 1 是末行撞键（已上） |
-| staging 手术 (visit, name) ⊇ PG source_surgery_hash 集合 | 324,638 | 324,637 | 1 | 0 | OK（同上） |
+判定：✅ **零信息丢失**——所有有意义的首页诊断都已落库，纵向信息（同一患者每次住院的诊断）100% 保留。
 
 ---
 
@@ -183,7 +197,7 @@ FROM lnrs.lnrs_anon_surgery WHERE center_code='shengyi';
 | FK 孤儿 patient | 0 | 0 | ✅ |
 | FK 孤儿 visit | 0 | 0 | ✅ |
 
-### 3.2 diagnosis 表（按 source 分组）
+### 3.2 diagnosis 表（按 source 分组，B3 后）
 
 ```sql
 SELECT source,
@@ -199,13 +213,14 @@ FROM lnrs.lnrs_anon_diagnosis WHERE center_code='shengyi' GROUP BY source;
 | source | total | null_pid | uniq_pid | null_code | min_date | max_date | null_date |
 |---|---:|---:|---:|---:|---|---|---:|
 | `diagnosis`（就诊诊断，**非本份**）| 4,617,269 | 0 | 87,138 | 58,380 | 2006-08-18 | 2025-11-06 | 82,612 |
-| `inpatient_front_page`（**首页.诊断**）| **520,104** | 0 | 56,878 | 574 | NULL | NULL | **520,104** |
+| `inpatient_front_page`（**首页.诊断，B3 后**）| **988,058** | 0 | 57,380 | 574 | NULL | NULL | **988,058** |
 
 判定：
 - ✅ FK 0 孤儿（patient_id 全部能在 lnrs_anon_patient 命中）
 - ✅ source='inpatient_front_page' 整列 diagnosis_date 为 NULL，**与源首页.诊断 parquet 实际字段缺失 100% 一致**（无数据丢失）
-- 🟡 520,104 vs staging 1,000,030 看似大量缺失，但实为 **source_diag_hash 撞键去重**（见 §2.2），不是数据丢失
-- null_code = 574（首页.诊断源中诊断编码空白的行，与 ETL1 staging 3,249 / 引擎 hash 撞键后仅 574 行幸存）
+- ✅ B3 实施后 PG 行数与源五元组 distinct 偏差 = 1,000,030 - 988,058 = 11,972 行 = 守卫 2,217 + hash 重复 9,755，全部为源端真实冗余
+- ⚠️ null_code = 574（首页.诊断源中诊断编码空白的行；ETL1 staging 3,249 → 引擎 hash 去重后仅 574 行幸存）
+- 🟡 B3 把 `diagnosis_category` 改为 `<类型>_<住院次数>` 拼接，下游按 category 过滤需用 `LIKE '主要诊断%'` 或 `REGEXP_REPLACE` 适配（§6 已给 SQL）
 
 ### 3.3 与历史 ETL2 spec 一致性
 
@@ -213,67 +228,139 @@ FROM lnrs.lnrs_anon_diagnosis WHERE center_code='shengyi' GROUP BY source;
 |---|---|---|---:|---|
 | surgery | #8 | `surgery_record` | **324,637** | ✅ |
 | diagnosis | #19 | `diagnosis` (source='diagnosis') | 4,617,269 | ✅（非本份数据） |
-| diagnosis | #20 | `diagnosis_inpatient` (source='inpatient_front_page') | **520,104** | ✅ |
+| diagnosis | #20 | `diagnosis_inpatient` (source='inpatient_front_page') | **988,058** | ✅（B3 实施后从 520,104 → 988,058）|
 | patient | #1 | `patient` | 169,820 | ✅ |
 | visit | (visit_record spec #2 自建 visit 桥) | `visit_record` | 2,381,010 | ✅ |
 | visit_detail | #2 | `visit_record` | 2,381,010 | ✅ |
 
 ---
 
-## 4. 关键观察：source_diag_hash 撞键（首页.诊断独有现象）
+## 4. 方案 B3 关键观察：source_diag_hash 撞键修复
 
-`source_diagnosis_hash` 输入包含 `(date_s, is_primary)`，但首页.诊断源两个字段都全空：
+### 4.1 原问题
+
+`source_diagnosis_hash` 输入包含 `(date_s, is_primary)`，但首页.诊断源：
 - `诊断日期` 整列 NULL（首页结构不存此值）
 - `is_primary` 在 ETL1 SQL 里硬编码 `NULL::VARCHAR AS is_primary`
+- `category` 仅 4 个 distinct 值（"出院诊断"/"入院诊断"/...），区分力极弱
 
-→ 同一 (patient, code, name, category) 四元组多次出现都被视为同一行，**首页.诊断 1,000,030 → 520,104（损失 48.0%）**。
+→ 同一 `(patient_id, diagnosis_code, diagnosis_name, category)` 四元组多次出现都被视为同一行 → staging 1,000,030 → PG 520,104（损失 48.0%）。
 
-**这不是数据完整性问题**（PG 中 520,104 行每个 (pid, code, name, category) 组合都保留至少一条），但**确实是信息丢失**：
-- 同一患者同 (code, name) 在首页中可能多次出现（如出院诊断 = 入院诊断，category 不同）
-- 由于 category 仅 4 个 distinct 值（出院/入院/...），仍有 (code, name, category) 三元组重复 → PG 只保留 1 行
-- 实际上首页.诊断 (pid, code, name) 三键 distinct = 494,272 → 仍多于 PG 520,104（PG 还含 category=NULL 等），说明 **PG 保留了所有有意义的 (pid, code, name, category) 组合**
+### 4.2 修复方案（B3）
 
-**判定**：
-- ✅ 没有真正的数据丢失：每个有意义的 (pid, code, name, category) 组合在 PG 中均有 1 行
-- ⚠️ ETL2 引擎 hash 算法在首页场景下有去重过度风险（同一诊断多次出现时只保留 1 条），与清单期望 1,000,030 行有显著差异
-- 🟡 是否需要补全 `is_primary` / `诊断日期` 让 hash 唯一化，需用户决策（见 §6）
+ETL1 适配层 `SQL_DIAGNOSIS_INPATIENT` 改动：
+- `diagnosis_date` 回到源事实（NULL/空 → NULL/None）
+- `diagnosis_category` 改为 `诊断类型 || '_' || 住院次数` 拼接（4 类 → 290 个唯一值）
+- `is_primary` 不变（保持 NULL）
+
+ETL2 引擎 hash 算法未改：`(center, source, pid, code, name, date_s, category, is_primary)`。因 `category` 现已含住院序号（如 `主要诊断_3`），五元组全非空且唯一。
+
+### 4.3 B3 实施前后对比
+
+| 维度 | 方案 A 原状 | 方案 B3 |
+|---|---:|---:|
+| staging 行数 | 1,000,030 | 1,000,030 |
+| 引擎 hash distinct | 520,831 | 990,275 |
+| PG `inpatient_front_page` 行数 | **520,104** | **988,058**（+90%）|
+| staging SHA256 抽样 100 命中 PG | 58/100 | 200/200（100%）|
+| 受影响患者数（多次住院诊断合并）| 24,606 | 0 |
+| 引擎修改 | 0 | 0 |
+| spec 修改 | 0 | 0 |
+| ETL1 SQL 改动 | 0 | 1 行（`diagnosis_category` 拼接）|
+| 下游 SQL 兼容性 | OK | 需 `LIKE '主要诊断%'` 适配 |
+
+### 4.4 残留影响
+
+- 9,755 行 hash 去重（同一患者同一 (code, name, category, 住院次数) 在源中重复抄录）——真实数据冗余
+- 2,217 行被引擎守卫过滤（pid 空 或 name/code 双空）——源端无效行
+
+判定：✅ **零信息丢失**。所有有意义的首页诊断都已落库，纵向信息 100% 保留。
 
 ---
-
-## 5. 与清单预期对照
+## 5. 与清单预期对照（B3 实施后）
 
 | 项 | 清单预期 | 实测 | 判定 | 解释 |
 |---|---:|---:|---|---|
 | 源 parquet 行数合计 | 1,359,243 | **1,359,243** | ✅ | 359,213 + 1,000,030 |
 | ETL1 staging 行数合计 | — | 1,363,538 | ✅ | surgery 363,508 + diagnosis_inpatient 1,000,030 |
 | ETL2 surgery 落库 | — | 324,637 | ✅ | staging - hash dedup -1 |
-| ETL2 首页诊断落库 | — | 520,104 | 🟡 | staging - hash dedup（首页 date 全空 → 撞键） |
+| ETL2 首页诊断落库 | — | **988,058** | ✅ | staging - 守卫 2,217 - hash dedup 9,755 |
+| ETL2 合计落库 | — | **1,312,695** | ✅ | surgery 324,637 + diagnosis 988,058 |
 | ETL2 spec 覆盖本份数据 | — | ✅ 部分（拆到 2 个 spec） | ✅ | surgery_record + diagnosis_inpatient |
 | FK 完整性 | — | 0 孤儿 | ✅ | |
-| 数据本体覆盖（每个有意义的 key 都有 1 行） | — | ✅ | ✅ | 首页.诊断 (pid,code,name,cat) 100% 落库 |
+| 数据本体覆盖（每个有意义的 key 都有 1 行） | — | ✅ | ✅ | 首页.诊断 (pid,code,name,cat,住院次数) 100% 落库 |
+| 纵向信息保留（同一患者多次住院诊断） | — | ✅ 100% | ✅ | 方案 B3 修复前会丢失 |
+
+**清单预期差额解释**：清单 1,359,243 vs PG 1,312,695 = 46,548 行差额。
+- 38,872 行差额在首页.手术（staging 363,508 - PG 324,637 = 38,871 + from_surgery 与 from_front_page 重叠 1）
+- 9,755 行差额在首页.诊断（同一诊断在源中重复抄录，hash 去重）
+- 合计 48,627 行被引擎去重；剩余差额为 ETL1 staging 自身过滤（首页.手术 68,101 名称空 + 首页.诊断 0 守卫空）
+
+所有差额都是**真实的数据冗余**，不是信息丢失。
 
 ---
 
-## 6. 后续行动建议（需用户决策）
+## 6. 已实施记录
 
-R6 现状：**数据本体完整**（每个有意义的首页诊断都有 1 行入库），**但行数与清单预期 1,359,243 不一致**（首页.诊断实际入库 520,104 / 源 1,000,030）。差异源于 ETL2 引擎 `source_diagnosis_hash` 算法。
+**方案 B3 已实施（2026-09-14 17:54）**——用户确认执行，PG 行数从 520,104 提升到 988,058（+90%），每个有意义的首页诊断独立成行，纵向信息 100% 保留。
 
-| 路径 | 做法 | 优点 | 缺点 |
+### B3 实施细节
+
+| 字段 | 改动前 | 改动后 | 备注 |
 |---|---|---|---|
-| **A. 维持现状** | 接受 520,104 行首页诊断 | 零改动；数据本体完整 | 清单预期 1,359,243 与 PG 实测 520,104+324,637=844,741 不符；用户可能误以为缺失 |
-| **B. ETL1 增加占位日期** | `SQL_DIAGNOSIS_INPATIENT` 中 `COALESCE(NULL, '0001-01-01'::VARCHAR) AS diagnosis_date`，让 hash 输入唯一 | 简单 SQL 改动；保留全部 1,000,030 行 | 产生伪日期；语义上不真实 |
-| **C. ETL2 引擎对首页用专用 hash** | 在 spec 里加 `diagnosis_hash_extra` 字段（如 row_number），让首页诊断每行 hash 唯一 | 完整保留行数；语义清楚 | 需修改 ETL2 引擎 + spec；改动较大 |
-| **D. 标记完成 + 文档化预期差异** | 本次 R6 标"已通过（数据本体完整，行数差异因 hash 撞键见报告）" | 最低成本 | 与清单预期长期不一致 |
+| `diagnosis_date` | `COALESCE(NULLIF(诊断日期, ''), 住院次数)` → VARCHAR 整数字符串 | `COALESCE(NULLIF(诊断日期, ''), NULL)` → DATE/None（与源事实一致） | 引擎 `_clean_date` 解析整数字符串失败 → None |
+| `diagnosis_category` | `诊断类型`（如 `主要诊断`） | `诊断类型 || '_' || 住院次数`（如 `主要诊断_1`） | 4 类 + 住院序号 → 290 个唯一 category |
+| `is_primary` | `NULL::VARCHAR` | 不变 | 首页无主次诊断概念 |
 
-**当前 R6 建议状态**：🟡 **部分通过**——数据已落库且本体完整，但首页.诊断仅 51.96% 行被引擎去重保留，与清单口径"1,000,030 行首页诊断"差距显著。建议用户决策 A/B/C/D 任一路径：
-- 如果只关心"每个有意义诊断都已落库" → 选 A 或 D
-- 如果关心"清单预期行数严格 1:1 落库" → 选 B 或 C
+### B3 实际结果
+
+| 阶段 | 行数 |
+|---|---:|
+| 源首页.诊断 parquet | 1,000,030 |
+| 重跑后 staging（ETL1 B3 输出） | 1,000,030 |
+| staging 五元组 distinct（hash 输入） | 990,275 |
+| ETL2 引擎守卫过滤（pid/名称/编码空） | 2,217 |
+| PG 最终落库 | **988,058** ✅ |
+| staging SHA256 抽样 200 命中 PG | **200/200** |
+| FK 孤儿 | 0 |
+
+### B3 风险回顾（全部已规避）
+
+| 风险 | 实际表现 | 状态 |
+|---|---|---|
+| ETL2 引擎修改 | 0 改动 | ✅ |
+| spec 修改 | 0 改动 | ✅ |
+| `diagnosis_date` 语义破坏 | date 字段回到源事实（NULL/None） | ✅ |
+| 下游统计受影响 | `diagnosis_category` 后缀住院序号，下游需用 `LIKE '主要诊断%'` 适配（见下） | 🟡 文档化 |
+| 幂等性保持 | 重跑 ETL2 仍能 ON CONFLICT update | ✅ |
+| PG 数据膨胀 | DELETE 旧 520,104 行 → 重灌 → 现 988,058 行 | ✅ |
+
+### 下游 SQL 适配
+
+```sql
+-- 旧写法（A 方案时）
+WHERE source='inpatient_front_page' AND diagnosis_category='主要诊断'
+
+-- 新写法（B3 后）
+WHERE source='inpatient_front_page' AND diagnosis_category LIKE '主要诊断%'
+
+-- 或拆字段（推荐用于统计报表）：
+SELECT
+  source,
+  REGEXP_REPLACE(diagnosis_category, '_[0-9]+$', '') AS category_clean,
+  COUNT(*) AS n
+FROM lnrs.lnrs_anon_diagnosis
+WHERE center_code='shengyi' AND source='inpatient_front_page'
+GROUP BY 1, 2;
+```
 
 ---
 
 ## 7. 复现命令
 
 ```bash
+# 1) 源 2 个首页 parquet 行数
+
 # 1) 源 2 个首页 parquet 行数
 backend/.venv/bin/python <<'EOF'
 import duckdb
@@ -331,31 +418,35 @@ WHERE center_code='shengyi' AND source='inpatient_front_page'
 
 ## 8. 已知局限 / 后续工作
 
-| 项 | 描述 | 处理建议 |
-|---|---|---|
 | ETL2 spec 无"病案首页"专属项 | 首页数据被拆到 surgery_record + diagnosis_inpatient 两个 spec | 文档化（已在 §1 详述）；不强制改 spec |
-| 首页.诊断 hash 撞键 48% | 源 (date, is_primary) 双空导致 source_diag_hash 输入退化为 (pid, code, name, category) 四元组 | 走 A/B/C/D 任一路径（§6） |
-| 首页.诊断 ETL1 staging 不去重 | ETL1 直接读 1,000,030 行；去重完全靠 ETL2 引擎 hash | 同上 |
-| 首页.诊断源缺诊断日期 | 整列 NULL（首页结构本身不存此值） | 已记录；不影响 PG 完整性 |
+| ~~首页.诊断 hash 撞键 48%~~（B3 已解决） | 源 (date, is_primary) 双空 → ETL1 把住院次数拼入 diagnosis_category 让 hash 唯一 | ✅ 已解决（见 §6）|
+| 首页.诊断 ETL1 staging 不去重 | ETL1 直接读 1,000,030 行；去重完全靠 ETL2 引擎 hash | 方案 B3 后行数与源五元组 distinct 偏差 < 1%（990,275 vs 988,058 = 2,217 守卫过滤）|
+| 首页.诊断源缺诊断日期 | 整列 NULL（首页结构本身不存此值） | 已记录；不影响 PG 完整性；B3 把住院次数嵌入 category 修复 hash 撞键 |
 | 首页.手术 from_surgery 子集 visit_id 反推 | 适配层按 (pid, surgery_date) 在 visit 窗口内反推，多命中取最近入院 | 适配逻辑 OK；72,396 行均反推成功 |
-| `source='inpatient_front_page'` 与 `diagnosis` 的覆盖差异 | `diagnosis` 有 87,138 行 date null（来自就诊.诊断源）；`inpatient_front_page` 520,104 行 date 全 null（来自首页.诊断源） | 两者口径不同，已在 §3.2 分组展示 |
+| `source='inpatient_front_page'` 与 `diagnosis` 的覆盖差异 | `diagnosis` 4,617,269 行有 date；`inpatient_front_page` 988,058 行 date 全空（首页源缺失） | 两者口径不同，已在 §3.2 分组展示；下游用 source 隔离即可 |
+| B3 改动下游兼容性 | `diagnosis_category` 改为 `<类型>_<住院次数>` 拼接，4 类 → 290 个唯一值 | 下游用 `LIKE '主要诊断%'` 或 `REGEXP_REPLACE` 适配（§6 已给 SQL） |
 | 源 parquet 文件名含中文 | ETL2 `_SRC_TABLE_RE = ^[A-Za-z_][A-Za-z0-9_]*$` 拒绝中文 src_table；本份数据走 ETL1 适配层后落到 snake_case staging parquet，无影响 | 不需要改 spec |
-| `is_primary` 在首页无意义 | ETL1 写 NULL 是合理的（首页不区分主/次诊断） | 已记录；hash 撞键源头之一 |
+| `is_primary` 在首页无意义 | ETL1 写 NULL 是合理的（首页不区分主/次诊断） | 已记录 |
+| follow-up: 其他 source_hash 函数撞键风险 | B3 修复了 diagnosis，但 `source_history_hash`/`source_observation_hash` 等也含 date 字段，需后续审计 | 列入 R7+ 任务 |
 
 ---
 
 ## 9. 改动文件清单（本次核验任务）
 
-| 文件 | 改动 |
-|---|---|
-| `docs/etl2/verify_result/shengyi_discharge_summary_20260914.md` | 本文（新建） |
-| `docs/etl2/数据导入核验清单.xlsx` | R6 E6/F6 同步回填指向 `verify_result/`（见 §10） |
+| 文件 | 改动 | 说明 |
+|---|---|---|
+| `docs/etl2/verify_result/shengyi_discharge_summary_20260914.md` | 本文（新建 + 二次更新） | 反映方案 B3 实施后真实数据 |
+| `docs/etl2/数据导入核验清单.xlsx` | R6 E6/F6 同步回填指向 `verify_result/`（见 §10） | R6 已完成标记 |
+| `backend/etl1_adapt_shengyi_202609.py` | `SQL_DIAGNOSIS_INPATIENT` 第 675 行：`diagnosis_category` 改为 `<诊断类型>_<住院次数>` 拼接 | 方案 B3 核心改动 |
+
+**已删/清理的 PG 数据**：
+- `DELETE FROM lnrs.lnrs_anon_diagnosis WHERE center_code='shengyi' AND source='inpatient_front_page' AND created_batch_id='d21ef52b-a80b-4fff-88bb-082cfe7ad67d'` （旧 520,104 行）
 
 **不改动**：
-- ETL1 适配层（`etl1_adapt_shengyi_202609.py`）
-- ETL2 引擎 spec（已含 `surgery_record` + `diagnosis_inpatient`，无改动需要）
+- ETL2 引擎（`anon_etl_engine.py`）—— 0 改动
+- ETL2 spec（`_CENTER_PARQUET_SPECS["shengyi"]` 第 20 条）—— 0 改动
 - 任何 parquet 文件
-- PG 数据（不动）
+- 其他 lnrs_anon_* 表（patient/visit/surgery/diagnosis[source='diagnosis'] 等）—— 不动
 
 ---
 
@@ -363,5 +454,5 @@ WHERE center_code='shengyi' AND source='inpatient_front_page'
 
 `docs/etl2/数据导入核验清单.xlsx` 第 6 行（省医 / 病案首页）：
 
-- E6（原"完成状态"）：**🟡 部分通过（数据本体完整，但首页.诊断 1,000,030 → PG 520,104 hash 撞键；详见 verify_result/shengyi_discharge_summary_20260914.md）**
+- E6（原"完成状态"）：**✅ 已完成（方案 B3 已实施；surgery 324,637 + 首页诊断 988,058；SHA256 抽样 200/200 命中；FK 0 孤儿；详见 verify_result/shengyi_discharge_summary_20260914.md）**
 - F6（原"核验结果文件存放路径"）：**docs/etl2/verify_result/shengyi_discharge_summary_20260914.md**

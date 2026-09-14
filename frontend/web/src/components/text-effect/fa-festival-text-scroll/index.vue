@@ -31,15 +31,10 @@ const settingStore = useSettingsStore();
 const { showFestivalText } = storeToRefs(settingStore);
 const { currentFestivalData, closeFestivalScroll } = useCeremony();
 
-function versionLabel(): string {
-  const v = String(import.meta.env.VITE_VERSION ?? "").trim();
-  if (!v) return "";
-  return v.startsWith("v") ? v : `v${v}`;
-}
 
 const festivalScrollDisplayHtml = computed(() => {
   const raw = currentFestivalData.value?.scrollText ?? "";
-  const ver = versionLabel() || "v0.0.0";
+  const ver = settingStore.versionLabel();
   return raw.replace(/\{\{version\}\}/g, ver).replace(/\{\{introduceUrl\}\}/g, WEB_LINKS.INTRODUCE);
 });
 

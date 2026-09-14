@@ -7,7 +7,7 @@
         <div class="logo">LNRS</div>
         <div>
           <h1>肺结节多维度数据云平台</h1>
-          <small>LUNG NODULE RESEARCH SYSTEM · v3.0</small>
+          <small>LUNG NODULE RESEARCH SYSTEM · {{ settingStore.versionLabel() }}</small>
         </div>
       </div>
 
@@ -186,7 +186,6 @@ const { t, locale } = useI18n();
 
 const authPanel = ref<AuthPanel>("login");
 const loginFlowMode = ref<LoginFlowMode>("account");
-
 const panelTitle = computed(() => {
   if (authPanel.value === "register") return t("login.reg");
   if (authPanel.value === "forget") return t("login.resetPassword");

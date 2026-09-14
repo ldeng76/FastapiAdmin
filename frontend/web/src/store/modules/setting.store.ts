@@ -405,6 +405,11 @@ export const useSettingsStore = defineStore(
       pageSwitchingAnimation.value = defaultSettings.pageSwitchingAnimation;
     }
 
+    function versionLabel(): string {
+      const v = String(import.meta.env.VITE_VERSION ?? "").trim();
+      if (!v) return "v0.0.0";
+      return v.startsWith("v") ? v : `v${v}`;
+    }
     // ==============================================
     // 返回所有状态和方法
     // ==============================================
@@ -469,6 +474,7 @@ export const useSettingsStore = defineStore(
       isShowFireworks,
 
       // 从 setting.ts 来的方法
+      versionLabel,
       switchMenuLayouts,
       setMenuOpenWidth,
       setGlopTheme,

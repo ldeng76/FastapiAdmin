@@ -142,6 +142,7 @@ class MedFilesService:
         # 聚合
         sql = select(
             func.count(m.id).label("file_count"),
+            func.count(func.distinct(m.patient_id)).label("patient_count"),
             # func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
         )
         sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type)
@@ -150,22 +151,19 @@ class MedFilesService:
         result = await auth.db.execute(sql)
         row = result.one_or_none()
         file_count = 0
+        patient_count = 0
         total_size_bytes = 0
         if row is not None:
             file_count = int(row[0] or 0)
+            patient_count = int(row[1] or 0)
             # total_size_bytes = int(row[1] or 0)
 
-        # 患者数 + 检查量：直接查 AnonExamModel（按 exam_type 筛选）
-        anon_sql = select(
-            func.count(func.distinct(AnonExamModel.patient_id)).label("patient_count"),
-            func.count(AnonExamModel.anon_exam_id).label("exam_count"),
-        )
+        # 检查量：直接查 AnonExamModel 行数（按 exam_type 筛选）
+        exam_count_sql = select(func.count(AnonExamModel.anon_exam_id))
         if exam_type:
-            anon_sql = anon_sql.where(AnonExamModel.exam_type.in_(exam_type))
-        anon_result = await auth.db.execute(anon_sql)
-        anon_row = anon_result.one_or_none()
-        patient_count = int(anon_row[0] or 0) if anon_row is not None else 0
-        exam_count = int(anon_row[1] or 0) if anon_row is not None else 0
+            exam_count_sql = exam_count_sql.where(AnonExamModel.exam_type.in_(exam_type))
+        exam_count_result = await auth.db.execute(exam_count_sql)
+        exam_count = int(exam_count_result.scalar() or 0)
 
         # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
         by_exam_type: list[dict] = []

@@ -93,7 +93,7 @@ import {useRouter} from "vue-router";
 const dictStore = useDictStore();
 const router = useRouter();
 const loading = ref(false)
-const searchForm = ref<any>({sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:"",modality:""});
+const searchForm = ref<any>({sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
 const searchItems = ref<SearchFormItem[]>([])
 const overviewCount = ref<StatsKpi[]>([]);
 const ageCount : any = ref({
@@ -127,7 +127,7 @@ async function searchCall(isRedirectPatient = false,query = {}){
 }
 
 function clearSearch() {
-  searchForm.value = {sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:"",modality:""}
+  searchForm.value = {sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""}
   searchCall()
 }
 
@@ -216,7 +216,6 @@ onBeforeMount(async function (){
   const ageBuckets = await StatisticsAPI.getAgeBuckets()
   const dictObj = await dictStore.getDict(['med_sex','med_exam_type','med_blood_type_abo','med_blood_type_rh','med_smoking_status'],true)
   searchItems.value = [
-    { key: "modality", label: getFieldLabel("modality"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_exam_type, placeholder: "请选择", span: 4 },
     { key: "sex", label: getFieldLabel("sex"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_sex, placeholder: "请选择", span: 4 },
     { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
     { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_abo, placeholder: "请选择", span: 4 },

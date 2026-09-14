@@ -68,21 +68,7 @@
             @click.middle.prevent="onMiddleClickClose(item)"
             @contextmenu.prevent="(e: MouseEvent) => showMenu(e, item.path)"
           >
-            <button
-              type="button"
-              class="worktab-star focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--el-color-primary) focus-visible:ring-offset-1 rounded"
-              :class="{ 'worktab-star--on': isQuickLinkBookmarked(item) }"
-              :title="
-                isQuickLinkBookmarked(item) ? t('worktab.bookmarkRemove') : t('worktab.bookmarkAdd')
-              "
-              @click.prevent.stop="toggleQuickBookmark(item)"
-            >
-              <FaSvgIcon
-                :icon="isQuickLinkBookmarked(item) ? 'ri:star-fill' : 'ri:star-line'"
-                class="text-sm"
-              />
-            </button>
-            <FaSvgIcon
+            <FaMenuRouteIcon
               v-show="item.icon"
               :icon="item.icon"
               class="text-base mr-1 shrink-0 group-hover:text-theme"
@@ -622,33 +608,6 @@ function bookmarkHref(item: WorkTab): string {
   return s ? `${item.path}?${s}` : item.path;
 }
 
-function isQuickLinkBookmarked(item: WorkTab): boolean {
-  void quickLinksRevision.value;
-  return quickStartManager.isLinkExists(bookmarkHref(item));
-}
-
-function toggleQuickBookmark(item: WorkTab): void {
-  const href = bookmarkHref(item);
-  const title = item.customTitle || formatMenuTitle(item.title);
-  try {
-    if (quickStartManager.isLinkExists(href)) {
-      quickStartManager.removeQuickLinkByHref(href);
-      ElMessage.success(t("worktab.bookmarkRemoved"));
-    } else {
-      const link = quickStartManager.createQuickLinkFromRoute(
-        { ...item, title, fullPath: href, path: item.path },
-        title
-      );
-      link.href = href;
-      if (quickStartManager.addQuickLink(link)) {
-        ElMessage.success(t("worktab.bookmarkAdded"));
-      }
-    }
-  } catch (e) {
-    console.error(e);
-    ElMessage.error(t("worktab.bookmarkFail"));
-  }
-}
 
 function onMiddleClickClose(item: WorkTab): void {
   if (!item.fixedTab && list.value.length > 1) {

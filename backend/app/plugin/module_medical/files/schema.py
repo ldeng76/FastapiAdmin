@@ -76,6 +76,7 @@ class MedFilesStatisticsOutSchema(BaseModel):
 
     file_count: int = Field(description="文件个数")
     patient_count: int = Field(description="去重后的患者个数")
+    exam_count: int = Field(description="去重后的检查量（按 dicom_study_uid 统计）")
     total_size_bytes: int = Field(description="所有文件总大小（字节）")
     total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")
     by_exam_type: list[GroupStatItem] = Field(

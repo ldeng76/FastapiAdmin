@@ -25,9 +25,10 @@
     <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
         <div style="display: flex;align-items: center;justify-content: center;font-size: 20px">
-          总计<strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="!statisticsCount.file_count || statisticsCount.file_count <10 ? 0 :1000" /></strong> 文件
-          <FaSvgIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="!statisticsCount.patient_count || statisticsCount.patient_count <10 ? 0 :1000" separator="," /></strong> 患者
-          <FaSvgIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
+          <FaMenuRouteIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="!statisticsCount.patient_count || statisticsCount.patient_count <10 ? 0 :1000" separator="," /></strong> 患者
+          <FaMenuRouteIcon icon="el-icon-Tickets" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="!statisticsCount.exam_count || statisticsCount.exam_count <10 ? 0 :1000" /></strong> 记录
+          <FaMenuRouteIcon icon="file" style="font-size: 24px;margin-left: 15px" /><strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="!statisticsCount.file_count || statisticsCount.file_count <10 ? 0 :1000" /></strong> 文件
+          <FaMenuRouteIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
         </div>
         <FaTable
           :data="data"

@@ -20,6 +20,7 @@ export interface StatisticsCount {
   file_count?:number,
   exam_count?:number,
   patient_count?:number,
+  record_patient_count?:number,
   total_size_bytes?:number,
   total_size_text?:string,
   by_exam_type?:StatisticsCountType[],

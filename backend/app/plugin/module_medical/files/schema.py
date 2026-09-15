@@ -37,14 +37,20 @@ class MedicalFilesQueryParam:
         file_type: str | None = Query(
             None, description="文件类型（多选，逗号分隔，如 dcm,nii）"
         ),
+        center_type: str | None = Query(
+            None, description="中心筛选（多选，逗号分隔，如 sy,sh）"
+        ),
     ) -> None:
         exam_list = [s.strip() for s in exam_type.split(",")] if exam_type else None
         exam_list = [s for s in exam_list if s] if exam_list else None
         file_list = [s.strip() for s in file_type.split(",")] if file_type else None
         file_list = [s for s in file_list if s] if file_list else None
+        center_list = [s.strip() for s in center_type.split(",")] if center_type else None
+        center_list = [s for s in center_list if s] if center_list else None
 
         self.exam_type = (QueueEnum.in_.value, exam_list) if exam_list else None
         self.file_type = (QueueEnum.in_.value, file_list) if file_list else None
+        self.center_type = (QueueEnum.in_.value, center_list) if center_list else None
 
 
 class DictItemSchema(BaseModel):
@@ -75,8 +81,9 @@ class MedFilesStatisticsOutSchema(BaseModel):
     """医疗文件统计响应。"""
 
     file_count: int = Field(description="文件个数")
-    patient_count: int = Field(description="去重后的患者个数")
-    exam_count: int = Field(description="去重后的检查量（按 dicom_study_uid 统计）")
+    patient_count: int = Field(description="有文件的患者数（MedFilesModel 去重）")
+    record_patient_count: int = Field(description="记录患者数（AnonExamModel 去重）")
+    exam_count: int = Field(description="检查量（AnonExamModel 行数）")
     total_size_bytes: int = Field(description="所有文件总大小（字节）")
     total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")
     by_exam_type: list[GroupStatItem] = Field(

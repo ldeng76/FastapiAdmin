@@ -119,11 +119,13 @@ async def statistics_controller(
 
     - exam_type：模态类型，多选逗号分隔（如 ?exam_type=CT,PETCT）
     - file_type：文件类型，多选逗号分隔（如 ?file_type=dicom,nii）
+    - center_type：中心筛选，多选逗号分隔（如 ?center_type=sy,sh）
     """
     exam_type = search.exam_type[1] if search.exam_type else None
     file_type = search.file_type[1] if search.file_type else None
+    center_type = search.center_type[1] if search.center_type else None
     data = await MedFilesService.statistics_service(
-        auth=auth, exam_type=exam_type, file_type=file_type
+        auth=auth, exam_type=exam_type, file_type=file_type, center_type=center_type
     )
     return SuccessResponse(data=data, msg="查询医疗文件统计成功")
 

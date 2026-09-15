@@ -18,8 +18,10 @@ from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
 
 
-def _human_readable_size(num_bytes: int) -> str:
+def _human_readable_size(num_bytes: int | None) -> str | None:
     """把字节数格式化成易读字符串（保留 2 位小数，自动进位到 KB/MB/GB/TB）。"""
+    if num_bytes is None:
+        return None
     size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
         if abs(size) < 1024.0:
@@ -153,7 +155,9 @@ class MedFilesService:
         sql = select(
             func.count(m.id).label("file_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
-            # func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
+            # 文件字节数聚合：MedFilesModel 当前映射的 lnrs_anon_imaging_study 表未落库 byte_size 列。
+            # 等 ETL-2 回填 lnrs_anon_dicom_series.byte_size 后，可改查 lnrs_anon_v_imaging_study_counts 视图（见 backend/sql/postgres/0020-imaging-study-counts-view.sql）。
+            # 暂不返回占位 0，避免前端展示成误导性的 "0.00 B"。
         )
         sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
         sql = await cls._apply_permission(auth, sql)
@@ -162,12 +166,13 @@ class MedFilesService:
         row = result.one_or_none()
         file_count = 0
         patient_count = 0
-        total_size_bytes = 0
         if row is not None:
             file_count = int(row[0] or 0)
             patient_count = int(row[1] or 0)
-            # total_size_bytes = int(row[1] or 0)
-
+        # total_size_bytes: 文件字节数聚合已暂时禁用——MedFilesModel 当前映射的
+        # lnrs_anon_imaging_study 表未落库 byte_size 列，详见聚合处注释。
+        # 等 ETL-2 回填 lnrs_anon_dicom_series.byte_size 后再恢复 SUM 聚合。
+        total_size_bytes: int | None = None
         # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
         by_exam_type: list[dict] = []
         exam_sql = select(

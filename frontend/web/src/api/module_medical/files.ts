@@ -36,11 +36,12 @@ const FilesApi = {
     })
   },
   async statistics(params = {}) {
-    const data = {
+    const data: StatisticsCount = {
       file_count: 0,
       patient_count: 0,
-      total_size_bytes: 0,
-      total_size_text: ""
+      exam_count: 0,
+      total_size_bytes: undefined,
+      total_size_text: undefined,
     }
     try {
       const res = await request<ApiResponse<StatisticsCount>>({

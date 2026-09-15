@@ -83,8 +83,14 @@ class MedFilesStatisticsOutSchema(BaseModel):
     file_count: int = Field(description="文件个数")
     patient_count: int = Field(description="有文件的患者数（MedFilesModel 去重）")
     exam_count: int = Field(description="检查量（AnonExamModel 行数）")
-    total_size_bytes: int = Field(description="所有文件总大小（字节）")
-    total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")
+    total_size_bytes: int | None = Field(
+        default=None,
+        description="所有文件总大小（字节）。当前数据源未落库文件大小字段，固定为 null，待 ETL-2 回填 lnrs_anon_dicom_series.byte_size 后恢复聚合。",
+    )
+    total_size_text: str | None = Field(
+        default=None,
+        description="总大小易读文本，如 '12.34 GB'。数据不可得时为 null，前端应显示 —。",
+    )
     by_exam_type: list[GroupStatItem] = Field(
         default_factory=list, description="各模态文件数及占比"
     )

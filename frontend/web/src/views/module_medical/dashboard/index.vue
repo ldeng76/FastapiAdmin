@@ -14,7 +14,7 @@
     </el-header>
     <el-main>
       <el-row :gutter="20">
-        <el-col :xs="24" :sm="12" :md="8" :lg="5" v-for="n in overviewCount" :key="n.key">
+        <el-col class="mb-5" :xs="24" :sm="12" :md="8" :lg="6" v-for="n in overviewCount" :key="n.key">
           <Total :label="n.label" :icon="n.icon" :value="n.value"/>
         </el-col>
       </el-row>
@@ -93,7 +93,7 @@ import {useRouter} from "vue-router";
 const dictStore = useDictStore();
 const router = useRouter();
 const loading = ref(false)
-const searchForm = ref<any>({sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""});
+const searchForm = ref<any>({center:'',sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:"",modality:""});
 const searchItems = ref<SearchFormItem[]>([])
 const overviewCount = ref<StatsKpi[]>([]);
 const ageCount : any = ref({
@@ -108,16 +108,15 @@ const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
 })
 
 const kpisIcon = {
-  case_total_patients: "ri:user-heart-fill",
-  case_patients_with_exam: "ri:user-star-fill",
-  case_total_exams: "ri:file-list-3-fill",
+  total_patients: "ri:user-heart-fill",
+  patients_with_exam: "ri:user-star-fill",
   total_exams: "ri:chat-check-fill",
   center_count: "ri:hospital-fill",
   modality_count: "ri:mail-line",
 }
 
 async function searchCall(isRedirectPatient = false,query = {}){
-  const params = Object.assign({is_placeholders:false},searchForm.value,query);
+  const params = Object.assign({is_placeholders:true},searchForm.value,query);
   if(isRedirectPatient){
     await router.push({path: '/medicalPatient', query: params});
     return;
@@ -129,7 +128,7 @@ async function searchCall(isRedirectPatient = false,query = {}){
 }
 
 function clearSearch() {
-  searchForm.value = {sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:""}
+  searchForm.value = {center:'',sex:'',age_bucket:"",abo_blood_type:"",rh_blood_type:"",smoking_status:"",modality:""}
   searchCall()
 }
 
@@ -216,8 +215,10 @@ function upDateChatsView(overview:StatsOverview){
 }
 onBeforeMount(async function (){
   const ageBuckets = await StatisticsAPI.getAgeBuckets()
-  const dictObj = await dictStore.getDict(['med_sex','med_exam_type','med_blood_type_abo','med_blood_type_rh','med_smoking_status'],true)
+  const dictObj = await dictStore.getDict(['med_sex','med_center','med_exam_type','med_blood_type_abo','med_blood_type_rh','med_smoking_status'],true)
   searchItems.value = [
+    { key: "center", label: getFieldLabel("source_center"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_center, placeholder: "请选择", span: 4 },
+    { key: "modality", label: getFieldLabel("modality"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_exam_type, placeholder: "请选择", span: 4 },
     { key: "sex", label: getFieldLabel("sex"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_sex, placeholder: "请选择", span: 4 },
     { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
     { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_abo, placeholder: "请选择", span: 4 },

@@ -261,6 +261,16 @@ class Settings(BaseSettings):
     LNRS_DATA_ROOT: Path = BASE_DIR.parent / "data"
 
     # ================================================= #
+    # ************ OPS Web 部署面板配置 **************** #
+    # ================================================= #
+    # 固定密码 + 随机路径段触发 ./deploy-h196_3.sh 部署。
+    # 任一为空 → /ops 全部路由 404（功能关闭）。
+    OPS_DEPLOY_PASSWORD: str = ""
+    OPS_DEPLOY_SLUG: str = ""
+    OPS_DEPLOY_SCRIPT: str = "/home/dzy/wk/lnrs/deploy-h196_3.sh"
+    OPS_DEPLOY_RUN_DIR: Path = BASE_DIR / ".run"
+
+    # ================================================= #
     # ******************* 请求限制配置 ****************** #
     # ================================================= #
     REQUEST_LIMITER_REDIS_PREFIX: str = "fastapiadmin:request_limiter:"

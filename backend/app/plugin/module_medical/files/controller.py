@@ -27,10 +27,10 @@ MedFilesRouter = APIRouter(
     route_class=OperationLogRoute, prefix="/files", tags=["医疗文件"],
 )
 
-# 允许排序的字段白名单（对应 MedFilesModel 的 ORM 属性名，防止注入任意列）
+# 允许排序的字段白名单（UNION 结果列别名，防止注入任意列）
 ALLOWED_SORT_FIELDS = {
     "id", "anon_exam_id", "file_name", "patient_id",
-    "exam_type", "file_type", "file_path",
+    "exam_type", "file_type", "file_path", "exam_date",
 }
 # 允许的排序方式
 ALLOWED_SORT_ORDERS = {"asc", "desc"}

@@ -135,9 +135,6 @@ const {
 } = useTable({
   transform:{
     dataTransformer(data){
-      data.forEach(function (n:any){
-        n.file_type = 'dcm'
-      })
       return data
     }
   },
@@ -188,7 +185,8 @@ const {
               if(viewer?.value){
                 viewer?.value.open({
                   file_type:row.file_type,
-                  file_id:row.id
+                  file_id:row.id,
+                  anon_exam_id:row.anon_exam_id
                 })
               }
             }},

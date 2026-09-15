@@ -8,7 +8,8 @@ export interface FilesTable {
   exam_type?: string;
   file_type?: string;
   file_size?: number;
-  id?:number
+  id?: number | string
+  anon_exam_id?: string
 }
 export interface StatisticsCountType{
   count:number,

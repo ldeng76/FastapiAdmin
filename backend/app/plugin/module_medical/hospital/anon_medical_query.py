@@ -222,7 +222,7 @@ async def anon_list_patients(
     """患者分页列表（基于 AnonPatientModel）。返回 (行列表, 总数)。
 
     筛选条件统一由 stats_query.build_patient_filters(filters) 构建，
-    与仪表板统计概览共用同一套逻辑（sex/modality/age_bucket/
+    与仪表板统计概览共用同一套逻辑（center/sex/modality/age_bucket/
     abo/rh/smoking/bmi_bucket/patient_id/is_placeholders），新增筛选项只需改那一处。
 
     此外 latest_lung_rads 走本函数内追加（按患者最新一次 lung_rads 等级精确匹配）。

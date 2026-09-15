@@ -168,15 +168,6 @@ class MedFilesService:
             patient_count = int(row[1] or 0)
             # total_size_bytes = int(row[1] or 0)
 
-        # 检查量：直接查 AnonExamModel 行数（按 exam_type + center_type 筛选）
-        exam_count_sql = select(func.count(AnonExamModel.anon_exam_id))
-        if exam_type:
-            exam_count_sql = exam_count_sql.where(AnonExamModel.exam_type.in_(exam_type))
-        if center_type:
-            exam_count_sql = exam_count_sql.where(AnonExamModel.center_code.in_(center_type))
-        exam_count_result = await auth.db.execute(exam_count_sql)
-        exam_count = int(exam_count_result.scalar() or 0)
-
         # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
         by_exam_type: list[dict] = []
         exam_sql = select(
@@ -224,7 +215,7 @@ class MedFilesService:
         return {
             "file_count": file_count,
             "patient_count": patient_count,
-            "exam_count": exam_count,
+            "exam_count": file_count,
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),
             "by_exam_type": by_exam_type,

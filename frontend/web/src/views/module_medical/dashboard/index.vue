@@ -108,16 +108,15 @@ const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
 })
 
 const kpisIcon = {
-  case_total_patients: "ri:user-heart-fill",
-  case_patients_with_exam: "ri:user-star-fill",
-  case_total_exams: "ri:file-list-3-fill",
+  total_patients: "ri:user-heart-fill",
+  patients_with_exam: "ri:user-star-fill",
   total_exams: "ri:chat-check-fill",
   center_count: "ri:hospital-fill",
   modality_count: "ri:mail-line",
 }
 
 async function searchCall(isRedirectPatient = false,query = {}){
-  const params = Object.assign({is_placeholders:false},searchForm.value,query);
+  const params = Object.assign({is_placeholders:true},searchForm.value,query);
   if(isRedirectPatient){
     await router.push({path: '/medicalPatient', query: params});
     return;

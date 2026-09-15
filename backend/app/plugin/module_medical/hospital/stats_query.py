@@ -519,14 +519,12 @@ class StatsQuery:
         """仪表板全量概览 — 返回 {filters, kpis, dimensions} 结构（ADR-0007）。"""
         # 基础聚合
         total_exams = await self.count_exams()
-        centers = await self.distinct_centers()
         modalities = await self.distinct_modalities()
 
         # kpis
         kpis = [
-            {"key": "case_total_patients", "label": "病例·患者总数", "value": await self.count_patients(), "format": "number"},
-            {"key": "case_patients_with_exam", "label": "病例·有检查患者", "value": await self.count_patients_with_exam(), "format": "number"},
-            {"key": "case_total_exams", "label": "病例·检查总数", "value": await self.count_exams(), "format": "number"},
+            {"key": "total_patients", "label": "患者总量", "value": await self.count_patients(), "format": "number"},
+            {"key": "patients_with_exam", "label": "患者总量(有检查记录)", "value": await self.count_patients_with_exam(), "format": "number"},
             {"key": "total_exams", "label": "检查总量", "value": total_exams, "format": "number"},
             {"key": "modality_count", "label": "检查模态", "value": len(modalities), "format": "number"},
         ]

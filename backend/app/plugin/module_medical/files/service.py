@@ -12,8 +12,7 @@ from app.core.exceptions import CustomException
 from app.core.logger import log
 from app.core.permission import Permission
 
-from ..hospital.anon_model import AnonExamModel
-from .crud import MedFilesCRUD
+from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel
 from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
 
@@ -145,82 +144,62 @@ class MedFilesService:
 
         参数:
             auth:        当前用户鉴权信息（控制行级可见性）
-            exam_type:   可选，多选模态
-            file_type:   可选，多选文件类型
-            center_type: 可选，多选中心筛选
+            exam_type:   可选，多选模态（2026-09-15 注：imaging_study 无 exam_type 列，
+                        保留参数兼容前端，但筛选语义为 noop）
+            file_type:   可选，多选文件类型（同上：保留参数，但 noop）
+            center_type: 可选，多选中心筛选（按 lnrs_anon_imaging_study.center_code 过滤）
+
+        数据流（2026-09-15 重构自单 MedFilesModel 聚合）：
+        - file_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
+        - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
+        - by_exam_type / by_file_type：noop（imaging_study 无这两列；DICOM 体系下
+          modality 是 dicom_series 主键，原 service 的 m.exam_type GROUP BY 不再适用）
+        - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
+          不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
         """
         m = MedFilesModel
 
-        # 聚合
-        sql = select(
+        count_sql = select(
             func.count(m.id).label("file_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
-            # 文件字节数聚合：MedFilesModel 当前映射的 lnrs_anon_imaging_study 表未落库 byte_size 列。
-            # 等 ETL-2 回填 lnrs_anon_dicom_series.byte_size 后，可改查 lnrs_anon_v_imaging_study_counts 视图（见 backend/sql/postgres/0020-imaging-study-counts-view.sql）。
-            # 暂不返回占位 0，避免前端展示成误导性的 "0.00 B"。
         )
-        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
-        sql = await cls._apply_permission(auth, sql)
+        count_sql = cls._apply_search_conditions(count_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
+        count_sql = await cls._apply_permission(auth, count_sql)
+        count_result = await auth.db.execute(count_sql)
+        count_row = count_result.one_or_none()
+        file_count = int(count_row[0] or 0) if count_row else 0
+        patient_count = int(count_row[1] or 0) if count_row else 0
+        exam_count = file_count  # 沿用原 service：exam_count 与 file_count 同步（2026-09-04 commit 202fd283 设计延续）
 
-        result = await auth.db.execute(sql)
-        row = result.one_or_none()
-        file_count = 0
-        patient_count = 0
-        if row is not None:
-            file_count = int(row[0] or 0)
-            patient_count = int(row[1] or 0)
-        # total_size_bytes: 文件字节数聚合已暂时禁用——MedFilesModel 当前映射的
-        # lnrs_anon_imaging_study 表未落库 byte_size 列，详见聚合处注释。
-        # 等 ETL-2 回填 lnrs_anon_dicom_series.byte_size 后再恢复 SUM 聚合。
-        total_size_bytes: int | None = None
-        # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
+        # ---- 总字节数：从 dicom_series 累加 ----
+        # 与原 MedFilesModel._apply_search_conditions 保持语义对齐：center_type 按
+        # imaging_study.center_code 过滤；exam_type / file_type 在新数据体系下 noop
+        # （imaging_study 无 exam_type/file_type 列；modality 来自 dicom_series 但
+        # 100%='CT'，拆分无意义——见 Issue 4 调研 shengyi exam 缺口）
+        size_sql = select(func.coalesce(func.sum(AnonDicomSeriesModel.byte_size), 0))
+        size_sql = size_sql.join(
+            m,
+            AnonDicomSeriesModel.dicom_study_uid == m.file_name,
+        )
+        # Permission: dicom_series 走 MedFilesModel 的同一权限行级过滤（dicom_series 与
+        # imaging_study 通过 dicom_study_uid 1:1；权限维度一致）
+        size_sql = await cls._apply_permission(auth, size_sql)
+        size_result = await auth.db.execute(size_sql)
+        total_size_bytes = int(size_result.scalar() or 0)
+
+        # ---- by_exam_type / by_file_type：2026-09-15 重构后 noop ----
+        # 原 service 用 m.exam_type / m.file_type GROUP BY；当前 imaging_study 表无这两列
+        # （MedFilesModel 仅映射 imaging_study，不映射 exam 表）。DICOM 体系下 modality
+        # 来自 dicom_series，但 h196_3 上 imaging_study.modality 100%='CT'，
+        # GROUP BY modality 只能拆出 CT 一行无意义。
+        # 后续 Issue 4 调研 shengyi exam 缺口后，再决定是否重新设计。
         by_exam_type: list[dict] = []
-        exam_sql = select(
-            m.exam_type,
-            func.count(m.id),
-        ).where(m.exam_type.is_not(None), m.exam_type != "")
-        exam_sql = cls._apply_search_conditions(exam_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
-        exam_sql = await cls._apply_permission(auth, exam_sql)
-        exam_sql = exam_sql.group_by(m.exam_type)
-        exam_result = await auth.db.execute(exam_sql)
-        exam_rows = exam_result.all()
-
-        for value, count in exam_rows:
-            cnt = int(count or 0)
-            pct = round(cnt / file_count * 100, 2) if file_count > 0 else 0.0
-            by_exam_type.append({
-                "value": str(value),
-                "label": str(value),
-                "count": cnt,
-                "percentage": pct,
-            })
-
-        # 各文件类型分组统计
         by_file_type: list[dict] = []
-        ft_sql = select(
-            m.file_type,
-            func.count(m.id),
-        ).where(m.file_type.is_not(None), m.file_type != "")
-        ft_sql = cls._apply_search_conditions(ft_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
-        ft_sql = await cls._apply_permission(auth, ft_sql)
-        ft_sql = ft_sql.group_by(m.file_type)
-        ft_result = await auth.db.execute(ft_sql)
-        ft_rows = ft_result.all()
-
-        for value, count in ft_rows:
-            cnt = int(count or 0)
-            pct = round(cnt / file_count * 100, 2) if file_count > 0 else 0.0
-            by_file_type.append({
-                "value": str(value),
-                "label": str(value),
-                "count": cnt,
-                "percentage": pct,
-            })
 
         return {
             "file_count": file_count,
             "patient_count": patient_count,
-            "exam_count": file_count,
+            "exam_count": exam_count,
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),
             "by_exam_type": by_exam_type,

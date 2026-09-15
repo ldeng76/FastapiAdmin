@@ -40,8 +40,8 @@ const FilesApi = {
       file_count: 0,
       patient_count: 0,
       exam_count: 0,
-      total_size_bytes: undefined,
-      total_size_text: undefined,
+      total_size_bytes: 0,
+      total_size_text: "",
     }
     try {
       const res = await request<ApiResponse<StatisticsCount>>({

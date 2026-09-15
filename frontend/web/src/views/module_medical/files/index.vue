@@ -29,7 +29,7 @@
           <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
           <FaMenuRouteIcon icon="el-icon-Tickets" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong> 记录
           <FaMenuRouteIcon icon="file" style="font-size: 24px;margin-left: 15px" /><strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong> 文件
-          <FaMenuRouteIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="renderTotalSize()"></span>
+          <FaMenuRouteIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
         </div>
         <FaTable
           :data="data"
@@ -80,15 +80,6 @@ function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
   }
 
   return (!isNumStrong ? size.toFixed(2) :'<strong>'+size.toFixed(2)+'</strong>') + ' ' + units[index];
-}
-function renderTotalSize(){
-  // 文件字节数当前数据源未落库（见 backend service.py statistics_service 注释），
-  // 后端返回 null/undefined 时显示 "—"，避免误导性的 "0.00 B"。
-  const raw = statisticsCount.value.total_size_bytes
-  if (typeof raw !== 'number') {
-    return '<span title="文件大小尚未落库，ETL-2 回填后开放">—</span>'
-  }
-  return fileSize(raw, true)
 }
 const dictStore = useDictStore();
 function onSortChange({ prop, order }:any){

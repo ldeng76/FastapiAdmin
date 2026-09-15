@@ -25,12 +25,12 @@ import logging
 from typing import Any
 
 from sqlalchemy import (
-    ColumnElement,
     Date,
     asc,
     cast,
     desc,
     func,
+    literal,
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -563,27 +563,19 @@ _STUDY_DESCRIPTION_EXPR = (
     + " "
     + func.to_char(_PATH_DATE_LITERAL, "YYYY-MM-DD")
 ).label("study_description")
-# series_count 子查询（2026-09-15 引入）：LEFT JOIN lnrs_anon_dicom_series，
-# 无 series 行时为 0（与视图 v_imaging_study_counts 行为对齐，避免前端
-# 「序列数 X」显示 NULL）。走 lnrs_anon_ix_series_study_uid 索引，
-# 单 patient 路径开销毫秒级。
-_SERIES_COUNT_SUBQ = (
+# 2026-09-15 dicom_series 重构为 study 级：series_count 不再有意义
+# （原 series_uid 字段移除，视图 v_imaging_study_counts.series_count 固定 0）。
+# dicom_series 现在是 study 维度一对一，直接 LEFT JOIN 拿 file_count / byte_size，
+# 走 dicom_study_uid UNIQUE 索引命中毫秒级。
+# 保留 series_count 字段返回 0 以兼容前端 DicomStudy 类型契约。
+_DICOM_SERIES_LEFT = (
     select(
-        AnonImagingStudyModel.dicom_study_uid.label("study_uid"),
-        func.coalesce(
-            func.count(AnonDicomSeriesModel.series_id), 0
-        ).label("series_count"),
-    )
-    .select_from(AnonImagingStudyModel)
-    .outerjoin(
-        AnonDicomSeriesModel,
-        AnonDicomSeriesModel.dicom_study_uid == AnonImagingStudyModel.dicom_study_uid,
-    )
-    .group_by(AnonImagingStudyModel.dicom_study_uid)
-    .subquery()
+        AnonDicomSeriesModel.dicom_study_uid.label("study_uid"),
+        AnonDicomSeriesModel.file_count.label("file_count"),
+        AnonDicomSeriesModel.byte_size.label("byte_size"),
+    ).subquery()
 )
-
-# 列出 SQL 列：与前端 DicomStudy 类型对齐
+# 列：与前端 DicomStudy 类型对齐
 IMAGING_STUDY_LIST_COLS = [
     AnonImagingStudyModel.study_key,
     AnonImagingStudyModel.dicom_study_uid.label("study_uid"),
@@ -595,7 +587,9 @@ IMAGING_STUDY_LIST_COLS = [
     AnonImagingStudyModel.created_at,
     _STUDY_DATE_EXPR,
     _STUDY_DESCRIPTION_EXPR,
-    _SERIES_COUNT_SUBQ.c.series_count,
+    literal(0).label("series_count"),
+    _DICOM_SERIES_LEFT.c.file_count,
+    _DICOM_SERIES_LEFT.c.byte_size,
 ]
 
 
@@ -647,10 +641,10 @@ async def anon_list_patient_imaging_studies(
             AnonPatientModel,
             AnonPatientModel.patient_id == AnonImagingStudyModel.patient_id,
         )
-        # series_count 子查询（dicom_study_uid 维度聚合；series 未落库时 0）
+        # dicom_series LEFT JOIN（study 维度一对一；拿 file_count/byte_size）
         .outerjoin(
-            _SERIES_COUNT_SUBQ,
-            _SERIES_COUNT_SUBQ.c.study_uid == AnonImagingStudyModel.dicom_study_uid,
+            _DICOM_SERIES_LEFT,
+            _DICOM_SERIES_LEFT.c.study_uid == AnonImagingStudyModel.dicom_study_uid,
         )
         .where(*conditions)
         .order_by(
@@ -664,8 +658,12 @@ async def anon_list_patient_imaging_studies(
         d = dict(r)
         # study_id 别名：DicomViewer props.studyId 期望 = StudyInstanceUID
         d["study_id"] = d["study_uid"]
-        # series_count 子查询已 select 出 0/正数；显式 cast 防 PG 返回 Decimal
+        # series_count 固定为 0（dicom_series 重构为 study 级；2026-09-15）；
+        # 保留字段以兼容前端 DicomStudy 类型契约
         d["series_count"] = int(d.get("series_count") or 0)
+        # file_count / byte_size：dicom_series 未落库时为 None → 0
+        d["file_count"] = int(d.get("file_count") or 0)
+        d["byte_size"] = int(d.get("byte_size") or 0)
         d["patient_name"] = None  # 暂未联 patient_name（patient 表无此列）
         if hasattr(d.get("study_date"), "isoformat"):
             d["study_date"] = d["study_date"].isoformat()

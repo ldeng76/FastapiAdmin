@@ -33,8 +33,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable
 
-import duckdb
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -3000,8 +2999,11 @@ async def _import_dicom_series_for_center(
     scanned = 0
     skipped_no_exam = 0
     failed_studies = 0
+    # 每 500 study commit 一次：避免 36k+ INSERT 累积在单个大事务里
+    # （可能撑爆连接内存 / 锁表太久 / 失败时回滚代价过大）
+    BATCH_COMMIT_EVERY = 500
 
-    for r in rows:
+    for i, r in enumerate(rows):
         study_uid = r.dicom_study_uid
         image_path = r.image_path
         anon_exam_id = r.anon_exam_id
@@ -3035,6 +3037,17 @@ async def _import_dicom_series_for_center(
             )
             # 不阻断其他 study，继续
             continue
+
+        # 每 BATCH_COMMIT_EVERY 条提交一次（递增下标 0-based → 1-based）
+        if (i + 1) % BATCH_COMMIT_EVERY == 0:
+            await db.commit()
+            log.info(
+                f"ETL2: {center_code} dicom_series 进度 {i+1}/{len(rows)} "
+                f"scanned={scanned} series_upserted={total_series//(1024*1024)} MB"
+            )
+
+    # 最终提交剩余 INSERT
+    await db.commit()
 
     log.info(
         f"ETL2: {center_code} dicom_series 完成 — scanned={scanned} "

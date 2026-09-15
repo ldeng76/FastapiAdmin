@@ -134,3 +134,78 @@ def test_start_deploy_systemd_run_failure(ops_enabled, monkeypatch):
     with pytest.raises(HTTPException) as e:
         ops._start_deploy()
     assert e.value.status_code == 500
+
+
+
+# 说明: 项目级 test_client fixture 依赖完整 app lifespan（DB/Redis/租户种子），
+# 在本机环境无法启动（既有问题, 见 tests/test_main.py）。端点测试改用最小
+# FastAPI app（仅挂载 ops 路由 + 依赖覆盖禁用限流），保持 hermetic。
+
+
+@pytest.fixture(scope="module")
+def ops_app():
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+    from fastapi_limiter.depends import RateLimiter
+
+    from app.api.v1.module_ops import ops_router
+
+    @asynccontextmanager
+    async def _noop_lifespan(app):
+        yield
+
+    app = FastAPI(lifespan=_noop_lifespan)
+
+    def _no_rate_limit():
+        return None
+
+    for route in ops_router.routes:
+        for dep in route.dependant.dependencies:
+            if isinstance(dep.call, RateLimiter):
+                app.dependency_overrides[dep.call] = _no_rate_limit
+    app.include_router(ops_router)
+    return app
+
+
+def _ops_client(ops_app):
+    from fastapi.testclient import TestClient
+
+    return TestClient(ops_app)
+
+
+def test_endpoint_page_200(ops_app, ops_enabled):
+    res = _ops_client(ops_app).get("/ops/tests001")
+    assert res.status_code == 200
+    assert "lnrs 部署面板" in res.text
+
+
+def test_endpoint_page_404_wrong_slug(ops_app, ops_enabled):
+    assert _ops_client(ops_app).get("/ops/WRONGSLUG").status_code == 404
+
+
+def test_endpoint_run_wrong_password_403(ops_app, ops_enabled):
+    res = _ops_client(ops_app).post("/ops/tests001/run", json={"password": "nope"})
+    assert res.status_code == 403
+
+
+def test_endpoint_run_202(ops_app, ops_enabled, monkeypatch):
+    monkeypatch.setattr(ops, "_start_deploy", lambda: {"started": True, "unit": UNIT})
+    res = _ops_client(ops_app).post("/ops/tests001/run", json={"password": "test-pw"})
+    assert res.status_code == 202
+    assert res.json()["started"] is True
+
+
+def test_endpoint_status_shape(ops_app, ops_enabled, monkeypatch):
+    monkeypatch.setattr(
+        ops, "_deploy_status",
+        lambda: {"state": "idle", "started_at": None, "exit_code": None, "tail": []},
+    )
+    res = _ops_client(ops_app).post("/ops/tests001/status", json={"password": "test-pw"})
+    assert res.status_code == 200
+    assert res.json()["state"] == "idle"
+
+
+def test_endpoint_status_wrong_password_403(ops_app, ops_enabled):
+    res = _ops_client(ops_app).post("/ops/tests001/status", json={"password": "nope"})
+    assert res.status_code == 403

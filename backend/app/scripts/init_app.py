@@ -175,6 +175,11 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(system_router, dependencies=[Depends(RateLimiter(times=60, seconds=10))])
     app.include_router(monitor_router, dependencies=[Depends(RateLimiter(times=60, seconds=10))])
 
+    # OPS Web 部署面板（固定密码鉴权，独立于业务 JWT；未配置密码/slug 时 404）
+    from app.api.v1.module_ops import ops_router
+
+    app.include_router(ops_router)
+
     from app.plugin.module_ai.chat.ws import WS_AI
 
     # 手动注册WebSocket路由，不使用速率限制器

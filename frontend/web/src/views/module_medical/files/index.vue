@@ -11,11 +11,11 @@
               </div>
             </el-checkbox-group>
           </el-collapse-item>
-          <el-collapse-item title="文件类型" name="fileType">
-            <el-checkbox-group v-model="selectedFileType">
-              <div class="flex justify-between"  v-for="item in fileTypeDict" :key="item.dict_value">
+          <el-collapse-item title="中心" name="fileType">
+            <el-checkbox-group v-model="selectedCenterType">
+              <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_center')" :key="item.dict_value">
                 <el-checkbox :label="item.dict_label" :value="item.dict_value" />
-                <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_file_type') }}</div>
+<!--                <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_file_type') }}</div>-->
               </div>
             </el-checkbox-group>
           </el-collapse-item>
@@ -25,9 +25,10 @@
     <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
         <div style="display: flex;align-items: center;justify-content: center;font-size: 20px">
-          <FaMenuRouteIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="!statisticsCount.patient_count || statisticsCount.patient_count <10 ? 0 :1000" separator="," /></strong> 患者
-          <FaMenuRouteIcon icon="el-icon-Tickets" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="!statisticsCount.exam_count || statisticsCount.exam_count <10 ? 0 :1000" /></strong> 记录
-          <FaMenuRouteIcon icon="file" style="font-size: 24px;margin-left: 15px" /><strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="!statisticsCount.file_count || statisticsCount.file_count <10 ? 0 :1000" /></strong> 文件
+          <FaMenuRouteIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /> 患者
+          <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
+          <FaMenuRouteIcon icon="el-icon-Tickets" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong> 记录
+          <FaMenuRouteIcon icon="file" style="font-size: 24px;margin-left: 15px" /><strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong> 文件
           <FaMenuRouteIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
         </div>
         <FaTable
@@ -57,10 +58,14 @@ import Viewer from "@views/module_medical/viewer/index.vue";
 const viewer = ref<any>(null)
 const selectedExamType = ref([])
 const selectedFileType = ref([])
+const selectedCenterType = ref([])
 const sortParams = ref({sort_field:"",sort_order:""})
 const fileTypeDict = ref<any>([])
 const statisticsCount = ref<StatisticsCount>({})
 const loading = ref(false)
+function getCountDuration(value?:number){
+  return !value || value <10 ? 0 :1000
+}
 function fileSize(sizeBytes:number | undefined,isNumStrong = false) {
   if (typeof sizeBytes !== 'number') {
     return sizeBytes
@@ -97,12 +102,14 @@ function statisticsTypeText(type:string,key:'by_exam_type'|'by_file_type'){
   }
   return text
 }
-watch([selectedExamType,selectedFileType,sortParams],async function (arr){
+watch([selectedExamType,selectedFileType,selectedCenterType,sortParams],async function (arr){
   let examType = arr[0]
   let fileType = arr[1]
+  let centerType = arr[2]
   let params = {
     exam_type:examType.toString(),
     file_type:fileType.toString(),
+    center_type:centerType.toString(),
     order_by:'[]'
   }
   if(sortParams.value.sort_field && sortParams.value.sort_order){
@@ -194,7 +201,7 @@ const {
 });
 
 onBeforeMount(async ()=>{
-  await dictStore.getDict(['med_exam_type'])
+  await dictStore.getDict(['med_exam_type','med_center'])
   loading.value = true
   fileTypeDict.value = await FilesApi.getFileType()
   statisticsCount.value = await FilesApi.statistics()

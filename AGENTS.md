@@ -17,3 +17,16 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 - 工具调用之间的进度提示也用中文。
 - 代码内的标识符、字符串、日志、API 字段名保持英文，不要翻译。
 - 注释可使用中文，但若该注释贴近代码语义，优先英文以保持可检索性。
+
+## Python 环境
+
+跑本项目的 Python 代码（含一次性脚本、ad-hoc 命令、xlsx/duckdb/SQLAlchemy/ETL2 等导入）统一使用 `backend/` 下的 uv 虚拟环境：
+
+```bash
+cd /home/dzy/wk/lnrs/backend && uv run python ...
+```
+
+- **不要**用系统 `/usr/bin/python3`（缺本项目依赖）。
+- **不要**用 `pip install` / `uv pip install` 临时装包——`backend/.venv` 已包含 openpyxl 3.1.5、duckdb 1.2.2、SQLAlchemy、asyncpg、FastAPI 等全部本项目依赖。
+- **不要**用 `PYTHONPATH=` 注入其他 venv——直接进 backend 目录调 `uv run` 即可。
+- 写进 `backend/` 目录的 Python 脚本若需要 ETL2 / SQLAlchemy 导入，shebang 用 `#!/usr/bin/env -S uv run python` 让脚本本身自动用 backend venv。

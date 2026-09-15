@@ -34,9 +34,9 @@ lnrs_anon_ingest_batch            批次锚点（其它表 FK 根）
         │             ├─ lnrs_anon_report_text     报告原文（1:1）
         │             ├─ lnrs_anon_exam_finding    EAV 标量（本轮不写入）
         │             ├─ lnrs_anon_exam_detail     JSONB 深结构（pathology/genetic/ihc/结节）
-        │             ├─ lnrs_anon_dicom_series    DICOM 序列（本轮不写入）
-        │             │     └─ lnrs_anon_dicom_instance  关键帧偏移（本轮不写入）
-        │             └─ lnrs_anon_dicom_uid_map   UID 重映射审计（本轮不写入）
+        │             ├─ lnrs_anon_dicom_series    DICOM 序列（ETL-2 增量 2026-09-15）
+        │             │     └─ lnrs_anon_dicom_instance  关键帧偏移（ORM 已声明，留作 ETL-3）
+        │             └─ lnrs_anon_dicom_uid_map   UID 重映射审计（不进生产库）
         │
         └─ lnrs_anon_phi_audit     字段级 PHI 清洗审计（与批次平级）
 ```
@@ -212,7 +212,7 @@ exam 级 JSONB 深结构。PK 复合 `(anon_exam_id, detail_type, detail_ordinal
 
 ## 6. 影像（DICOM）层
 
-> 本节三张表 DDL/触发器均已建，但 ETL 本轮不写入（`dicom_dir`/`dicom_zip` 源接入后启用）。
+> 2026-09-15 起 `lnrs_anon_dicom_series` 已被 ETL-2 增量阶段写入（解析 `lnrs_anon_imaging_study.image_path` 目录 → series 明细 upsert）；`dicom_instance` ORM 已声明、ETL 不写入，留作 ETL-3。`dicom_uid_map` 仍按 ADR 物理隔离不进生产库。
 
 ### 6.1 `lnrs_anon_dicom_series`
 
@@ -367,7 +367,29 @@ LEFT JOIN lnrs_anon_report_text  rt ON rt.anon_exam_id = e.anon_exam_id
 LEFT JOIN lnrs_anon_exam_finding f  ON f.anon_exam_id  = e.anon_exam_id
 LEFT JOIN lnrs_anon_dicom_series s  ON s.anon_exam_id  = e.anon_exam_id
 GROUP BY e.anon_exam_id, p.patient_id, p.anon_id, rt.body_clean, rt.review_status;
+
+### 9.3 视图 `lnrs_anon_v_imaging_study_counts`（2026-09-15 引入）
+
+study 维度 series 聚合：给"患者详情 → 影像列表"展示 `series_count` /
+`instance_count` / `total_bytes`。LEFT JOIN 让 series 未落库的 study 也
+返回 0（前端 UI 显示「序列数 0」而不是 NULL）；不引入表达式索引（单 patient
+路径 ≤ 几十行 + `lnrs_anon_ix_imaging_study_uid` + `lnrs_anon_ix_series_study_uid`
+双索引，毫秒级）。定义见 `backend/sql/postgres/0020-imaging-study-counts-view.sql`：
+
+```sql
+SELECT ims.study_key, ims.dicom_study_uid, ims.center_code,
+       ims.patient_id, ims.anon_exam_id,
+       COUNT(s.series_id)::INT                  AS series_count,
+       COALESCE(SUM(s.instance_count), 0)::BIGINT AS instance_count,
+       COALESCE(SUM(s.byte_size), 0)::BIGINT      AS total_bytes
+FROM lnrs.lnrs_anon_imaging_study ims
+LEFT JOIN lnrs.lnrs_anon_dicom_series s
+       ON s.dicom_study_uid = ims.dicom_study_uid
+GROUP BY ims.study_key, ims.dicom_study_uid, ims.center_code,
+         ims.patient_id, ims.anon_exam_id;
 ```
+
+与 §9.2 `v_exam_full` 正交：前者按 exam 聚合、后者按 study 聚合。
 
 ---
 
@@ -386,6 +408,9 @@ ultrasound_report.parquet → lnrs_anon_exam + lnrs_anon_report_text + lnrs_anon
 drug_order.parquet        → lnrs_anon_order (order_type='drug', 仅省医)
 no_drug_order.parquet     → lnrs_anon_order (order_type='non_drug', 仅省医)
 lab_result.parquet        → lnrs_anon_lab_result (仅省医)
+lnrs_anon_imaging_study (0012 CSV 灌库)
+   image_path 目录扫描   → lnrs_anon_dicom_series (ETL-2 增量；2026-09-15 启用，
+                          解析 .dcm → series 明细；anon_exam_id 为空时跳过)
 
 每个导入分支末尾追加 → lnrs_anon_phi_audit
 ```

@@ -14,7 +14,7 @@
     </el-header>
     <el-main>
       <el-row :gutter="20">
-        <el-col :sm="8" v-for="n in overviewCount" :key="n.key">
+        <el-col :xs="24" :sm="12" :md="8" :lg="5" v-for="n in overviewCount" :key="n.key">
           <Total :label="n.label" :icon="n.icon" :value="n.value"/>
         </el-col>
       </el-row>
@@ -108,14 +108,16 @@ const trendCount : Ref<{ data: LineDataItem[], names: string[] }>  = ref({
 })
 
 const kpisIcon = {
-  total_patients:"ri:user-heart-fill",
-  total_exams:"ri:chat-check-fill",
-  center_count:"ri:hospital-fill",
-  modality_count:"ri:mail-line",
+  case_total_patients: "ri:user-heart-fill",
+  case_patients_with_exam: "ri:user-star-fill",
+  case_total_exams: "ri:file-list-3-fill",
+  total_exams: "ri:chat-check-fill",
+  center_count: "ri:hospital-fill",
+  modality_count: "ri:mail-line",
 }
 
 async function searchCall(isRedirectPatient = false,query = {}){
-  const params = Object.assign({is_placeholders:true},searchForm.value,query);
+  const params = Object.assign({is_placeholders:false},searchForm.value,query);
   if(isRedirectPatient){
     await router.push({path: '/medicalPatient', query: params});
     return;

@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .anon_model import AnonExamModel, AnonPatientModel
+from .anon_model import AnonDicomSeriesModel, AnonExamModel, AnonPatientModel
 from .stats_schema import StatsFiltersIn
 
 
@@ -241,6 +241,31 @@ class StatsQuery:
         result = await self.db.execute(stmt)
         return int(result.scalar_one())
 
+    async def count_patients_with_exam(self) -> int:
+        """病例·有检查患者数 = 在 patient 筛选条件下,至少做过一次检查的去重 patient 数.
+
+        等价 SQL: SELECT count(DISTINCT p.patient_id)
+                  FROM lnrs_anon_patient p
+                  WHERE <patient 筛选> AND p.patient_id IN
+                        (SELECT DISTINCT patient_id FROM lnrs_anon_exam);
+        """
+        conditions = self._patient_filters()
+        exists_subq = (
+            select(AnonExamModel.patient_id)
+            .distinct()
+            .subquery()
+        )
+        stmt = (
+            select(func.count(func.distinct(AnonPatientModel.patient_id)))
+            .select_from(AnonPatientModel)
+            .where(*conditions)
+            .where(
+                AnonPatientModel.patient_id.in_(select(exists_subq.c.patient_id))
+            )
+        )
+        result = await self.db.execute(stmt)
+        return int(result.scalar_one())
+
     async def count_exams(self) -> int:
         stmt = select(func.count()).select_from(AnonExamModel)
         conditions = self._exam_filters()
@@ -365,6 +390,56 @@ class StatsQuery:
             for exam_type, count in result.all()
         ]
 
+
+    async def query_series_counts_by_modality(self) -> list[dict]:
+        """按 modality 聚合 dicom_series 的 series_count / instance_count /
+        total_bytes（2026-09-15 引入；ETL-2 dicom_series 落库后才会有非零值）。
+
+        走 lnrs_anon_dicom_series 表，JOIN lnrs_anon_imaging_study 以便复用
+        现有的患者维度筛选。无 series 数据时返回空列表（GROUP BY 不出哑行，
+        前端 0 行更直观）。
+        """
+        from .anon_model import AnonImagingStudyModel
+        # 复用 patient 维度筛选（_patient_filters 返回 lnrs.lnrs_anon_patient.* 条件）
+        patient_conditions = self._patient_filters()
+        sub_patients = select(AnonPatientModel.patient_id)
+        if patient_conditions:
+            sub_patients = sub_patients.where(*patient_conditions)
+
+        stmt = (
+            select(
+                AnonImagingStudyModel.modality.label("modality"),
+                func.count(AnonDicomSeriesModel.series_id).label("series_count"),
+                func.coalesce(
+                    func.sum(AnonDicomSeriesModel.instance_count), 0
+                ).label("instance_count"),
+                func.coalesce(
+                    func.sum(AnonDicomSeriesModel.byte_size), 0
+                ).label("total_bytes"),
+            )
+            .select_from(AnonDicomSeriesModel)
+            .join(
+                AnonImagingStudyModel,
+                AnonImagingStudyModel.dicom_study_uid
+                == AnonDicomSeriesModel.dicom_study_uid,
+            )
+            .where(AnonImagingStudyModel.patient_id.in_(sub_patients))
+            .group_by(AnonImagingStudyModel.modality)
+            .order_by(func.count(AnonDicomSeriesModel.series_id).desc())
+        )
+        rows = (await self.db.execute(stmt)).all()
+        label_map = await self._load_dict_labels("med_exam_type")
+        return [
+            {
+                "modality": modality,
+                "label": label_map.get(modality, modality),
+                "series_count": int(s_count),
+                "instance_count": int(i_count),
+                "total_bytes": int(t_bytes),
+            }
+            for modality, s_count, i_count, t_bytes in rows
+        ]
+
     async def query_exam_trend(self) -> list[dict]:
         year_col = func.extract("year", AnonExamModel.exam_date).label("year")
         month_col = func.extract("month", AnonExamModel.exam_date).label("month")
@@ -433,19 +508,20 @@ class StatsQuery:
             "items": items,
         }
 
-    # ── 总出口 ────────────────────────────────
+    # ── 总出口 ──────────────────────────────
 
     async def get_overview(self) -> dict:
         """仪表板全量概览 — 返回 {filters, kpis, dimensions} 结构（ADR-0007）。"""
         # 基础聚合
-        total_patients = await self.count_patients()
         total_exams = await self.count_exams()
         centers = await self.distinct_centers()
         modalities = await self.distinct_modalities()
 
         # kpis
         kpis = [
-            {"key": "total_patients", "label": "患者总量", "value": total_patients, "format": "number"},
+            {"key": "case_total_patients", "label": "病例·患者总数", "value": await self.count_patients(), "format": "number"},
+            {"key": "case_patients_with_exam", "label": "病例·有检查患者", "value": await self.count_patients_with_exam(), "format": "number"},
+            {"key": "case_total_exams", "label": "病例·检查总数", "value": await self.count_exams(), "format": "number"},
             {"key": "total_exams", "label": "检查总量", "value": total_exams, "format": "number"},
             {"key": "modality_count", "label": "检查模态", "value": len(modalities), "format": "number"},
         ]

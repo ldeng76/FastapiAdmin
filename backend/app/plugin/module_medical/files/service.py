@@ -39,10 +39,16 @@ class MedFilesService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _apply_search_conditions(query, exam_type: list[str] | None, file_type: list[str] | None):
-        """给 select 查询追加 exam_type/file_type 的 in 过滤 + 软删除 + 租户过滤。
+    def _apply_search_conditions(
+        query,
+        exam_type: list[str] | None,
+        file_type: list[str] | None,
+        center_type: list[str] | None = None,
+    ):
+        """给 select 查询追加 exam_type/file_type/center_type 的 in 过滤 + 软删除 + 租户过滤。
 
         不追加 Permission 过滤（Permission.filter_query 作用于整个 select，在外部调用）。
+        center_type 筛选 MedFilesModel.file_type（即 center_code）。
         """
         m = MedFilesModel
 
@@ -58,6 +64,8 @@ class MedFilesService:
             query = query.where(m.exam_type.in_(exam_type))
         if file_type:
             query = query.where(m.file_type.in_(file_type))
+        if center_type:
+            query = query.where(m.file_type.in_(center_type))
 
         return query
 
@@ -129,13 +137,15 @@ class MedFilesService:
         auth: AuthSchema,
         exam_type: list[str] | None = None,
         file_type: list[str] | None = None,
+        center_type: list[str] | None = None,
     ) -> dict:
         """统计满足条件的数据：文件个数、患者数、总文件大小、各模态/文件类型分组。
 
         参数:
-            auth:       当前用户鉴权信息（控制行级可见性）
-            exam_type:  可选，多选模态
-            file_type:  可选，多选文件类型
+            auth:        当前用户鉴权信息（控制行级可见性）
+            exam_type:   可选，多选模态
+            file_type:   可选，多选文件类型
+            center_type: 可选，多选中心筛选
         """
         m = MedFilesModel
 
@@ -145,7 +155,7 @@ class MedFilesService:
             func.count(func.distinct(m.patient_id)).label("patient_count"),
             # func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
         )
-        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type)
+        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
         sql = await cls._apply_permission(auth, sql)
 
         result = await auth.db.execute(sql)
@@ -158,10 +168,12 @@ class MedFilesService:
             patient_count = int(row[1] or 0)
             # total_size_bytes = int(row[1] or 0)
 
-        # 检查量：直接查 AnonExamModel 行数（按 exam_type 筛选）
+        # 检查量：直接查 AnonExamModel 行数（按 exam_type + center_type 筛选）
         exam_count_sql = select(func.count(AnonExamModel.anon_exam_id))
         if exam_type:
             exam_count_sql = exam_count_sql.where(AnonExamModel.exam_type.in_(exam_type))
+        if center_type:
+            exam_count_sql = exam_count_sql.where(AnonExamModel.center_code.in_(center_type))
         exam_count_result = await auth.db.execute(exam_count_sql)
         exam_count = int(exam_count_result.scalar() or 0)
 
@@ -171,7 +183,7 @@ class MedFilesService:
             m.exam_type,
             func.count(m.id),
         ).where(m.exam_type.is_not(None), m.exam_type != "")
-        exam_sql = cls._apply_search_conditions(exam_sql, exam_type=exam_type, file_type=file_type)
+        exam_sql = cls._apply_search_conditions(exam_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
         exam_sql = await cls._apply_permission(auth, exam_sql)
         exam_sql = exam_sql.group_by(m.exam_type)
         exam_result = await auth.db.execute(exam_sql)
@@ -193,7 +205,7 @@ class MedFilesService:
             m.file_type,
             func.count(m.id),
         ).where(m.file_type.is_not(None), m.file_type != "")
-        ft_sql = cls._apply_search_conditions(ft_sql, exam_type=exam_type, file_type=file_type)
+        ft_sql = cls._apply_search_conditions(ft_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
         ft_sql = await cls._apply_permission(auth, ft_sql)
         ft_sql = ft_sql.group_by(m.file_type)
         ft_result = await auth.db.execute(ft_sql)

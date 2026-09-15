@@ -168,19 +168,14 @@ class MedFilesService:
             patient_count = int(row[1] or 0)
             # total_size_bytes = int(row[1] or 0)
 
-        # 检查量 + 记录患者数：直接查 AnonExamModel（按 exam_type + center_type 筛选）
-        anon_sql = select(
-            func.count(AnonExamModel.anon_exam_id).label("exam_count"),
-            func.count(func.distinct(AnonExamModel.patient_id)).label("record_patient_count"),
-        )
+        # 检查量：直接查 AnonExamModel 行数（按 exam_type + center_type 筛选）
+        exam_count_sql = select(func.count(AnonExamModel.anon_exam_id))
         if exam_type:
-            anon_sql = anon_sql.where(AnonExamModel.exam_type.in_(exam_type))
+            exam_count_sql = exam_count_sql.where(AnonExamModel.exam_type.in_(exam_type))
         if center_type:
-            anon_sql = anon_sql.where(AnonExamModel.center_code.in_(center_type))
-        anon_result = await auth.db.execute(anon_sql)
-        anon_row = anon_result.one_or_none()
-        exam_count = int(anon_row[0] or 0) if anon_row is not None else 0
-        record_patient_count = int(anon_row[1] or 0) if anon_row is not None else 0
+            exam_count_sql = exam_count_sql.where(AnonExamModel.center_code.in_(center_type))
+        exam_count_result = await auth.db.execute(exam_count_sql)
+        exam_count = int(exam_count_result.scalar() or 0)
 
         # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
         by_exam_type: list[dict] = []
@@ -229,7 +224,6 @@ class MedFilesService:
         return {
             "file_count": file_count,
             "patient_count": patient_count,
-            "record_patient_count": record_patient_count,
             "exam_count": exam_count,
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),

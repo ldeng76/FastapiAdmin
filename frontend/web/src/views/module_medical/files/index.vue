@@ -25,8 +25,8 @@
     <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
         <div style="display: flex;align-items: center;justify-content: center;font-size: 20px">
-          <FaMenuRouteIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /> 患者<strong><FaCountTo :target="statisticsCount.record_patient_count || 0 " :duration="getCountDuration(statisticsCount.record_patient_count)" separator="," /></strong>例、 带影像
-          <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>例
+          <FaMenuRouteIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /> 患者
+          <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
           <FaMenuRouteIcon icon="el-icon-Tickets" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong> 记录
           <FaMenuRouteIcon icon="file" style="font-size: 24px;margin-left: 15px" /><strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong> 文件
           <FaMenuRouteIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>

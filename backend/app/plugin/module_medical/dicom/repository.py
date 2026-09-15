@@ -210,7 +210,25 @@ class DicomIndexer:
             self._study_uid_to_id.pop(evict_uid, None)
             for sop_uid, fpath in evict_idx.sop_to_path.items():
                 self._path_to_uid.pop(str(fpath), None)
-            log.info("DICOM LRU 淘汰 study: %s (instances=%d)", evict_uid, len(evict_idx.sop_to_path))
+
+    def evict_study(self, study_uid: str) -> None:
+        """从内存索引移除指定 study（释放 LRU 槽位 + 反向索引）。
+
+        用途：ETL-2 临时调用 register_folder 拿到 series 元数据后立即驱逐，
+        避免进程内状态被下一次 ETL 污染（同一 DicomIndexer 单例常驻进程）。
+
+        与 _evict_if_needed 行为一致：清掉 _studies[study_uid]、
+        _study_uid_to_id[study_uid]、以及 _path_to_uid 中该 study 全部
+        instance 的 file_path 条目。
+        """
+        idx = self._studies.pop(study_uid, None)
+        if idx is None:
+            return
+        self._study_uid_to_id.pop(study_uid, None)
+        for _sop_uid, fpath in idx.sop_to_path.items():
+            self._path_to_uid.pop(str(fpath), None)
+        log.info("DICOM evict_study: %s (instances=%d)", study_uid, len(idx.sop_to_path))
+
 
     def list_instances(self, series_uid: str) -> list[dict[str, Any]]:
         """某 Series 所有切片（已按 Z 轴排序）。"""

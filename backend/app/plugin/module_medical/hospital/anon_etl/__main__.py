@@ -61,11 +61,21 @@ def _dry_run(centers: list[str], data_root: Path) -> int:
         print(f"[DRY-RUN] 中心 {c}: data_dir={cdir} exists={cdir.exists()}")
         specs = _CENTER_PARQUET_SPECS.get(c, [])
         for spec in specs:
-            pq = cdir / f"{spec['src_table']}.parquet"
+            kind = spec["kind"]
+            src_table = spec["src_table"]
+            # dicom_series 不读 parquet：从 lnrs_anon_imaging_study 表里取目录扫描
+            if kind == "dicom_series":
+                print(
+                    f"[DRY-RUN]    - {src_table:<22} [DB-SCAN]        kind={kind} "
+                    f"(读取 lnrs_anon_imaging_study.image_path 列；无 parquet)"
+                )
+                total += 1
+                continue
+            pq = cdir / f"{src_table}.parquet"
             exists = pq.exists()
             size = pq.stat().st_size if exists else 0
             tag = f"{size} bytes" if exists else "MISSING"
-            print(f"[DRY-RUN]    - {spec['src_table']:<22} [{tag}] kind={spec['kind']}")
+            print(f"[DRY-RUN]    - {src_table:<22} [{tag}] kind={kind}")
             if exists:
                 total += 1
         # visit_record 显式提示：仅当中心未启用 visit_detail spec 时才是真跳过

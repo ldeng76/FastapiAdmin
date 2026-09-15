@@ -65,7 +65,7 @@ def _normalize_order_by(raw: list[dict[str, str]] | None) -> list[dict[str, str]
     summary="患者分页列表",
     description=(
         "筛选条件与 /statistics/overview 完全一致（共用 StatsFiltersIn）："
-        "sex / modality / age_bucket / abo_blood_type / "
+        "center / sex / modality / age_bucket / abo_blood_type / "
         "rh_blood_type / smoking_status / bmi_bucket / patient_id / "
         "is_placeholders / latest_lung_rads；"
         "通过 order_by 控制排序，可选字段: patient_id/birth_date/sex/"

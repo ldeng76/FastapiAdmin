@@ -105,7 +105,7 @@ def build_patient_filters(
     这是筛选逻辑的唯一来源：新增筛选参数时只需改这里 + StatsFiltersIn，
     统计概览（StatsQuery）与患者列表（anon_list_patients）自动同步生效。
 
-    - sex / abo / rh / smoking 直接过滤 patient 表字段
+    - center / sex / abo / rh / smoking 直接过滤 patient 表字段
     - modality 通过 exam 表子查询过滤
     - age_bucket / bmi_bucket 通过 CASE 分档表达式过滤
     - patient_id 对患者编号做 ILIKE 模糊匹配
@@ -115,6 +115,8 @@ def build_patient_filters(
     if filters is None:
         return conditions
 
+    if filters.center:
+        conditions.append(AnonPatientModel.center_code == filters.center)
     if filters.sex:
         conditions.append(AnonPatientModel.sex == filters.sex)
     if filters.abo_blood_type:
@@ -172,6 +174,7 @@ class StatsQuery:
     ) -> None:
         self.db = db
         self._filters = filters
+        self.center = filters.center if filters else None
         self.sex = filters.sex if filters else None
         self.modality = filters.modality if filters else None
         self.age_bucket = filters.age_bucket if filters else None
@@ -192,7 +195,7 @@ class StatsQuery:
     def _exam_filters(self) -> list:
         """构建 exam 表的过滤条件列表。
 
-        sex / age_bucket / abo_blood_type / smoking_status / bmi_bucket /
+        center / sex / age_bucket / abo_blood_type / smoking_status / bmi_bucket /
         patient_id / is_placeholders 通过 IN 子查询关联 patient 表；
         modality 直接过滤 exam_type。
         """
@@ -200,7 +203,7 @@ class StatsQuery:
         if self.modality:
             conditions.append(AnonExamModel.exam_type == self.modality)
         patient_attrs = (
-            self.sex or self.age_bucket
+            self.center or self.sex or self.age_bucket
             or self.abo_blood_type or self.rh_blood_type or self.smoking_status
             or self.bmi_bucket or self.patient_id
         )
@@ -208,6 +211,8 @@ class StatsQuery:
         exclude_placeholders = not self.is_placeholders
         if patient_attrs or exclude_placeholders:
             sub = select(AnonPatientModel.patient_id).where(_not_deleted_patient())
+            if self.center:
+                sub = sub.where(AnonPatientModel.center_code == self.center)
             if self.sex:
                 sub = sub.where(AnonPatientModel.sex == self.sex)
             if self.age_bucket:

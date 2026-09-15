@@ -21,6 +21,7 @@ ChartType = Literal["bar", "pie", "h-bar", "line"]
 class StatsFiltersIn(BaseModel):
     """仪表板查询筛选参数（封装所有 Query 参数）。"""
 
+    center: str | None = Field(None, description="中心编码筛选（精确匹配 AnonPatientModel.center_code）")
     sex: str | None = Field(None, description="性别筛选（0=未知, 1=男, 2=女, 9=其他）")
     modality: str | None = Field(None, description="模态筛选（如 CT/MR/US 等）")
     age_bucket: str | None = Field(None, description="年龄段筛选（0-17/18-29/30-39/40-49/50-59/60-69/70-79/80+）")

@@ -70,14 +70,6 @@ def test_status_idle_when_unknown(ops_enabled, monkeypatch):
     assert d["tail"] == []
 
 
-def test_status_running(ops_enabled, monkeypatch):
-    monkeypatch.setattr(ops, "_systemctl", _fake_systemctl("active", "", ""))
-    d = ops._deploy_status()
-    assert d["state"] == "running"
-    assert d["exit_code"] is None
-    assert d["started_at"] == "2026-09-15 10:00:00 CST"
-
-
 def test_status_succeeded(ops_enabled, monkeypatch):
     monkeypatch.setattr(ops, "_systemctl", _fake_systemctl("inactive", "success", "0"))
     d = ops._deploy_status()
@@ -90,6 +82,15 @@ def test_status_failed_nonzero(ops_enabled, monkeypatch):
     d = ops._deploy_status()
     assert d["state"] == "failed"
     assert d["exit_code"] == 1
+
+
+def test_status_running(ops_enabled, monkeypatch):
+    monkeypatch.setattr(ops, "_systemctl", _fake_systemctl("active", "", ""))
+    (Path(ops_enabled) / "web-deploy.started").write_text("2026-09-15 10:00:00")
+    d = ops._deploy_status()
+    assert d["state"] == "running"
+    assert d["exit_code"] is None
+    assert d["started_at"] == "2026-09-15 10:00:00"
 
 
 def test_status_failed_result_not_success(ops_enabled, monkeypatch):
@@ -134,6 +135,19 @@ def test_start_deploy_systemd_run_failure(ops_enabled, monkeypatch):
     with pytest.raises(HTTPException) as e:
         ops._start_deploy()
     assert e.value.status_code == 500
+
+
+def test_start_deploy_writes_started_file(ops_enabled, monkeypatch):
+    monkeypatch.setattr(ops, "_unit_active", lambda: False)
+
+    class FakeProc:
+        returncode = 0
+        stdout = "lnrs-web-deploy.service"
+        stderr = ""
+
+    monkeypatch.setattr(ops.subprocess, "run", lambda *a, **k: FakeProc())
+    ops._start_deploy()
+    assert (Path(ops_enabled) / "web-deploy.started").read_text().strip() != ""
 
 
 

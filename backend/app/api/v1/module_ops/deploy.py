@@ -17,6 +17,7 @@ import os
 import pwd
 import shlex
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -30,6 +31,7 @@ from app.core.logger import log
 UNIT_NAME = "lnrs-web-deploy"  # systemd 瞬态 oneshot 单元（独立 cgroup）
 DEPLOY_ARGS = ("deploy", "--frontend", "--force")  # 写死的部署命令
 LOG_FILE_NAME = "web-deploy.log"
+START_FILE_NAME = "web-deploy.started"
 TAIL_LINES = 300  # status 接口返回的日志尾部行数
 
 DeployOpsRouter = APIRouter(tags=["OPS 部署面板"], include_in_schema=False)
@@ -49,6 +51,14 @@ def _run_dir() -> Path:
 
 def _log_file() -> Path:
     return _run_dir() / LOG_FILE_NAME
+
+
+def _read_started() -> str | None:
+    """触发时刻（由 _start_deploy 写入；systemd 的 oneshot 单元结束后时间戳属性归 n/a）"""
+    try:
+        return _run_dir().joinpath(START_FILE_NAME).read_text().strip() or None
+    except FileNotFoundError:
+        return None
 
 
 def _enabled() -> bool:
@@ -94,8 +104,7 @@ def _deploy_status() -> dict:
     """组装状态接口返回: idle / running / succeeded / failed / unknown"""
     unit_state = _systemctl("is-active", UNIT_NAME)
     if unit_state == "active":
-        started = _systemctl("show", "-p", "ActiveEnterTimestamp", "--value", UNIT_NAME)
-        return {"state": "running", "started_at": started, "exit_code": None, "tail": _log_tail()}
+        return {"state": "running", "started_at": _read_started(), "exit_code": None, "tail": _log_tail()}
     if unit_state == "unknown":  # 单元不存在（未触发过 / 重启过机器）
         return {"state": "idle", "started_at": None, "exit_code": None, "tail": _log_tail()}
     # inactive / failed → 读退出码
@@ -111,8 +120,7 @@ def _deploy_status() -> dict:
         state = "unknown"  # 未记录到退出码（异常终止），按未知处理
     else:
         state = "failed"
-    started = _systemctl("show", "-p", "ActiveEnterTimestamp", "--value", UNIT_NAME)
-    return {"state": state, "started_at": started, "exit_code": exit_code, "tail": _log_tail()}
+    return {"state": state, "started_at": _read_started(), "exit_code": exit_code, "tail": _log_tail()}
 
 
 def _build_run_command(log_file: Path, script: str) -> list[str]:
@@ -153,6 +161,7 @@ def _start_deploy() -> dict:
     log_file = _log_file()
     with open(log_file, "w", encoding="utf-8"):
         pass  # 截断旧日志
+    run_dir.joinpath(START_FILE_NAME).write_text(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     script = settings.OPS_DEPLOY_SCRIPT
     # 清理上次失败态，保证同名瞬态单元可再次 systemd-run
     subprocess.run(

@@ -241,6 +241,31 @@ class StatsQuery:
         result = await self.db.execute(stmt)
         return int(result.scalar_one())
 
+    async def count_patients_with_exam(self) -> int:
+        """病例·有检查患者数 = 在 patient 筛选条件下,至少做过一次检查的去重 patient 数.
+
+        等价 SQL: SELECT count(DISTINCT p.patient_id)
+                  FROM lnrs_anon_patient p
+                  WHERE <patient 筛选> AND p.patient_id IN
+                        (SELECT DISTINCT patient_id FROM lnrs_anon_exam);
+        """
+        conditions = self._patient_filters()
+        exists_subq = (
+            select(AnonExamModel.patient_id)
+            .distinct()
+            .subquery()
+        )
+        stmt = (
+            select(func.count(func.distinct(AnonPatientModel.patient_id)))
+            .select_from(AnonPatientModel)
+            .where(*conditions)
+            .where(
+                AnonPatientModel.patient_id.in_(select(exists_subq.c.patient_id))
+            )
+        )
+        result = await self.db.execute(stmt)
+        return int(result.scalar_one())
+
     async def count_exams(self) -> int:
         stmt = select(func.count()).select_from(AnonExamModel)
         conditions = self._exam_filters()
@@ -483,19 +508,20 @@ class StatsQuery:
             "items": items,
         }
 
-    # ── 总出口 ────────────────────────────────
+    # ── 总出口 ──────────────────────────────
 
     async def get_overview(self) -> dict:
         """仪表板全量概览 — 返回 {filters, kpis, dimensions} 结构（ADR-0007）。"""
         # 基础聚合
-        total_patients = await self.count_patients()
         total_exams = await self.count_exams()
         centers = await self.distinct_centers()
         modalities = await self.distinct_modalities()
 
         # kpis
         kpis = [
-            {"key": "total_patients", "label": "患者总量", "value": total_patients, "format": "number"},
+            {"key": "case_total_patients", "label": "病例·患者总数", "value": await self.count_patients(), "format": "number"},
+            {"key": "case_patients_with_exam", "label": "病例·有检查患者", "value": await self.count_patients_with_exam(), "format": "number"},
+            {"key": "case_total_exams", "label": "病例·检查总数", "value": await self.count_exams(), "format": "number"},
             {"key": "total_exams", "label": "检查总量", "value": total_exams, "format": "number"},
             {"key": "modality_count", "label": "检查模态", "value": len(modalities), "format": "number"},
         ]

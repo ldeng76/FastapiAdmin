@@ -754,6 +754,11 @@ cd backend && uv run pytest tests/test_ops_deploy.py -q -k endpoint
 ```
 预期：6 个端点用例 PASS。
 
+执行注记（E2E 时发现并修复）：`systemd-run` 对 oneshot 单元**默认阻塞到单元结束**，
+必须加 `--no-block`，否则 run 接口会挂到部署完成、202 响应丢失（单元本身不受影响，
+独立 cgroup 设计经真实验证成立）。`deploy_run`/`deploy_status` 同步改为普通 `def`
+（FastAPI 线程池执行，避免阻塞事件循环）；`_start_deploy` 增加 `TimeoutExpired` → 500。
+
 - [ ] **Step 3: init_app.py 注册路由**
 
 `backend/app/scripts/init_app.py` line 176（`app.include_router(monitor_router, ...)` 之后）插入：

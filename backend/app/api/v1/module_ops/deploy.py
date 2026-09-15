@@ -141,6 +141,7 @@ def _build_run_command(log_file: Path, script: str) -> list[str]:
     return [
         "sudo", "-n", "systemd-run",
         f"--unit={UNIT_NAME}",
+        "--no-block",  # 关键: 不等 oneshot 单元结束（否则 systemd-run 会阻塞到部署完成）
         "--description=lnrs web deploy (panel)",
         "-p", "Type=oneshot",
         "-p", f"User={pw.pw_name}",
@@ -169,12 +170,16 @@ def _start_deploy() -> dict:
         capture_output=True,
         timeout=10,
     )
-    proc = subprocess.run(
-        _build_run_command(log_file, script),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        proc = subprocess.run(
+            _build_run_command(log_file, script),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        log.error("[ops-deploy] systemd-run 超时 (30s)，部署可能未启动，请检查系统状态")
+        raise HTTPException(status_code=500, detail="启动部署超时，请检查系统状态后重试")
     if proc.returncode != 0:
         log.error(f"[ops-deploy] systemd-run failed: {proc.stderr.strip()[:300]}")
         raise HTTPException(status_code=500, detail=f"启动部署失败: {proc.stderr.strip()[:200]}")
@@ -200,7 +205,7 @@ async def deploy_panel_page(slug: str) -> HTMLResponse:
     "/{slug}/run",
     dependencies=[Depends(RateLimiter(times=5, seconds=10))],
 )
-async def deploy_run(slug: str, body: DeployPasswordIn, request: Request) -> JSONResponse:
+def deploy_run(slug: str, body: DeployPasswordIn, request: Request) -> JSONResponse:
     _check_slug(slug)
     _check_password(body.password, request)
     _start_deploy()
@@ -213,7 +218,7 @@ async def deploy_run(slug: str, body: DeployPasswordIn, request: Request) -> JSO
     "/{slug}/status",
     dependencies=[Depends(RateLimiter(times=30, seconds=10))],
 )
-async def deploy_status(slug: str, body: DeployPasswordIn, request: Request) -> JSONResponse:
+def deploy_status(slug: str, body: DeployPasswordIn, request: Request) -> JSONResponse:
     _check_slug(slug)
     _check_password(body.password, request)
     return JSONResponse(_deploy_status())

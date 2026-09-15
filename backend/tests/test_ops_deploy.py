@@ -113,6 +113,7 @@ def test_build_run_command(ops_enabled):
     assert f"--unit={UNIT}" in joined
     assert "Type=oneshot" in joined
     assert "deploy --frontend --force" in joined
+    assert "--no-block" in cmd  # 必须非阻塞, 否则 systemd-run 会挂到部署结束
     assert "socks5-tunnel.sh" in joined  # wrapper 预热 net-on
 
 

@@ -103,7 +103,7 @@ def _unit_active() -> bool:
 def _deploy_status() -> dict:
     """组装状态接口返回: idle / running / succeeded / failed / unknown"""
     unit_state = _systemctl("is-active", UNIT_NAME)
-    if unit_state == "active":
+    if unit_state in ("active", "activating", "reloading"):
         return {"state": "running", "started_at": _read_started(), "exit_code": None, "tail": _log_tail()}
     if unit_state == "unknown":  # 单元不存在（未触发过 / 重启过机器）
         return {"state": "idle", "started_at": None, "exit_code": None, "tail": _log_tail()}

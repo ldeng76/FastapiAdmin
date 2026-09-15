@@ -93,6 +93,15 @@ def test_status_running(ops_enabled, monkeypatch):
     assert d["started_at"] == "2026-09-15 10:00:00"
 
 
+def test_status_activating_is_running_not_stale_result(ops_enabled, monkeypatch):
+    """回归: is-active=activating 时必须判 running, 不得读上次运行的陈旧 Result/ExecMainStatus 误报 succeeded"""
+    (Path(ops_enabled) / "web-deploy.started").write_text("2026-09-15 16:25:00")
+    monkeypatch.setattr(ops, "_systemctl", _fake_systemctl("activating", "success", "0"))
+    d = ops._deploy_status()
+    assert d["state"] == "running"
+    assert d["exit_code"] is None
+
+
 def test_status_failed_result_not_success(ops_enabled, monkeypatch):
     monkeypatch.setattr(ops, "_systemctl", _fake_systemctl("inactive", "protocol", "255"))
     d = ops._deploy_status()
@@ -149,7 +158,6 @@ def test_start_deploy_writes_started_file(ops_enabled, monkeypatch):
     monkeypatch.setattr(ops.subprocess, "run", lambda *a, **k: FakeProc())
     ops._start_deploy()
     assert (Path(ops_enabled) / "web-deploy.started").read_text().strip() != ""
-
 
 
 # 说明: 项目级 test_client fixture 依赖完整 app lifespan（DB/Redis/租户种子），

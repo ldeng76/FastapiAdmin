@@ -17,7 +17,7 @@ const loading = ref()
 const src = ref()
 interface params {
   file_type?:string,
-  file_id?:number | null
+  file_id?: number | string | null
   anon_exam_id?:string
 }
 const props = defineProps<params>()
@@ -27,6 +27,11 @@ async function open(obj:params){
   let file_type = obj && obj.file_type || props.file_type
   let anon_exam_id = obj && obj.anon_exam_id || props.anon_exam_id
   loading.value = ElLoading.service()
+  if(file_type === 'report'){
+    closeLoading()
+    ElMessage.info('该模态为报告文本，请在多模态详情页查看正文')
+    return
+  }
   let query:params = {}
   if(file_id){
      query.file_id = file_id;

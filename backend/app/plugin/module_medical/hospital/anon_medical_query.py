@@ -21,14 +21,23 @@
 
 from __future__ import annotations
 
-
 import logging
 from typing import Any
 
-from sqlalchemy import ColumnElement, Date, asc, cast, desc, func, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    Date,
+    asc,
+    cast,
+    desc,
+    func,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import literal_column
 
 from .anon_model import (
+    AnonDicomSeriesModel,
     AnonExamDetailModel,
     AnonExamModel,
     AnonImagingOrphanModel,
@@ -127,8 +136,9 @@ def _tag_row(row: dict[str, Any], table_label: str, modality: str) -> dict[str, 
     row["_modality"] = modality
     return row
 
+
 # 4 模态分组（与 med_* 一致，方便前端理解）
-MODALITIES = ("clinical","surgery", "ihc","ultrasound","radiology","collection","order","other","genetic", "pathology", "ct")
+MODALITIES = ("clinical", "surgery", "ihc", "ultrasound", "radiology", "collection", "order", "other", "genetic", "pathology", "ct")
 # Other
 # exam_type → 模态分组
 # 数据来源：lnrs_anon_exam.exam_type 列（ETL-2 写入，已规整为英文枚举）
@@ -139,7 +149,7 @@ EXAM_TYPE_TO_MODALITY: dict[str, str] = {
     "Ultrasound": "ultrasound",
     "Pathology": "pathology",
     "IHC": "ihc",
-    "Other" : "other",
+    "Other": "other",
     "Genetic": "genetic",
 }
 
@@ -525,13 +535,53 @@ async def anon_get_patient_detail(
                 modalities[modal_key].append(_tag_row(merged, tbl, modality))
     return {
         "patient": patient,
-        "modal_data":modalities,
+        "modal_data": modalities,
     }
-
 # --------------------------------------------------------------------------- #
-# 影像研究桥接查询（2026-08-28 新增）
+# 影像研究桥接查询（2026-08-28 新增，2026-09-10 视图派生补齐 study_date / study_description）
 # --------------------------------------------------------------------------- #
+#
+# 派生规则（与 SQL 迁移 0019-imaging-study-view-description.sql / alembic
+# i9j0k1l2m3n4 严格对齐）：
+#   * 视图与 ORM 都通过 lnrs.path_study_date(text) 派生检查日期（DATE）
+#   * 该函数内部：正则守卫月日数值范围 → substring 抽 8 位 → safe_to_date
+#     兜底（2-29 非闰年等 → NULL）
+#   * ORM 与视图走同一函数：派生规则只在 SQL 函数定义里出现一次，无漂移
+#
+# ORM 调用 PG 函数的技术细节：SQLAlchemy 渲染 schema-qualified 函数名
+# 会被加双引号变 `"lnrs.path_study_date"`，asyncpg prepared statement
+# 拿不到该函数（PG 把双引号里的 "." 当字面 identifier 字符而非 schema 路径）。
+# 所以 ORM 端用 literal_column("lnrs.path_study_date(image_path)") 走 raw SQL
+# 字面渲染，绕过 SQLAlchemy 标识符引用机制。
 
+_PATH_DATE_LITERAL = literal_column("lnrs.path_study_date(image_path)")
+
+_STUDY_DATE_EXPR = cast(_PATH_DATE_LITERAL, Date).label("study_date")
+
+_STUDY_DESCRIPTION_EXPR = (
+    AnonImagingStudyModel.modality
+    + " "
+    + func.to_char(_PATH_DATE_LITERAL, "YYYY-MM-DD")
+).label("study_description")
+# series_count 子查询（2026-09-15 引入）：LEFT JOIN lnrs_anon_dicom_series，
+# 无 series 行时为 0（与视图 v_imaging_study_counts 行为对齐，避免前端
+# 「序列数 X」显示 NULL）。走 lnrs_anon_ix_series_study_uid 索引，
+# 单 patient 路径开销毫秒级。
+_SERIES_COUNT_SUBQ = (
+    select(
+        AnonImagingStudyModel.dicom_study_uid.label("study_uid"),
+        func.coalesce(
+            func.count(AnonDicomSeriesModel.series_id), 0
+        ).label("series_count"),
+    )
+    .select_from(AnonImagingStudyModel)
+    .outerjoin(
+        AnonDicomSeriesModel,
+        AnonDicomSeriesModel.dicom_study_uid == AnonImagingStudyModel.dicom_study_uid,
+    )
+    .group_by(AnonImagingStudyModel.dicom_study_uid)
+    .subquery()
+)
 
 # 列出 SQL 列：与前端 DicomStudy 类型对齐
 IMAGING_STUDY_LIST_COLS = [
@@ -543,6 +593,9 @@ IMAGING_STUDY_LIST_COLS = [
     AnonImagingStudyModel.source,
     AnonImagingStudyModel.anon_exam_id,
     AnonImagingStudyModel.created_at,
+    _STUDY_DATE_EXPR,
+    _STUDY_DESCRIPTION_EXPR,
+    _SERIES_COUNT_SUBQ.c.series_count,
 ]
 
 
@@ -565,12 +618,12 @@ async def anon_list_patient_imaging_studies(
       - sop_count     = 该 Study 下影像切片数（仅展示）
       - source        = 数据来源盘标识
       - anon_exam_id  = 冗余 FK（ETL-2 回写时有值，离线灌库为空）
-      - series_count  = None（本表未填 series-level 明细；前端 DicomViewer
-                        会拉 series 接口补齐；UI 显示'系列数加载中'）
+      - series_count  = 由 lnrs_anon_dicom_series 聚合得出；series 未落库
+                        时为 0（前端 DicomViewer 顶部仍按需拉 series 接口
+                        实时补齐，但列表首屏即可展示稳定序列数）
       - patient_id    = PT_xxx（脱敏后）
       - patient_name  = 从 lnrs_anon_patient 联表带出（便于 viewer overlay）
-      - study_description / study_date：未填，前端 DicomViewer 会用
-        listStudies() 接口补齐；本接口不返避免冗余
+      - study_date        = image_path 末两级父目录 YYYYMMDD → DATE（ISO）
     """
     conditions = [
         AnonImagingStudyModel.patient_id == patient_id,
@@ -583,15 +636,9 @@ async def anon_list_patient_imaging_studies(
 
     stmt = (
         select(
-            AnonImagingStudyModel.study_key,
-            AnonImagingStudyModel.dicom_study_uid.label("study_uid"),
-            AnonImagingStudyModel.modality,
-            AnonImagingStudyModel.image_path,
-            AnonImagingStudyModel.sop_count,
-            AnonImagingStudyModel.source,
-            AnonImagingStudyModel.anon_exam_id,
+            *IMAGING_STUDY_LIST_COLS,
+            # 联表附加列（patient 维度，不属于 study 表常量）
             AnonImagingStudyModel.center_code,
-            AnonImagingStudyModel.created_at,
             AnonPatientModel.patient_id.label("patient_id"),
             AnonPatientModel.sex,
             AnonPatientModel.birth_date,
@@ -599,6 +646,11 @@ async def anon_list_patient_imaging_studies(
         .join(
             AnonPatientModel,
             AnonPatientModel.patient_id == AnonImagingStudyModel.patient_id,
+        )
+        # series_count 子查询（dicom_study_uid 维度聚合；series 未落库时 0）
+        .outerjoin(
+            _SERIES_COUNT_SUBQ,
+            _SERIES_COUNT_SUBQ.c.study_uid == AnonImagingStudyModel.dicom_study_uid,
         )
         .where(*conditions)
         .order_by(
@@ -612,7 +664,11 @@ async def anon_list_patient_imaging_studies(
         d = dict(r)
         # study_id 别名：DicomViewer props.studyId 期望 = StudyInstanceUID
         d["study_id"] = d["study_uid"]
+        # series_count 子查询已 select 出 0/正数；显式 cast 防 PG 返回 Decimal
+        d["series_count"] = int(d.get("series_count") or 0)
         d["patient_name"] = None  # 暂未联 patient_name（patient 表无此列）
+        if hasattr(d.get("study_date"), "isoformat"):
+            d["study_date"] = d["study_date"].isoformat()
         if hasattr(d.get("birth_date"), "isoformat"):
             d["birth_date"] = d["birth_date"].isoformat()
         if hasattr(d.get("created_at"), "isoformat"):
@@ -738,7 +794,7 @@ async def anon_resolve_orphan_id_from_path(
         rel_path = image_path[len(dicom_root):].lstrip("/")
     else:
         rel_path = image_path
-    payload = f"{center_code}:{rel_path}".encode("utf-8")
+    payload = f"{center_code}:{rel_path}".encode()
     candidate_id = "OR_" + hashlib.sha256(payload).hexdigest()[:12]
     stmt = select(AnonImagingOrphanModel.study_orphan_id).where(
         AnonImagingOrphanModel.study_orphan_id == candidate_id,
@@ -792,6 +848,7 @@ async def anon_list_imaging_orphans_by_center(
             d["created_at"] = d["created_at"].isoformat()
         items.append(d)
     return items
+
 
 async def anon_get_orphan_audit_batch(
     db: AsyncSession,

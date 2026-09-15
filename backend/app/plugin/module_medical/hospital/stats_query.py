@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .anon_model import AnonExamModel, AnonPatientModel
+from .anon_model import AnonDicomSeriesModel, AnonExamModel, AnonPatientModel
 from .stats_schema import StatsFiltersIn
 
 
@@ -363,6 +363,56 @@ class StatsQuery:
         return [
             {"exam_type": exam_type, "label": label_map.get(exam_type, exam_type), "count": count}
             for exam_type, count in result.all()
+        ]
+
+
+    async def query_series_counts_by_modality(self) -> list[dict]:
+        """按 modality 聚合 dicom_series 的 series_count / instance_count /
+        total_bytes（2026-09-15 引入；ETL-2 dicom_series 落库后才会有非零值）。
+
+        走 lnrs_anon_dicom_series 表，JOIN lnrs_anon_imaging_study 以便复用
+        现有的患者维度筛选。无 series 数据时返回空列表（GROUP BY 不出哑行，
+        前端 0 行更直观）。
+        """
+        from .anon_model import AnonImagingStudyModel
+        # 复用 patient 维度筛选（_patient_filters 返回 lnrs.lnrs_anon_patient.* 条件）
+        patient_conditions = self._patient_filters()
+        sub_patients = select(AnonPatientModel.patient_id)
+        if patient_conditions:
+            sub_patients = sub_patients.where(*patient_conditions)
+
+        stmt = (
+            select(
+                AnonImagingStudyModel.modality.label("modality"),
+                func.count(AnonDicomSeriesModel.series_id).label("series_count"),
+                func.coalesce(
+                    func.sum(AnonDicomSeriesModel.instance_count), 0
+                ).label("instance_count"),
+                func.coalesce(
+                    func.sum(AnonDicomSeriesModel.byte_size), 0
+                ).label("total_bytes"),
+            )
+            .select_from(AnonDicomSeriesModel)
+            .join(
+                AnonImagingStudyModel,
+                AnonImagingStudyModel.dicom_study_uid
+                == AnonDicomSeriesModel.dicom_study_uid,
+            )
+            .where(AnonImagingStudyModel.patient_id.in_(sub_patients))
+            .group_by(AnonImagingStudyModel.modality)
+            .order_by(func.count(AnonDicomSeriesModel.series_id).desc())
+        )
+        rows = (await self.db.execute(stmt)).all()
+        label_map = await self._load_dict_labels("med_exam_type")
+        return [
+            {
+                "modality": modality,
+                "label": label_map.get(modality, modality),
+                "series_count": int(s_count),
+                "instance_count": int(i_count),
+                "total_bytes": int(t_bytes),
+            }
+            for modality, s_count, i_count, t_bytes in rows
         ]
 
     async def query_exam_trend(self) -> list[dict]:

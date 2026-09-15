@@ -71,6 +71,13 @@
         </div>
       </div>
 
+      <!-- study 级指标（序列数 / 切片总数）— 不增请求，computed 派生 -->
+      <div class="viewer-study-info" v-if="seriesCount > 0">
+        <span class="info-item">序列数 <strong>{{ seriesCount }}</strong></span>
+        <span class="info-sep">·</span>
+        <span class="info-item">切片总数 <strong>{{ totalInstanceCount }}</strong></span>
+      </div>
+
       <!-- 工具栏 -->
       <div class="viewer-toolbar">
         <div class="toolbar-group">
@@ -213,6 +220,13 @@ const windowCenter = ref(0);
 
 const viewportRef = ref<HTMLDivElement | null>(null);
 const instanceCount = computed(() => instanceList.value.length);
+// study 维度派生（不增请求）：序列数 = 已拉 series 数；切片总数 = 各 series
+// instance_count 累加；与 /api/dicom/studies/{id}/series 返回的 DicomSeries
+// 列表一致。
+const seriesCount = computed(() => seriesList.value.length);
+const totalInstanceCount = computed(() =>
+  seriesList.value.reduce((sum, s) => sum + (s.instance_count || 0), 0)
+);
 const activeSeries = computed(
   () => seriesList.value.find((s) => s.series_uid === activeSeriesUid.value) || null
 );
@@ -659,6 +673,29 @@ watch(
   bottom: 8px;
   right: 10px;
   text-align: right;
+}
+
+
+/* study 级指标栏：序列数 / 切片总数 */
+.viewer-study-info {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #fafbfc;
+  border-top: 1px solid #ebeef5;
+  border-bottom: 1px solid #ebeef5;
+  font-size: 13px;
+  color: #606266;
+}
+.viewer-study-info .info-item strong {
+  color: #303133;
+  font-weight: 600;
+  margin: 0 2px;
+}
+.viewer-study-info .info-sep {
+  color: #c0c4cc;
 }
 
 /* 工具栏 */

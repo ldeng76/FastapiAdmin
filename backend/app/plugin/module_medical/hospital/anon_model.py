@@ -6,11 +6,16 @@
 实现范围（与用户确认的本轮 ETL-2 边界）：
 - 落库：ingest_batch / patient / exam / report_text / phi_audit / exam_finding
 - 本轮 finding 表实际不写入（自由文本不拆分），但模型保留
-- 不建模：dicom_series / dicom_instance / dicom_uid_map（本轮无 DICOM 源，
-  uid_map 按 ADR 物理隔离不进生产库）
+- dicom_series：ORM 模型已声明，ETL-2 增量阶段按 study 目录解析后落库
+  （匿名 anon_exam_id 由 0012 imaging_study 回填；离线灌库场景下 anon_exam_id
+  为空时跳过 series 落库，与 DDL NOT NULL 约束一致）
+- 不建模：dicom_uid_map（按 ADR 物理隔离不进生产库）
 
 2026-08-28 增：lnrs_anon_imaging_study（影像研究桥接表，patient_id ↔ 影像
- 绝对路径；仅存脱敏 ID；ETL-2 回写 + 离线灌库双通道）。
+绝对路径；仅存脱敏 ID；ETL-2 回写 + 离线灌库双通道）。
+
+2026-09-15 增：lnrs_anon_dicom_series（series 级元数据，与 lnrs_anon_dicom_instance
+的 ORM 一起补齐；DICOM 影像可统计：series_count / instance_count / byte_size）。
 """
 
 from __future__ import annotations
@@ -352,15 +357,96 @@ class AnonPhiAuditModel(MappedBase):
 
 
 # --------------------------------------------------------------------------- #
-# 注册表 — 供 ETL 引擎与查询层使用
+# DICOM series / instance 元数据（2026-09-15 补齐，ETL-2 增量阶段落库）
 # --------------------------------------------------------------------------- #
 #
-# TODO(后续迭代): 本轮未建模的 DDL 表（接入 DICOM 源时补齐）：
-#   - lnrs_anon_dicom_series    （DICOM 序列元数据 + NAS/OSS 路径）
-#   - lnrs_anon_dicom_instance  （关键实例级，按需建）
-#   - lnrs_anon_dicom_uid_map   （原 UID ↔ 新 UID，仅审计物理隔离库，不进生产库）
-# DDL 已在 backend/sql/postgres/0006-anonymized-schema-lnrs.sql 中定义。
+# 数据源：lnrs.lnrs_anon_imaging_study.image_path（0012 离线灌库或 ETL-2 回写），
+# ETL-2 增量阶段遍历这些目录，调用 DicomIndexer.register_folder 拿到 series
+# 元数据后批量 upsert 到 dicom_series；dicom_instance 仅声明模型留作 ETL-3。
+#
+# DDL 字段顺序与 0006-anonymized-schema-lnrs.sql §7 / §8 严格对齐；
+# 不增列、不改类型 — 任何漂移都需先走 DDL 迁移。
 
+
+class AnonDicomSeriesModel(MappedBase):
+    """DICOM 序列元数据 — 一个 SeriesInstanceUID 一行。
+
+    设计要点：
+    - anon_exam_id NOT NULL：要求该 study 在 lnrs_anon_imaging_study 中已
+      回填 exam 关联（离线 CSV 灌库场景跳过 series 落库以避免约束违约）
+    - dicom_series_uid UNIQUE：upsert 幂等键（ETL-2 重跑安全）
+    - file_root NOT NULL：series 下 .dcm 所在 study 根目录（同一 series 实例
+      均落在同一目录；用于跨中心溯源与回收）
+    - instance_count > 0（DDL CHECK）：register_folder 已过滤非图像模态，
+      该约束保护 series 行必含至少一个 instance
+    - series_no / file_count_actual：与 DICOM 协议不对应的派生字段，保留供
+      仪表板按 series 顺序与目录文件数比对（诊断路径不全等问题）
+    """
+
+    __tablename__ = "lnrs_anon_dicom_series"
+    __table_args__ = (
+        CheckConstraint(
+            "instance_count > 0",
+            name="lnrs_anon_ck_series_instance_count",
+        ),
+        {"schema": "lnrs", "comment": "DICOM 序列元数据（series-level 聚合统计源）"},
+    )
+
+    series_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    anon_exam_id: Mapped[str] = mapped_column(
+        String(40),
+        ForeignKey("lnrs.lnrs_anon_exam.anon_exam_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    dicom_series_uid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    modality: Mapped[str] = mapped_column(String(8), nullable=False)
+    body_part: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    instance_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_root: Mapped[str] = mapped_column(Text, nullable=False)
+    file_count_actual: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    series_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_batch_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AnonDicomInstanceModel(MappedBase):
+    """DICOM 关键实例（series 内 SOP 级）— 本轮 ETL 不写入，模型留作 ETL-3。
+
+    设计要点：
+    - 联合主键 (series_id, instance_no)：按 series 内序号稳定排序
+    - sop_instance_uid UNIQUE：跨 series 去重（理论上不应重复）
+    - byte_offset：用于 OSS/NAS 远程读取时跳过头部；本轮 ETL 不填
+    """
+
+    __tablename__ = "lnrs_anon_dicom_instance"
+    __table_args__ = (
+        CheckConstraint(
+            "instance_no > 0",
+            name="lnrs_anon_ck_instance_no",
+        ),
+        {"schema": "lnrs", "comment": "DICOM SOP 级实例表（ETL-3 实施，本轮仅声明）"},
+    )
+
+    series_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("lnrs.lnrs_anon_dicom_series.series_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    sop_instance_uid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    instance_no: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
+    byte_offset: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 # --------------------------------------------------------------------------- #
 # 医疗宽表直入扩展（2026-07-24 嫁接）: visit / surgery / exam_detail
@@ -957,4 +1043,6 @@ ANON_TABLE_MODELS: dict[str, type[MappedBase]] = {
     "lnrs_anon_imaging_study": AnonImagingStudyModel,
     "lnrs_anon_imaging_orphan": AnonImagingOrphanModel,
     "lnrs_anon_orphan_audit_batch": AnonOrphanAuditBatchModel,
+    "lnrs_anon_dicom_series": AnonDicomSeriesModel,
+    "lnrs_anon_dicom_instance": AnonDicomInstanceModel,
 }

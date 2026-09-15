@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 一键跑 ETL-2 dicom_series 阶段（方案 B 步骤 2）
+# 一键跑 ETL-2 dicom_series 阶段（方案 B 步骤 2；2026-09-15 重构为 study 级 byte_size）
 #
 # 背景：
 #   ETL-2 的 dicom_series 阶段（anon_etl_engine._import_dicom_series_for_center）
-#   扫描 lnrs_anon_imaging_study.image_path 目录，解析 series 元数据并 upsert
-#   到 lnrs_anon_dicom_series（含 byte_size 累加）。
+#   扫描 lnrs_anon_imaging_study.image_path 目录，对每个 study 目录累加 .dcm 字节数
+#   并 upsert 到 lnrs_anon_dicom_series（study 级：1 行 = 1 个 study）。
+#
+# 2026-09-15 重构：不再调 DicomIndexer.register_folder / pydicom，仅 iterdir + stat。
+#   - 原来 series 级（拿 series_uid/modality）需要 pydicom 解析每个 .dcm header，
+#     单 study ~300ms；重构后单 study ~30ms（10x 加速）。
+#   - 详细影响见 docs/etl2/prd/refactor-impact-dicom-series-study-level.md
 #
 # 前置：
-#   1. lnrs_anon_dicom_series 表存在（0006-anonymized-schema-lnrs.sql §7）
+#   1. lnrs_anon_dicom_series 表存在（study 级 schema；0006-anonymized-schema-lnrs.sql §7）
 #   2. lnrs_anon_v_imaging_study_counts 视图存在（0020-imaging-study-counts-view.sql）
 #   3. lnrs_anon_imaging_study.anon_exam_id 已回填（见 etl2/backfill_imaging_study_exam_id.py）
 #   4. 磁盘 DICOM 目录可访问（/data/wlx/DATABASE/...；h196_3 上 119,350 study × 22-116MB/个）
 #
 # 用途：
 #   - 默认 DRY-RUN：打印将处理的中心 + dicom_series DB-SCAN 分支，不连库写入
-#   - --apply：实际跑 ETL-2（10-30 小时；不可中断前请确认备份窗口）
+#   - --apply：实际跑 ETL-2（重构后预计 zhujiang ~18 分钟；shengyi 0% 覆盖 < 1 分钟）
 #
 # 用法：
 #   # 1) dry-run（不修改任何数据）
@@ -32,18 +37,17 @@
 #       （注：增量模式需直接调 anon_etl_engine._import_dicom_series_for_center(scope='unexamined')；
 #        本脚本的 --incremental 仅作 hook 提示，未真正切换 spec.scope，见后注）
 #
-# 预计耗时（h196_3 全量）：
-#   - zhujiang（36,356 study）：6-12 小时（磁盘 stat 6-10 TB）
-#   - shengyi（82,994 study）：anon_exam_id 回填覆盖率 0.26%（219/82,988 patient），
+# 预计耗时（h196_3 全量；2026-09-15 重构后）：
+#   - zhujiang（36,356 study；36,342 已回填 exam）：~18 分钟（仅 stat + iterdir）
+#   - shengyi（82,994 study；anon_exam_id 回填覆盖率 0.26%，219/82,988 patient）：
 #     实际 series 落库数极小，可快速跑完
 #   - xinqiao / hos301：study 数较小（< 1000）
 #
 # 回退：
-#   - 幂等：ON CONFLICT (dicom_series_uid) DO UPDATE，重跑不会重复落库
+#   - 幂等：ON CONFLICT (dicom_study_uid) DO UPDATE，重跑不会重复落库
 #   - 数据回滚：DELETE FROM lnrs_anon_dicom_series WHERE created_batch_id = '<batch>';
-#   - 完整回滚：DROP TABLE lnrs_anon_dicom_series + 重跑 0006 + 0020
+#   - 完整回滚：DROP TABLE lnrs_anon_dicom_series + 重跑 0006 §7 (study 级) + 0020
 # =============================================================================
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

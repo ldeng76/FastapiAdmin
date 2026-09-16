@@ -133,11 +133,6 @@ const {
   replaceSearchParams,
   getData
 } = useTable({
-  transform:{
-    dataTransformer(data){
-      return data
-    }
-  },
   core: {
     apiFn: FilesApi.list,
     apiParams: { page_no: 1, page_size: 30 },

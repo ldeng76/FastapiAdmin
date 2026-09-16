@@ -1,5 +1,5 @@
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.common.enums import QueueEnum
 
@@ -12,8 +12,13 @@ class MedicalFiles(BaseModel):
     patient_id: str | None = Field(default=None, description="患者编号")
     exam_type: str | None = Field(default=None, description="模态类型")
     file_type: str | None = Field(default=None, description="文件类型")
-    # file_size: int | None = Field(default=None, description="文件大小")
     file_path: str | None = Field(default=None, description="文件路径")
+
+    @field_validator("file_type", mode="before")
+    @classmethod
+    def _force_file_type_dcm(cls, v):
+        """file_type 暂时固定返回 dcm，不读数据库 center_code。"""
+        return "dcm"
 
 
 class MedicalFilesOutSchema(MedicalFiles):
@@ -34,22 +39,22 @@ class MedicalFilesQueryParam:
         exam_type: str | None = Query(
             None, description="模态类型（多选，逗号分隔，如 CT,PETCT）"
         ),
-        file_type: str | None = Query(
-            None, description="文件类型（多选，逗号分隔，如 dcm,nii）"
-        ),
+        # file_type: str | None = Query(
+        #     None, description="文件类型（多选，逗号分隔，如 dcm,nii）"
+        # ),  # 暂时没用，固定返回 dcm
         center_type: str | None = Query(
             None, description="中心筛选（多选，逗号分隔，如 sy,sh）"
         ),
     ) -> None:
         exam_list = [s.strip() for s in exam_type.split(",")] if exam_type else None
         exam_list = [s for s in exam_list if s] if exam_list else None
-        file_list = [s.strip() for s in file_type.split(",")] if file_type else None
-        file_list = [s for s in file_list if s] if file_list else None
+        # file_list = [s.strip() for s in file_type.split(",")] if file_type else None
+        # file_list = [s for s in file_list if s] if file_list else None
         center_list = [s.strip() for s in center_type.split(",")] if center_type else None
         center_list = [s for s in center_list if s] if center_list else None
 
         self.exam_type = (QueueEnum.in_.value, exam_list) if exam_list else None
-        self.file_type = (QueueEnum.in_.value, file_list) if file_list else None
+        self.file_type = None  # 暂时没用，固定返回 dcm（响应层处理）
         self.center_type = (QueueEnum.in_.value, center_list) if center_list else None
 
 

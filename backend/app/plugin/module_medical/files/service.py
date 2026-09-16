@@ -48,10 +48,10 @@ class MedFilesService:
         file_type: list[str] | None,
         center_type: list[str] | None = None,
     ):
-        """给 select 查询追加 exam_type/file_type/center_type 的 in 过滤 + 软删除 + 租户过滤。
+        """给 select 查询追加 exam_type/center_type 的 in 过滤 + 软删除 + 租户过滤。
 
         不追加 Permission 过滤（Permission.filter_query 作用于整个 select，在外部调用）。
-        center_type 筛选 MedFilesModel.file_type（即 center_code）。
+        file_type 数据库无对应列，已废弃；center_type 筛选 MedFilesModel.center_code。
         """
         m = MedFilesModel
 
@@ -65,10 +65,8 @@ class MedFilesService:
 
         if exam_type:
             query = query.where(m.exam_type.in_(exam_type))
-        if file_type:
-            query = query.where(m.file_type.in_(file_type))
         if center_type:
-            query = query.where(m.file_type.in_(center_type))
+            query = query.where(m.center_code.in_(center_type))
 
         return query
     @staticmethod
@@ -102,13 +100,12 @@ class MedFilesService:
     ) -> dict:
         """分页查询医疗文件列表。
 
-        exam_type / file_type 为多选（IN）查询条件，为空则忽略。
+        exam_type 为多选（IN）查询条件，为空则忽略。
+        file_type 数据库无对应列，已废弃，不参与筛选。
         """
         search: dict[str, Any] = {}
         if exam_type:
             search["exam_type"] = ("in", exam_type)
-        if file_type:
-            search["file_type"] = ("in", file_type)
 
         return await MedFilesCRUD(auth).page(
             offset=offset,
@@ -128,23 +125,11 @@ class MedFilesService:
         auth: AuthSchema,
         exam_type: list[str] | None = None,
     ) -> dict:
-        """返回当前数据里实际出现过的 file_type 字典。
+        """返回文件类型字典。
 
-        参数:
-            auth:       当前用户鉴权信息（控制行级可见性）
-            exam_type:  可选，仅统计指定模态下出现过的文件类型
+        file_type 数据库无对应列，固定返回 dcm。
         """
-        m = MedFilesModel
-        sql = select(m.file_type).distinct().where(m.file_type.is_not(None), m.file_type != "")
-        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=None)
-        sql = await Permission(m, auth).filter_query(sql)
-        sql = sql.order_by(m.file_type.asc())
-
-        result = await auth.db.execute(sql)
-        rows = [r for r, in result.all()]
-
-        options = [{"label": str(x), "value": str(x)} for x in rows if x not in (None, "")]
-        return {"file_type_options": options}
+        return {"file_type_options": [{"label": "dcm", "value": "dcm"}]}
 
     @classmethod
     async def statistics_service(
@@ -275,10 +260,9 @@ class MedFilesService:
         # 排序：count DESC，未关联 bucket 放最后
         by_exam_type.sort(key=lambda x: (x["value"] == "__unlinked__", -x["count"]))
 
-        # ---- by_center：GROUP BY MedFilesModel.file_type（=imaging_study.center_code）----
-        # 物理列保持 center_code，但响应字段重命名为 by_center（前端 el-collapse-item 标题
-        # 即「中心」，前后端语义对齐）。center_code NOT NULL 不出现 __unlinked__ bucket。
-        by_center_sql = select(m.file_type, func.count().label("n")).group_by(m.file_type)
+        # ---- by_center：GROUP BY MedFilesModel.center_code ----
+        # center_code NOT NULL 不出现 __unlinked__ bucket。
+        by_center_sql = select(m.center_code, func.count().label("n")).group_by(m.center_code)
         by_center_sql = cls._apply_search_conditions(
             by_center_sql, exam_type=exam_type, file_type=None, center_type=center_type
         )

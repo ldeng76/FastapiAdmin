@@ -210,34 +210,51 @@ CREATE TABLE lnrs.lnrs_anon_exam_finding (
 
 CREATE INDEX lnrs_anon_ix_finding_exam    ON lnrs.lnrs_anon_exam_finding (anon_exam_id);
 CREATE INDEX lnrs_anon_ix_finding_typeval ON lnrs.lnrs_anon_exam_finding (finding_type, value_numeric);
-
--- ---------- 7. lnrs_anon_dicom_series ----------
+-- ---------- 7. lnrs_anon_dicom_series (study 级；2026-09-15 重构自 series 级) ----------
+--
+-- 设计要点：
+-- * 一行 = 一个 study：原 series 级（commit f8dd292e）含 series_uid/modality/body_part/
+--   series_no/file_root/file_count_actual 字段，已在 2026-09-15 移除。
+--   重构背景见 docs/etl2/prd/refactor-impact-dicom-series-study-level.md。
+-- * dicom_study_uid UNIQUE：与 lnrs_anon_imaging_study.dicom_study_uid 对齐，
+--   upsert 幂等键（ETL-2 重跑安全）。
+-- * file_count：study 目录下文件数（不过滤非图像模态 SR/SEG/PR/...，
+--   可能略大于真实 image instance 数；DICOMweb 实时接口仍按需拿真实数）。
+-- * byte_size NOT NULL：累加目录下所有 .dcm 的 st_size（字节）。
+-- * 实时接口路径不变：DicomViewer / DICOMweb 仍走 DicomIndexer 内存索引
+--   （app/plugin/module_medical/dicom/repository.py）。
+-- * 与 dicom_instance 表：原 §8 FK lnrs_anon_dicom_instance_series_id_fkey
+--   已在 2026-09-15 DDL cascade drop（dicom_instance.series_id 列保留；
+--   FK 约束移除，允许 ETL-3 重新设计）。
 
 CREATE TABLE lnrs.lnrs_anon_dicom_series (
     series_id           BIGSERIAL    PRIMARY KEY,
     anon_exam_id        VARCHAR(40)  NOT NULL REFERENCES lnrs.lnrs_anon_exam(anon_exam_id) ON DELETE CASCADE,
-    dicom_series_uid    VARCHAR(64)  NOT NULL UNIQUE,
-    dicom_study_uid     VARCHAR(64)  NOT NULL,
-    modality            VARCHAR(8)   NOT NULL,
-    body_part           VARCHAR(32),
-    instance_count      INT          NOT NULL CHECK (instance_count > 0),
-    file_root           TEXT         NOT NULL,
-    file_count_actual   INT,
-    byte_size           BIGINT,
-    series_no           INT          NOT NULL DEFAULT 1,
+    dicom_study_uid     VARCHAR(64)  NOT NULL UNIQUE,
+    file_count          INT          NOT NULL CHECK (file_count >= 0),
+    byte_size           BIGINT       NOT NULL,
     created_batch_id    UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT lnrs_anon_ck_dicom_series_file_count CHECK (file_count >= 0)
 );
 
-CREATE INDEX lnrs_anon_ix_series_exam      ON lnrs.lnrs_anon_dicom_series (anon_exam_id);
-CREATE INDEX lnrs_anon_ix_series_study_uid ON lnrs.lnrs_anon_dicom_series (dicom_study_uid);
-CREATE INDEX lnrs_anon_ix_series_modality  ON lnrs.lnrs_anon_dicom_series (modality, body_part);
+COMMENT ON TABLE lnrs.lnrs_anon_dicom_series IS
+    '影像研究级元数据（一行 = 一个 study；2026-09-15 重构自 series 级）。'
+    'file_count = study 目录下文件数；byte_size = 累加目录下所有 .dcm 的 st_size。';
 
--- ---------- 8. lnrs_anon_dicom_instance ----------
+CREATE INDEX lnrs_anon_ix_dicom_series_exam      ON lnrs.lnrs_anon_dicom_series (anon_exam_id);
+CREATE INDEX lnrs_anon_ix_dicom_series_study_uid ON lnrs.lnrs_anon_dicom_series (dicom_study_uid);
+
+-- ---------- 8. lnrs_anon_dicom_instance (FK 已移除；2026-09-15) ----------
+--
+-- 原 FK lnrs_anon_dicom_instance_series_id_fkey → lnrs_anon_dicom_series(series_id)
+-- 已在 2026-09-15 DDL cascade drop（dicom_series 重构为 study 级后该 FK
+-- 失去意义；ETL-3 重新设计 series ↔ instance 关系时再考虑重建）。
+-- series_id 列保留供 ETL-3 引用；本表当前不写入数据。
 
 CREATE TABLE lnrs.lnrs_anon_dicom_instance (
-    series_id           BIGINT       NOT NULL REFERENCES lnrs.lnrs_anon_dicom_series(series_id) ON DELETE CASCADE,
+    series_id           BIGINT       NOT NULL,
     sop_instance_uid    VARCHAR(64)  NOT NULL,
     instance_no         INT          NOT NULL CHECK (instance_no > 0),
     byte_offset         BIGINT       NOT NULL DEFAULT 0,

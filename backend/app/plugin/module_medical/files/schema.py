@@ -80,16 +80,31 @@ class GroupStatItem(BaseModel):
 class MedFilesStatisticsOutSchema(BaseModel):
     """医疗文件统计响应。"""
 
-    file_count: int = Field(description="文件个数")
-    patient_count: int = Field(description="有文件的患者数（MedFilesModel 去重）")
-    exam_count: int = Field(description="检查量（AnonExamModel 行数）")
-    total_size_bytes: int = Field(description="所有文件总大小（字节）")
-    total_size_text: str = Field(description="总大小易读文本，如 '12.34 GB'")
-    by_exam_type: list[GroupStatItem] = Field(
-        default_factory=list, description="各模态文件数及占比"
+    file_count: int = Field(description="影像文件数（lnrs_anon_imaging_study 行数）")
+    patient_count: int = Field(
+        description="有影像文件的患者数（lnrs_anon_imaging_study.patient_id 去重）"
     )
-    by_file_type: list[GroupStatItem] = Field(
-        default_factory=list, description="各文件类型文件数及占比"
+    exam_count: int = Field(
+        description="检查量（lnrs_anon_exam 行数；与影像文件数不同——一次临床检查可能 0/N 个影像文件）"
+    )
+    total_size_bytes: int = Field(
+        description="所有文件总大小（字节）。2026-09-15 dicom_series 落库后从 dicom_series.byte_size 累加。",
+    )
+    total_size_text: str = Field(
+        description="总大小易读文本，如 '8.76 TB'。",
+    )
+    by_exam_type: list[GroupStatItem] = Field(
+        default_factory=list,
+        description="各业务模态影像文件数及占比（LEFT JOIN lnrs_anon_exam 按 exam.exam_type 分组；含 '__unlinked__' 桶表示未关联 exam 的影像文件）。",
+    )
+    by_exam_type_total: int = Field(
+        description="by_exam_type 统计基数（含未关联 exam 的 study；与 file_count 一致）"
+    )
+    by_exam_type_unlinked: int = Field(
+        description="by_exam_type 中未关联 exam 的 study 数（anon_exam_id IS NULL）"
+    )
+    by_center: list[GroupStatItem] = Field(
+        default_factory=list, description="各中心影像文件数及占比（imaging_study.center_code 维度）"
     )
 
 

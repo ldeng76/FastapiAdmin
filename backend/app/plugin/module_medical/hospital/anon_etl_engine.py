@@ -33,8 +33,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable
 
-import duckdb
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -3000,8 +2999,11 @@ async def _import_dicom_series_for_center(
     scanned = 0
     skipped_no_exam = 0
     failed_studies = 0
+    # 每 500 study commit 一次：避免 36k+ INSERT 累积在单个大事务里
+    # （可能撑爆连接内存 / 锁表太久 / 失败时回滚代价过大）
+    BATCH_COMMIT_EVERY = 500
 
-    for r in rows:
+    for i, r in enumerate(rows):
         study_uid = r.dicom_study_uid
         image_path = r.image_path
         anon_exam_id = r.anon_exam_id
@@ -3019,7 +3021,7 @@ async def _import_dicom_series_for_center(
 
         scanned += 1
         try:
-            n = await _upsert_dicom_series_for_study(
+            n = await _upsert_dicom_byte_size_for_study(
                 db,
                 image_path=image_path,
                 dicom_study_uid=study_uid,
@@ -3036,6 +3038,17 @@ async def _import_dicom_series_for_center(
             # 不阻断其他 study，继续
             continue
 
+        # 每 BATCH_COMMIT_EVERY 条提交一次（递增下标 0-based → 1-based）
+        if (i + 1) % BATCH_COMMIT_EVERY == 0:
+            await db.commit()
+            log.info(
+                f"ETL2: {center_code} dicom_series 进度 {i+1}/{len(rows)} "
+                f"scanned={scanned} series_upserted={total_series//(1024*1024)} MB"
+            )
+
+    # 最终提交剩余 INSERT
+    await db.commit()
+
     log.info(
         f"ETL2: {center_code} dicom_series 完成 — scanned={scanned} "
         f"series_upserted={total_series} skipped_no_exam={skipped_no_exam} "
@@ -3043,8 +3056,7 @@ async def _import_dicom_series_for_center(
     )
     return total_series
 
-
-async def _upsert_dicom_series_for_study(
+async def _upsert_dicom_byte_size_for_study(
     db: AsyncSession,
     *,
     image_path: str,
@@ -3052,130 +3064,76 @@ async def _upsert_dicom_series_for_study(
     anon_exam_id: str,
     batch_id: str,
 ) -> int:
-    """对单个 Study 目录解析 series 明细并 upsert 进 lnrs_anon_dicom_series。
+    """对单个 Study 目录累加 .dcm 字节数并 upsert 进 lnrs_anon_dicom_series（study 级）。
 
-    返回：落库的 series 行数（insert + update 命中）。
+    返回：写入的 byte_size（bytes）；与 series 级实现对齐返回行数为兼容。
 
-    关键决策：
-    - 用 DicomIndexer 作为「临时解析器」：现有代码已经把 .dcm 读头、字段
-      抽取、白名单过滤做完，再写一遍 pydicom 解析是重复。register_folder
-      返回值仅用于兜底日志；真正的 series 元数据走 indexer._studies 的
-      series dict（key=SeriesInstanceUID, value=instances list）。
-    - 解析后立即 evict_study：避免进程内状态被下一次 ETL 污染
-      （DicomIndexer 是单例 + 内存 LRU 缓存）。
-    - 幂等键 dicom_series_uid（UNIQUE 约束），upsert by ON CONFLICT。
-    - body_part / series_description：DicomIndexer 没单独抽出 series_description
-      到 series-level（只在 instance 上），本轮保留 None；
-      body_part 走 DicomDataset 的 BodyPartExamined（当前 DicomIndexer
-      也未抽取 → 本轮置 None，留作 ETL-3 扩展点）。
+    关键决策（2026-09-15 重构自 series 级 _upsert_dicom_series_for_study）：
+    - 不调 DicomIndexer.register_folder：省掉 pydicom.dcmread 每个 .dcm header 的
+      CPU 解析开销（~10ms/instance）。DicomViewer 实时接口仍走 register_folder
+      （路径不变）。
+    - 仅 iterdir + stat() 累加：study 目录下所有文件 .dcm 的 st_size 之和。
+    - file_count：study 目录下文件数（不过滤非图像模态 SR/SEG/PR/...，
+      可能略大于真实 image instance 数；与 register_folder 行为差异由前端按需拉
+      DICOMweb 实时接口弥补）。
+    - 幂等键 dicom_study_uid（UNIQUE 约束），upsert by ON CONFLICT。
+    - 已写入的 study 重跑：byte_size / file_count 会被最新 run 覆盖，
+      created_batch_id 保留首次入库（commit f8dd292e 设计延续）。
     """
-    from pathlib import Path
     from .anon_model import AnonDicomSeriesModel
-    from app.plugin.module_medical.dicom.repository import indexer
 
     path = Path(image_path)
     if not path.is_dir():
         log.warning(
-            f"ETL2: dicom_series 跳过（目录不存在或非目录）study={dicom_study_uid} path={image_path}"
+            f"ETL2: dicom_byte_size 跳过（目录不存在或非目录）study={dicom_study_uid} path={image_path}"
         )
         return 0
 
-    folder_reg = indexer.register_folder(path)
-    if not folder_reg or not folder_reg.get("study_uid"):
+    files = [p for p in path.iterdir() if p.is_file()]
+    if not files:
         log.warning(
-            f"ETL2: dicom_series 跳过（目录无 DICOM 图像）study={dicom_study_uid} path={image_path}"
+            f"ETL2: dicom_byte_size 跳过（目录无文件）study={dicom_study_uid} path={image_path}"
         )
         return 0
 
-    study_uid = folder_reg["study_uid"]
-    # 防御：parse 出来的 study_uid 与 DB 里记录的应一致
-    if study_uid != dicom_study_uid:
-        log.warning(
-            f"ETL2: dicom_series study_uid 不一致 db={dicom_study_uid} "
-            f"parsed={study_uid} path={image_path} — 取 DB 记录"
-        )
-        study_uid = dicom_study_uid
-
-    idx_obj = indexer._studies.get(study_uid)
-    if idx_obj is None or not idx_obj.series:
-        log.warning(
-            f"ETL2: dicom_series 解析后无 series 数据 study={dicom_study_uid} path={image_path}"
-        )
-        # 兜底清理（register_folder 内部会调用 _evict_if_needed，但本场景已
-        # 注册到 indexer，需要显式 evict）
-        indexer.evict_study(study_uid)
-        return 0
-
-    file_root = str(path.resolve())
-    series_rows: list[dict[str, Any]] = []
-    series_no = 0
-    for s_uid, instances in idx_obj.series.items():
-        if not instances:
+    file_count = len(files)
+    byte_size = 0
+    for p in files:
+        try:
+            byte_size += p.stat().st_size
+        except OSError:
+            # 文件可能在 ETL 期间被外部移动；忽略该文件，不影响其他 series 行
+            log.warning(
+                f"ETL2: dicom_byte_size stat 失败 study={dicom_study_uid} file={p}"
+            )
             continue
-        first = instances[0]
-        series_no += 1
-        # instance_count：实例数；DDL CHECK instance_count > 0（已过滤空 series）
-        instance_count = len(instances)
-        # byte_size：累加文件大小（路径已在 register_file 中存入 sop_to_path）
-        byte_size = 0
-        for inst in instances:
-            sop_uid = inst.get("sop_uid")
-            if not sop_uid:
-                continue
-            fpath = idx_obj.sop_to_path.get(sop_uid)
-            if fpath is None:
-                continue
-            try:
-                byte_size += fpath.stat().st_size
-            except OSError:
-                # 文件可能在 ETL 期间被外部移动；忽略该文件，不影响其他 series 行
-                pass
 
-        # modality 从 instance 取第一个；同一 series 一致
-        modality = (first.get("modality") or "OT")[:8]
-
-        series_rows.append({
-            "anon_exam_id": anon_exam_id,
-            "dicom_series_uid": s_uid,
-            "dicom_study_uid": study_uid,
-            "modality": modality,
-            "body_part": None,  # ETL-3 扩展点：DICOM BodyPartExamined
-            "instance_count": instance_count,
-            "file_root": file_root,
-            "file_count_actual": instance_count,
-            "byte_size": byte_size,
-            "series_no": series_no,
-            "created_batch_id": batch_id,
-        })
-
-    # 立即 evict：避免 DicomIndexer 单例状态被下一次 ETL 污染
-    indexer.evict_study(study_uid)
-
-    if not series_rows:
-        return 0
-
-    # upsert: ON CONFLICT (dicom_series_uid) DO UPDATE
+    # upsert: ON CONFLICT (dicom_study_uid) DO UPDATE
     # 不变列：series_id（PK）, created_batch_id（保留首次入库的批次元数据）
-    # 更新列：modality / body_part / instance_count / file_root /
-    #         file_count_actual / byte_size / series_no / dicom_study_uid
-    stmt = pg_insert(AnonDicomSeriesModel.__table__).values(series_rows)
+    # 更新列：anon_exam_id / file_count / byte_size
+    stmt = pg_insert(AnonDicomSeriesModel.__table__).values(
+        [{
+            "anon_exam_id": anon_exam_id,
+            "dicom_study_uid": dicom_study_uid,
+            "file_count": file_count,
+            "byte_size": byte_size,
+            "created_batch_id": batch_id,
+        }]
+    )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[AnonDicomSeriesModel.__table__.c.dicom_series_uid],
+        index_elements=[AnonDicomSeriesModel.__table__.c.dicom_study_uid],
         set_={
             "anon_exam_id": stmt.excluded.anon_exam_id,
-            "dicom_study_uid": stmt.excluded.dicom_study_uid,
-            "modality": stmt.excluded.modality,
-            "body_part": stmt.excluded.body_part,
-            "instance_count": stmt.excluded.instance_count,
-            "file_root": stmt.excluded.file_root,
-            "file_count_actual": stmt.excluded.file_count_actual,
+            "file_count": stmt.excluded.file_count,
             "byte_size": stmt.excluded.byte_size,
-            "series_no": stmt.excluded.series_no,
         },
     )
     await db.execute(stmt)
 
     log.info(
-        f"ETL2: dicom_series upsert study={dicom_study_uid} series={len(series_rows)}"
+        f"ETL2: dicom_byte_size upsert study={dicom_study_uid} "
+        f"file_count={file_count} byte_size={byte_size}"
     )
-    return len(series_rows)
+    # 返回 byte_size（与 series 级实现的"行数"返回值对齐为"工作量单位"语义；
+    # _import_dicom_series_for_center 的 total_series 累加器语义变弱，仅作日志）
+    return byte_size

@@ -369,27 +369,29 @@ class AnonPhiAuditModel(MappedBase):
 
 
 class AnonDicomSeriesModel(MappedBase):
-    """DICOM 序列元数据 — 一个 SeriesInstanceUID 一行。
+    """DICOM 影像研究级元数据 — 一个 study 一行（2026-09-15 重构自 series 级）。
 
     设计要点：
     - anon_exam_id NOT NULL：要求该 study 在 lnrs_anon_imaging_study 中已
       回填 exam 关联（离线 CSV 灌库场景跳过 series 落库以避免约束违约）
-    - dicom_series_uid UNIQUE：upsert 幂等键（ETL-2 重跑安全）
-    - file_root NOT NULL：series 下 .dcm 所在 study 根目录（同一 series 实例
-      均落在同一目录；用于跨中心溯源与回收）
-    - instance_count > 0（DDL CHECK）：register_folder 已过滤非图像模态，
-      该约束保护 series 行必含至少一个 instance
-    - series_no / file_count_actual：与 DICOM 协议不对应的派生字段，保留供
-      仪表板按 series 顺序与目录文件数比对（诊断路径不全等问题）
+    - dicom_study_uid UNIQUE：upsert 幂等键（ETL-2 重跑安全）；
+      与 lnrs_anon_imaging_study.dicom_study_uid 对齐
+    - file_count：study 目录下文件数（不过滤非图像模态 SR/SEG/PR/...；
+      可能略大于真实 image instance 数）；CHECK >= 0
+    - byte_size NOT NULL：累加目录下所有 .dcm 的 st_size（字节）；
+      通过 file_count * 平均文件大小估算总容量
+    - 重构来源：原 series 级 schema 含 dicom_series_uid/modality/body_part/
+      series_no/file_root/file_count_actual 字段，已在 2026-09-15 迁移移除。
+      DICOMweb 实时接口（DicomViewer）仍走 DicomIndexer 内存索引（路径不变）。
     """
 
     __tablename__ = "lnrs_anon_dicom_series"
     __table_args__ = (
         CheckConstraint(
-            "instance_count > 0",
-            name="lnrs_anon_ck_series_instance_count",
+            "file_count >= 0",
+            name="lnrs_anon_ck_dicom_series_file_count",
         ),
-        {"schema": "lnrs", "comment": "DICOM 序列元数据（series-level 聚合统计源）"},
+        {"schema": "lnrs", "comment": "DICOM 影像研究级元数据（study-level；2026-09-15 重构自 series-level）"},
     )
 
     series_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -399,15 +401,9 @@ class AnonDicomSeriesModel(MappedBase):
         nullable=False,
         index=True,
     )
-    dicom_series_uid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    modality: Mapped[str] = mapped_column(String(8), nullable=False)
-    body_part: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    instance_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    file_root: Mapped[str] = mapped_column(Text, nullable=False)
-    file_count_actual: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    series_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),

@@ -7,19 +7,22 @@ from fastapi import status
 from sqlalchemy import func, select
 
 from app.api.v1.module_system.auth.schema import AuthSchema
+from app.api.v1.module_system.dict.model import DictDataModel
 from app.config.setting import settings
 from app.core.exceptions import CustomException
 from app.core.logger import log
+
 from app.core.permission import Permission
 
-from ..hospital.anon_model import AnonExamModel
-from .crud import MedFilesCRUD
+from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel
 from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
+from .crud import MedFilesCRUD
 
-
-def _human_readable_size(num_bytes: int) -> str:
+def _human_readable_size(num_bytes: int | None) -> str | None:
     """把字节数格式化成易读字符串（保留 2 位小数，自动进位到 KB/MB/GB/TB）。"""
+    if num_bytes is None:
+        return None
     size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
         if abs(size) < 1024.0:
@@ -68,12 +71,24 @@ class MedFilesService:
             query = query.where(m.file_type.in_(center_type))
 
         return query
-
     @staticmethod
-    async def _apply_permission(auth: AuthSchema, query):
-        """对 select 追加 Permission 业务行级权限过滤，与 MedFilesCRUD 保持一致的可见性。"""
-        p = Permission(model=MedFilesModel, auth=auth)
-        return await p.filter_query(query)
+    def _apply_exam_conditions(
+        query,
+        exam_type: list[str] | None,
+        center_type: list[str] | None,
+    ):
+        """给 select 查询追加 exam 表的 in 过滤（不追加 Permission 过滤）。
+
+        用于 exam_count / by_exam_type_business 等基于 AnonExamModel 的查询，
+        与 _apply_search_conditions 平行存在（后者绑定 MedFilesModel）。
+        """
+        e = AnonExamModel
+        if exam_type:
+            query = query.where(e.exam_type.in_(exam_type))
+        if center_type:
+            query = query.where(e.center_code.in_(center_type))
+        return query
+
 
     @classmethod
     async def page_service(
@@ -122,7 +137,7 @@ class MedFilesService:
         m = MedFilesModel
         sql = select(m.file_type).distinct().where(m.file_type.is_not(None), m.file_type != "")
         sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=None)
-        sql = await cls._apply_permission(auth, sql)
+        sql = await Permission(m, auth).filter_query(sql)
         sql = sql.order_by(m.file_type.asc())
 
         result = await auth.db.execute(sql)
@@ -143,84 +158,167 @@ class MedFilesService:
 
         参数:
             auth:        当前用户鉴权信息（控制行级可见性）
-            exam_type:   可选，多选模态
-            file_type:   可选，多选文件类型
-            center_type: 可选，多选中心筛选
+            exam_type:   可选，多选模态（MedFilesModel.exam_type 物理映射 imaging_study.modality）
+            file_type:   可选，多选文件类型（MedFilesModel.file_type 物理映射 imaging_study.center_code）
+            center_type: 可选，多选中心筛选（按 MedFilesModel.file_type 过滤）
+
+        数据流（2026-09-15 重构自单 MedFilesModel 聚合）：
+        - file_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
+        - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
+        - by_exam_type：GROUP BY MedFilesModel.exam_type（即 imaging_study.modality），label 取 med_exam_type 字典
+          翻译；当前 h196_3 上 modality 100%='CT'，只会返回 1 行（事实告知用户）
+        - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
+        - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
+          不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
         """
         m = MedFilesModel
+        e = AnonExamModel
 
-        # 聚合
-        sql = select(
+        # ---- file_count / patient_count：基于 MedFilesModel（=imaging_study）----
+        count_sql = select(
             func.count(m.id).label("file_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
-            # func.coalesce(func.sum(m.file_size), 0).label("total_size_bytes"),
         )
-        sql = cls._apply_search_conditions(sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
-        sql = await cls._apply_permission(auth, sql)
+        count_sql = cls._apply_search_conditions(
+            count_sql, exam_type=exam_type, file_type=file_type, center_type=center_type
+        )
+        count_sql = await Permission(m, auth).filter_query(count_sql)
+        count_row = (await auth.db.execute(count_sql)).one_or_none()
+        file_count = int(count_row[0] or 0) if count_row else 0
+        patient_count = int(count_row[1] or 0) if count_row else 0
 
-        result = await auth.db.execute(sql)
-        row = result.one_or_none()
-        file_count = 0
-        patient_count = 0
-        total_size_bytes = 0
-        if row is not None:
-            file_count = int(row[0] or 0)
-            patient_count = int(row[1] or 0)
-            # total_size_bytes = int(row[1] or 0)
+        # ---- exam_count：基于 AnonExamModel（=lnrs_anon_exam 行数）----
+        # 注意：exam_count 不等于 file_count —— 一次临床检查可能 0/N 个影像文件。
+        # 筛选条件映射：exam_type→exam.exam_type，center_type→exam.center_code。
+        exam_sql = select(func.count(e.anon_exam_id))
+        exam_sql = cls._apply_exam_conditions(exam_sql, exam_type=exam_type, center_type=center_type)
+        exam_sql = await Permission(e, auth).filter_query(exam_sql)
+        exam_count = int((await auth.db.execute(exam_sql)).scalar() or 0)
 
-        # 各模态分组统计（直接用数据里的 exam_type 原始值，不查字典）
+        # ---- total_size_bytes：从 dicom_series 累加（Permission 绑 dicom_series）----
+        # center_type 按 imaging_study.center_code 过滤；exam_type/file_type 在 byte_size 维度下
+        # 走同一筛选，保持 KPI 与 by_exam_type/by_center 一致。
+        size_sql = select(func.coalesce(func.sum(AnonDicomSeriesModel.byte_size), 0))
+        size_sql = size_sql.join(
+            m, AnonDicomSeriesModel.dicom_study_uid == m.file_name,
+        )
+        size_sql = cls._apply_search_conditions(
+            size_sql, exam_type=exam_type, file_type=file_type, center_type=center_type
+        )
+        size_sql = await Permission(AnonDicomSeriesModel, auth).filter_query(size_sql)
+        total_size_bytes = int((await auth.db.execute(size_sql)).scalar() or 0)
+
+        # ---- 字典 label ----
+        exam_type_label_map = await cls._load_dict_labels(auth, "med_exam_type")
+        center_label_map = await cls._load_dict_labels(auth, "med_center")
+
+        # ---- by_exam_type：LEFT JOIN lnrs_anon_exam 按 exam.exam_type GROUP BY ----
+        # 2026-09-16 重构：原 GROUP BY imaging_study.modality（h196_3 上 100%='CT'），
+        # 与前端 med_exam_type 业务字典（12 项）错位。改为按 exam.exam_type 业务模态分组。
+        # LEFT JOIN 保留 anon_exam_id IS NULL 的 study，进 "__unlinked__" 桶（覆盖率告知）。
+        by_exam_sql = (
+            select(e.exam_type, func.count().label("n"))
+            .select_from(m)
+            .outerjoin(e, e.anon_exam_id == m.anon_exam_id)
+        )
+        by_exam_sql = cls._apply_search_conditions(
+            by_exam_sql, exam_type=None, file_type=file_type, center_type=center_type
+        )
+        by_exam_sql = cls._apply_exam_conditions(by_exam_sql, exam_type=exam_type, center_type=center_type)
+        by_exam_sql = await Permission(m, auth).filter_query(by_exam_sql)
+        by_exam_sql = by_exam_sql.group_by(e.exam_type)
+        by_exam_rows = (await auth.db.execute(by_exam_sql)).all()
+
+        # by_exam_type_total：统计基数 = 文件总数（含未关联 exam 的 study）
+        # LEFT JOIN 不丢行，所以等于 count_sql.file_count
+        by_exam_type_total = file_count
+        by_exam_unlinked_sql = (
+            select(func.count())
+            .select_from(m)
+            .outerjoin(e, e.anon_exam_id == m.anon_exam_id)
+            .where(m.anon_exam_id.is_(None))
+        )
+        by_exam_unlinked_sql = cls._apply_search_conditions(
+            by_exam_unlinked_sql, exam_type=None, file_type=file_type, center_type=center_type
+        )
+        by_exam_unlinked_sql = cls._apply_exam_conditions(
+            by_exam_unlinked_sql, exam_type=exam_type, center_type=center_type
+        )
+        by_exam_unlinked_sql = await Permission(m, auth).filter_query(by_exam_unlinked_sql)
+        by_exam_type_unlinked = int((await auth.db.execute(by_exam_unlinked_sql)).scalar() or 0)
+
         by_exam_type: list[dict] = []
-        exam_sql = select(
-            m.exam_type,
-            func.count(m.id),
-        ).where(m.exam_type.is_not(None), m.exam_type != "")
-        exam_sql = cls._apply_search_conditions(exam_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
-        exam_sql = await cls._apply_permission(auth, exam_sql)
-        exam_sql = exam_sql.group_by(m.exam_type)
-        exam_result = await auth.db.execute(exam_sql)
-        exam_rows = exam_result.all()
-
-        for value, count in exam_rows:
-            cnt = int(count or 0)
-            pct = round(cnt / file_count * 100, 2) if file_count > 0 else 0.0
+        for raw, cnt in by_exam_rows:
+            cnt = int(cnt)
+            if raw in (None, "") and cnt == 0:
+                continue
+            value = "__unlinked__" if raw in (None, "") else str(raw)
+            label = (
+                "未关联检查" if value == "__unlinked__" else exam_type_label_map.get(value, value)
+            )
+            pct = round(cnt / by_exam_type_total * 100, 2) if by_exam_type_total else 0.0
             by_exam_type.append({
-                "value": str(value),
-                "label": str(value),
+                "value": value,
+                "label": label,
                 "count": cnt,
                 "percentage": pct,
             })
-
-        # 各文件类型分组统计
-        by_file_type: list[dict] = []
-        ft_sql = select(
-            m.file_type,
-            func.count(m.id),
-        ).where(m.file_type.is_not(None), m.file_type != "")
-        ft_sql = cls._apply_search_conditions(ft_sql, exam_type=exam_type, file_type=file_type, center_type=center_type)
-        ft_sql = await cls._apply_permission(auth, ft_sql)
-        ft_sql = ft_sql.group_by(m.file_type)
-        ft_result = await auth.db.execute(ft_sql)
-        ft_rows = ft_result.all()
-
-        for value, count in ft_rows:
-            cnt = int(count or 0)
-            pct = round(cnt / file_count * 100, 2) if file_count > 0 else 0.0
-            by_file_type.append({
-                "value": str(value),
-                "label": str(value),
-                "count": cnt,
+        # 未关联 bucket（LEFT JOIN 后 anon_exam_id IS NULL 的行）若未在 GROUP BY 行里出现，单独追加
+        if by_exam_type_unlinked and not any(x["value"] == "__unlinked__" for x in by_exam_type):
+            pct = round(by_exam_type_unlinked / by_exam_type_total * 100, 2) if by_exam_type_total else 0.0
+            by_exam_type.append({
+                "value": "__unlinked__",
+                "label": "未关联检查",
+                "count": by_exam_type_unlinked,
                 "percentage": pct,
+            })
+        # 排序：count DESC，未关联 bucket 放最后
+        by_exam_type.sort(key=lambda x: (x["value"] == "__unlinked__", -x["count"]))
+
+        # ---- by_center：GROUP BY MedFilesModel.file_type（=imaging_study.center_code）----
+        # 物理列保持 center_code，但响应字段重命名为 by_center（前端 el-collapse-item 标题
+        # 即「中心」，前后端语义对齐）。center_code NOT NULL 不出现 __unlinked__ bucket。
+        by_center_sql = select(m.file_type, func.count().label("n")).group_by(m.file_type)
+        by_center_sql = cls._apply_search_conditions(
+            by_center_sql, exam_type=exam_type, file_type=None, center_type=center_type
+        )
+        by_center_sql = await Permission(m, auth).filter_query(by_center_sql)
+        by_center_rows = (await auth.db.execute(by_center_sql)).all()
+        by_center: list[dict] = []
+        for raw, cnt in by_center_rows:
+            if raw in (None, ""):
+                continue
+            value = str(raw)
+            by_center.append({
+                "value": value,
+                "label": center_label_map.get(value, value),
+                "count": int(cnt),
+                "percentage": round(int(cnt) / file_count * 100, 2) if file_count else 0.0,
             })
 
         return {
             "file_count": file_count,
             "patient_count": patient_count,
-            "exam_count": file_count,
+            "exam_count": exam_count,
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),
             "by_exam_type": by_exam_type,
-            "by_file_type": by_file_type,
+            "by_exam_type_total": by_exam_type_total,
+            "by_exam_type_unlinked": by_exam_type_unlinked,
+            "by_center": by_center,
         }
+
+    @staticmethod
+    async def _load_dict_labels(auth: AuthSchema, dict_type: str) -> dict[str, str]:
+        """从 sys_dict_data 加载 {dict_value: dict_label} 映射（复用系统字典）。
+
+        复用 stats_query._load_dict_labels 的同款 SQL，避免 files service 单独维护翻译表。
+        """
+        sql = select(DictDataModel.dict_value, DictDataModel.dict_label).where(
+            DictDataModel.dict_type == dict_type
+        )
+        result = await auth.db.execute(sql)
+        return {value: label for value, label in result.all()}
 
     @classmethod
     def _resolve_file_path(cls, raw: str) -> Path:

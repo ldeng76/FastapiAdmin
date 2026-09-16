@@ -24,7 +24,9 @@ export interface StatisticsCount {
   total_size_bytes?:number,
   total_size_text?:string,
   by_exam_type?:StatisticsCountType[],
-  by_file_type?:StatisticsCountType[]
+  by_exam_type_total?:number,
+  by_exam_type_unlinked?:number,
+  by_center?:StatisticsCountType[]
 }
 
 const FilesApi = {
@@ -36,11 +38,12 @@ const FilesApi = {
     })
   },
   async statistics(params = {}) {
-    const data = {
+    const data: StatisticsCount = {
       file_count: 0,
       patient_count: 0,
+      exam_count: 0,
       total_size_bytes: 0,
-      total_size_text: ""
+      total_size_text: "",
     }
     try {
       const res = await request<ApiResponse<StatisticsCount>>({

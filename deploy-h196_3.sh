@@ -18,7 +18,7 @@
 #   ./deploy-h196_3.sh deploy                          pull main + 后端同步 + 清 redis 缓存 + restart
 #   ./deploy-h196_3.sh deploy --frontend               同时重建前端 dist
 #   ./deploy-h196_3.sh deploy --frontend --force       强制重建前端 (忽略新鲜度判断)
-#   ./deploy-h196_3.sh deploy --no-proxy               关闭代理环境变量 (内网/离线场景)
+#   ./deploy-h196_3.sh deploy --no-pull                跳过 git fetch/pull (用当前工作区代码)
 #   ./deploy-h196_3.sh deploy --no-net-on              不自动调 net-on (代理已自启)
 #   ./deploy-h196_3.sh deploy --branch=feature/x
 #   ./deploy-h196_3.sh deploy --commit=<sha>
@@ -56,6 +56,7 @@ PROXY_PROBE_HOST="ifconfig.io"
 PROBE_TIMEOUT=5
 NO_PROXY=0                                              # --no-proxy 显式关闭
 NO_NET_ON=0                                              # --no-net-on 跳过自动启通道
+NO_PULL=0                                               # --no-pull 跳过 git fetch/pull
 # --------------------------------------------------------------------------
 
 # ---- redis 缓存 (deploy 清本应用 db, 值解析自 env 文件与后端同源) -------------
@@ -276,14 +277,19 @@ sync_code() {
       --frontend)  DO_FRONTEND=1 ;;
       --force)     FRONTEND_FORCE=1 ;;
       --no-proxy)  NO_PROXY=1 ;;
+      --no-pull)   NO_PULL=1 ;;
       --no-net-on) NO_NET_ON=1 ;;
-      *) die "未知参数: $arg" ;;
     esac
   done
 
   cd "${REPO_ROOT}"
   local old
   old=$(git rev-parse HEAD 2>/dev/null || echo "")
+  if [ "${NO_PULL}" = "1" ]; then
+    log ">>> --no-pull: 跳过 git fetch/pull, 使用当前工作区代码 (HEAD=${old:0:8})"
+    return 0
+  fi
+
 
   if [ -n "${target_commit}" ]; then
     log ">>> git checkout ${target_commit} (detached)"
@@ -311,7 +317,7 @@ sync_code() {
 do_deploy() {
   doctor
   exec > >(tee -a "${DIAG}") 2>&1
-  log ">>> 开始部署 lnrs (profile=${ENV_NAME}, frontend=${DO_FRONTEND}, force=${FRONTEND_FORCE}, no-proxy=${NO_PROXY}, no-net-on=${NO_NET_ON})"
+  log ">>> 开始部署 lnrs (profile=${ENV_NAME}, frontend=${DO_FRONTEND}, force=${FRONTEND_FORCE}, no-proxy=${NO_PROXY}, no-net-on=${NO_NET_ON}, no-pull=${NO_PULL})"
   sync_code "$@"
   sync_backend_deps
   if [ "${DO_FRONTEND}" = "1" ]; then

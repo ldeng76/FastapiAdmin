@@ -100,16 +100,7 @@ class MedFilesStatisticsOutSchema(BaseModel):
     )
     by_exam_type: list[GroupStatItem] = Field(
         default_factory=list,
-        description="各业务模态影像文件数及占比（LEFT JOIN lnrs_anon_exam 按 exam.exam_type 分组；含 '__unlinked__' 桶表示未关联 exam 的影像文件）。",
-    )
-    by_exam_type_total: int = Field(
-        description="by_exam_type 统计基数（含未关联 exam 的 study；与 file_count 一致）"
-    )
-    by_exam_type_unlinked: int = Field(
-        description="by_exam_type 中未关联 exam 的 study 数（anon_exam_id IS NULL）"
-    )
-    by_center: list[GroupStatItem] = Field(
-        default_factory=list, description="各中心影像文件数及占比（imaging_study.center_code 维度）"
+        description="各模态影像文件数及占比（imaging_study.modality 维度）",
     )
 
 

@@ -14,6 +14,7 @@ from app.core.permission import Permission
 
 from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel
 from .model import MedFilesModel
+from .schema import MedicalFilesOutSchema
 from .crud import MedFilesCRUD
 
 

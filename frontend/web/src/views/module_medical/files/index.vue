@@ -91,7 +91,7 @@ function onSortChange({ prop, order }:any){
     sort_order:order
   }
 }
-function statisticsTypeText(type:string,key:'by_exam_type'|'by_file_type'){
+function statisticsTypeText(type:string,key:'by_exam_type'|'by_center'){
   let text = '0(0%)'
   if(statisticsCount.value[key] instanceof Array){
     let data = statisticsCount.value[key];

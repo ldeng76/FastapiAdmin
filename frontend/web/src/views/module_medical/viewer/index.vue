@@ -27,9 +27,9 @@ async function open(obj:params){
   let file_type = obj && obj.file_type || props.file_type
   let anon_exam_id = obj && obj.anon_exam_id || props.anon_exam_id
   loading.value = ElLoading.service()
-  if(file_type === 'report'){
+  if(!file_type || !['nii','svs','dcm'].includes(file_type)){
     closeLoading()
-    ElMessage.info('该模态为报告文本，请在多模态详情页查看正文')
+    ElMessage.info('该文件不支持在线预览')
     return
   }
   let query:params = {}

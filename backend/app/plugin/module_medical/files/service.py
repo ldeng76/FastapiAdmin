@@ -14,7 +14,7 @@ from app.core.logger import log
 
 from app.core.permission import Permission
 
-from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel
+from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel, AnonPatientModel
 from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
 from .crud import MedFilesCRUD
@@ -159,9 +159,10 @@ class MedFilesService:
         m = MedFilesModel
         e = AnonExamModel
 
-        # ---- file_count / patient_count：基于 MedFilesModel（=imaging_study）----
+        # ---- file_count / record_count / patient_count：基于 MedFilesModel（=imaging_study）----
         count_sql = select(
             func.count(m.id).label("file_count"),
+            func.count(m.id).label("record_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
         )
         count_sql = cls._apply_search_conditions(
@@ -170,7 +171,18 @@ class MedFilesService:
         count_sql = await Permission(m, auth).filter_query(count_sql)
         count_row = (await auth.db.execute(count_sql)).one_or_none()
         file_count = int(count_row[0] or 0) if count_row else 0
-        patient_count = int(count_row[1] or 0) if count_row else 0
+        record_count = int(count_row[1] or 0) if count_row else 0
+        patient_count = int(count_row[2] or 0) if count_row else 0
+
+        # ---- total_patient_count：基于 AnonPatientModel（=lnrs_anon_patient 未删除行数）----
+        total_patient_sql = select(func.count(AnonPatientModel.patient_id)).where(
+            AnonPatientModel.deleted_at.is_(None)
+        )
+        if center_type:
+            total_patient_sql = total_patient_sql.where(
+                AnonPatientModel.center_code.in_(center_type)
+            )
+        total_patient_count = int((await auth.db.execute(total_patient_sql)).scalar() or 0)
 
         # ---- exam_count：基于 AnonExamModel（=lnrs_anon_exam 行数）----
         # 注意：exam_count 不等于 file_count —— 一次临床检查可能 0/N 个影像文件。
@@ -221,7 +233,9 @@ class MedFilesService:
 
         return {
             "file_count": file_count,
+            "record_count": record_count,
             "patient_count": patient_count,
+            "total_patient_count": total_patient_count,
             "exam_count": exam_count,
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),

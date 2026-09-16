@@ -85,9 +85,13 @@ class GroupStatItem(BaseModel):
 class MedFilesStatisticsOutSchema(BaseModel):
     """医疗文件统计响应。"""
 
-    file_count: int = Field(description="影像文件数（lnrs_anon_imaging_study 行数）")
+    file_count: int = Field(description="影像文件数")
+    record_count: int = Field(description="影像记录行数（lnrs_anon_imaging_study 行数）")
     patient_count: int = Field(
         description="有影像文件的患者数（lnrs_anon_imaging_study.patient_id 去重）"
+    )
+    total_patient_count: int = Field(
+        description="总患者数（lnrs_anon_patient 未删除行数）"
     )
     exam_count: int = Field(
         description="检查量（lnrs_anon_exam 行数；与影像文件数不同——一次临床检查可能 0/N 个影像文件）"

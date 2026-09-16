@@ -246,31 +246,6 @@ class StatsQuery:
         result = await self.db.execute(stmt)
         return int(result.scalar_one())
 
-    async def count_patients_with_exam(self) -> int:
-        """病例·有检查患者数 = 在 patient 筛选条件下,至少做过一次检查的去重 patient 数.
-
-        等价 SQL: SELECT count(DISTINCT p.patient_id)
-                  FROM lnrs_anon_patient p
-                  WHERE <patient 筛选> AND p.patient_id IN
-                        (SELECT DISTINCT patient_id FROM lnrs_anon_exam);
-        """
-        conditions = self._patient_filters()
-        exists_subq = (
-            select(AnonExamModel.patient_id)
-            .distinct()
-            .subquery()
-        )
-        stmt = (
-            select(func.count(func.distinct(AnonPatientModel.patient_id)))
-            .select_from(AnonPatientModel)
-            .where(*conditions)
-            .where(
-                AnonPatientModel.patient_id.in_(select(exists_subq.c.patient_id))
-            )
-        )
-        result = await self.db.execute(stmt)
-        return int(result.scalar_one())
-
     async def count_exams(self) -> int:
         stmt = select(func.count()).select_from(AnonExamModel)
         conditions = self._exam_filters()
@@ -492,9 +467,8 @@ class StatsQuery:
         # kpis
         kpis = [
             {"key": "total_patients", "label": "患者总量", "value": await self.count_patients(), "format": "number"},
-            {"key": "patients_with_exam", "label": "患者总量(有检查记录)", "value": await self.count_patients_with_exam(), "format": "number"},
-            {"key": "total_exams", "label": "检查总量", "value": total_exams, "format": "number"},
-            {"key": "modality_count", "label": "检查模态", "value": len(modalities), "format": "number"},
+            {"key": "total_exams", "label": "记录总量", "value": total_exams, "format": "number"},
+            {"key": "modality_count", "label": "数据模态", "value": len(modalities), "format": "number"},
         ]
 
         # dimensions — 遍历注册表逐一查询

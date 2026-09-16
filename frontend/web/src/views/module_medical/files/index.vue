@@ -6,9 +6,9 @@
           <el-collapse-item title="模态类型" name="examType">
             <el-checkbox-group v-model="selectedExamType">
               <div style="max-height: 300px;overflow: auto">
-                <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value">
-                  <el-checkbox class="file-checkbox" :label="item.dict_label" :value="item.dict_value" />
-                  <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_exam_type') }}</div>
+                <div class="flex justify-between"  v-for="[value,name] in categoryMap" :key="value">
+                  <el-checkbox class="file-checkbox" :label="name" :value="value" />
+                  <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(value,'by_exam_type') }}</div>
                 </div>
               </div>
             </el-checkbox-group>
@@ -33,7 +33,7 @@
 
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
 
-          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
+          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总患者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
 
           <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
 
@@ -71,6 +71,35 @@ const sortParams = ref({sort_field:"",sort_order:""})
 const fileTypeDict = ref<any>([])
 const statisticsCount = ref<StatisticsCount>({})
 const loading = ref(false)
+const categoryMap = new Map([
+  ["CT", "CT"],
+  ["pathology_WSI", "病理WSI"],
+  ["pathology_text", "病理报告"],
+  ["gene", "基因"],
+  ["medical_record", "病案首页"],
+  ["imaging_report", "影像学报告"],
+  ["basic_medical_info", "就诊基本信息"],
+  ["diagnosis", "诊断"],
+  ["drug_prescription", "药物处方"],
+  ["medical_orders", "医嘱"],
+  ["medical_testing", "检验"],
+  ["radiology", "放射"],
+  ["ultrasound", "超声"],
+  ["pulmonary_function", "肺功能"],
+  ["MRI", "磁共振"],
+  ["nuclear_medicine", "核医学"],
+  ["bronchoscope", "气管镜"],
+  ["ECG", "心电图"],
+  ["case_history", "病历"],
+  ["progress_note", "病程记录"],
+  ["basic_info", "基本信息"],
+  ["inhospital_record", "住院记录"],
+  ["IHC_record", "免疫组化"],
+  ["operation", "手术信息"],
+  ["anesthesia", "麻醉信息"],
+  ["nursing", "护理记录"],
+]);
+
 function getCountDuration(value?:number){
   return !value || value <10 ? 0 :1000
 }

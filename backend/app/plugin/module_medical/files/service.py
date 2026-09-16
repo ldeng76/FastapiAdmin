@@ -182,6 +182,15 @@ class MedFilesService:
             total_patient_sql = total_patient_sql.where(
                 AnonPatientModel.center_code.in_(center_type)
             )
+        if exam_type:
+            # exam_type 是多选列表，必须用 in_（== list 会让 SQLAlchemy/asyncpg 无法编码参数）；
+            # 子查询需显式 scalar_subquery()，再交给 in_ 使用。
+            exam_patient_subq = cls._apply_exam_conditions(
+                select(e.patient_id), exam_type=exam_type, center_type=None
+            ).distinct().scalar_subquery()
+            total_patient_sql = total_patient_sql.where(
+                AnonPatientModel.patient_id.in_(exam_patient_subq)
+            )
         total_patient_count = int((await auth.db.execute(total_patient_sql)).scalar() or 0)
 
         # ---- exam_count：基于 AnonExamModel（=lnrs_anon_exam 行数）----

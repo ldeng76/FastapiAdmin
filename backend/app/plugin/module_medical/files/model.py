@@ -32,13 +32,12 @@ class MedFilesModel(MappedBase):
         "modality",
         String(32), nullable=True, comment="模态类型"
     )
-    file_type: Mapped[str | None] = mapped_column(
+    center_code: Mapped[str | None] = mapped_column(
         "center_code",
-        String(32), nullable=True, comment="文件类型"
+        String(32), nullable=True, comment="中心编码"
     )
-    # file_size: Mapped[int | None] = mapped_column(
-    #     Integer, nullable=True, comment="文件大小"
-    # )
+    # file_type 数据库无对应列，占位属性（非 Mapped，不参与 SQL 映射）
+    file_type: str = "dcm"
     file_path: Mapped[str | None] = mapped_column(
         "image_path",
         String(512), nullable=True, comment="文件路径"

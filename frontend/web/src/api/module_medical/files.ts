@@ -20,13 +20,13 @@ export interface StatisticsCountType{
 export interface StatisticsCount {
   file_count?:number,
   exam_count?:number,
+  record_count?:number,
+  total_patient_count?:number,
   patient_count?:number,
   total_size_bytes?:number,
   total_size_text?:string,
-  by_exam_type?:StatisticsCountType[],
-  by_exam_type_total?:number,
-  by_exam_type_unlinked?:number,
-  by_center?:StatisticsCountType[]
+  by_exam_type?:StatisticsCountType[]
+  by_file_type?:StatisticsCountType[]
 }
 
 const FilesApi = {

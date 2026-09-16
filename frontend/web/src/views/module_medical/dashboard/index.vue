@@ -14,7 +14,7 @@
     </el-header>
     <el-main>
       <el-row :gutter="20">
-        <el-col class="mb-5" :xs="24" :sm="12" :md="8" :lg="6" v-for="n in overviewCount" :key="n.key">
+        <el-col class="mb-5" :xs="24" :sm="8" :md="8" :lg="8" v-for="n in overviewCount" :key="n.key">
           <Total :label="n.label" :icon="n.icon" :value="n.value"/>
         </el-col>
       </el-row>

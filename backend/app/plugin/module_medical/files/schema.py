@@ -1,5 +1,5 @@
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.common.enums import QueueEnum
 
@@ -12,8 +12,13 @@ class MedicalFiles(BaseModel):
     patient_id: str | None = Field(default=None, description="患者编号")
     exam_type: str | None = Field(default=None, description="模态类型")
     file_type: str | None = Field(default=None, description="文件类型")
-    # file_size: int | None = Field(default=None, description="文件大小")
     file_path: str | None = Field(default=None, description="文件路径")
+
+    @field_validator("file_type", mode="before")
+    @classmethod
+    def _force_file_type_dcm(cls, v):
+        """file_type 暂时固定返回 dcm，不读数据库 center_code。"""
+        return "dcm"
 
 
 class MedicalFilesOutSchema(MedicalFiles):
@@ -34,22 +39,22 @@ class MedicalFilesQueryParam:
         exam_type: str | None = Query(
             None, description="模态类型（多选，逗号分隔，如 CT,PETCT）"
         ),
-        file_type: str | None = Query(
-            None, description="文件类型（多选，逗号分隔，如 dcm,nii）"
-        ),
+        # file_type: str | None = Query(
+        #     None, description="文件类型（多选，逗号分隔，如 dcm,nii）"
+        # ),  # 暂时没用，固定返回 dcm
         center_type: str | None = Query(
             None, description="中心筛选（多选，逗号分隔，如 sy,sh）"
         ),
     ) -> None:
         exam_list = [s.strip() for s in exam_type.split(",")] if exam_type else None
         exam_list = [s for s in exam_list if s] if exam_list else None
-        file_list = [s.strip() for s in file_type.split(",")] if file_type else None
-        file_list = [s for s in file_list if s] if file_list else None
+        # file_list = [s.strip() for s in file_type.split(",")] if file_type else None
+        # file_list = [s for s in file_list if s] if file_list else None
         center_list = [s.strip() for s in center_type.split(",")] if center_type else None
         center_list = [s for s in center_list if s] if center_list else None
 
         self.exam_type = (QueueEnum.in_.value, exam_list) if exam_list else None
-        self.file_type = (QueueEnum.in_.value, file_list) if file_list else None
+        self.file_type = None  # 暂时没用，固定返回 dcm（响应层处理）
         self.center_type = (QueueEnum.in_.value, center_list) if center_list else None
 
 
@@ -80,9 +85,13 @@ class GroupStatItem(BaseModel):
 class MedFilesStatisticsOutSchema(BaseModel):
     """医疗文件统计响应。"""
 
-    file_count: int = Field(description="影像文件数（lnrs_anon_imaging_study 行数）")
+    file_count: int = Field(description="影像文件数")
+    record_count: int = Field(description="影像记录行数（lnrs_anon_imaging_study 行数）")
     patient_count: int = Field(
         description="有影像文件的患者数（lnrs_anon_imaging_study.patient_id 去重）"
+    )
+    total_patient_count: int = Field(
+        description="总患者数（lnrs_anon_patient 未删除行数）"
     )
     exam_count: int = Field(
         description="检查量（lnrs_anon_exam 行数；与影像文件数不同——一次临床检查可能 0/N 个影像文件）"
@@ -95,16 +104,7 @@ class MedFilesStatisticsOutSchema(BaseModel):
     )
     by_exam_type: list[GroupStatItem] = Field(
         default_factory=list,
-        description="各业务模态影像文件数及占比（LEFT JOIN lnrs_anon_exam 按 exam.exam_type 分组；含 '__unlinked__' 桶表示未关联 exam 的影像文件）。",
-    )
-    by_exam_type_total: int = Field(
-        description="by_exam_type 统计基数（含未关联 exam 的 study；与 file_count 一致）"
-    )
-    by_exam_type_unlinked: int = Field(
-        description="by_exam_type 中未关联 exam 的 study 数（anon_exam_id IS NULL）"
-    )
-    by_center: list[GroupStatItem] = Field(
-        default_factory=list, description="各中心影像文件数及占比（imaging_study.center_code 维度）"
+        description="各模态影像文件数及占比（imaging_study.modality 维度）",
     )
 
 

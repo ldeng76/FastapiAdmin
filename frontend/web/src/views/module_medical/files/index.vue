@@ -5,16 +5,18 @@
          <el-collapse :expand-icon-position="'left'" :model-value="['examType','fileType']">
           <el-collapse-item title="模态类型" name="examType">
             <el-checkbox-group v-model="selectedExamType">
-              <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value">
-                <el-checkbox :label="item.dict_label" :value="item.dict_value" />
-                <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_exam_type') }}</div>
+              <div style="max-height: 300px;overflow: auto">
+                <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value">
+                  <el-checkbox class="file-checkbox" :label="item.dict_label" :value="item.dict_value" />
+                  <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_exam_type') }}</div>
+                </div>
               </div>
             </el-checkbox-group>
           </el-collapse-item>
           <el-collapse-item title="中心" name="fileType">
             <el-checkbox-group v-model="selectedCenterType">
               <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_center')" :key="item.dict_value">
-                <el-checkbox :label="item.dict_label" :value="item.dict_value" />
+                <el-checkbox class="file-checkbox" :label="item.dict_label" :value="item.dict_value" />
 <!--                <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_file_type') }}</div>-->
               </div>
             </el-checkbox-group>
@@ -24,12 +26,18 @@
     </el-aside>
     <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
-        <div style="display: flex;align-items: center;justify-content: center;font-size: 20px">
-          <FaMenuRouteIcon icon="ri:file-user-fill" style="font-size: 24px;margin-left: 15px" /> 患者
-          <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
-          <FaMenuRouteIcon icon="el-icon-Tickets" style="font-size: 24px;margin-left: 15px" /><strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong> 记录
-          <FaMenuRouteIcon icon="file" style="font-size: 24px;margin-left: 15px" /><strong> <FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong> 文件
-          <FaMenuRouteIcon icon="ri:hard-drive-2-fill" style="font-size: 24px;margin-left: 15px" /><span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
+        <div style="display: flex;align-items: center;justify-content: center;font-size: 16px">
+          <FaMenuRouteIcon icon="file" class="icon-count" /> 记录：<strong><FaCountTo :target="statisticsCount.record_count || 0" separator="," :duration="getCountDuration(statisticsCount.record_count)" /></strong>
+
+          <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" /> 患者数: <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
+
+          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
+
+          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
+
+          <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
+
+          <FaMenuRouteIcon icon="ri:hard-drive-2-fill" class="icon-count" /> 总大小：<span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
         </div>
         <FaTable
           :data="data"
@@ -91,7 +99,7 @@ function onSortChange({ prop, order }:any){
     sort_order:order
   }
 }
-function statisticsTypeText(type:string,key:'by_exam_type'|'by_center'){
+function statisticsTypeText(type:string,key:'by_exam_type'|'by_file_type'){
   let text = '0(0%)'
   if(statisticsCount.value[key] instanceof Array){
     let data = statisticsCount.value[key];
@@ -133,11 +141,6 @@ const {
   replaceSearchParams,
   getData
 } = useTable({
-  transform:{
-    dataTransformer(data){
-      return data
-    }
-  },
   core: {
     apiFn: FilesApi.list,
     apiParams: { page_no: 1, page_size: 30 },
@@ -211,5 +214,11 @@ onBeforeMount(async ()=>{
 .files-container{
   height: 100%;
 }
-
+.file-checkbox{
+  --el-checkbox-input-border:1px solid var(--el-checkbox-checked-input-border-color);
+}
+.icon-count{
+  font-size: 24px;
+  margin-left: 15px;
+}
 </style>

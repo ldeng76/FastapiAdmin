@@ -23,16 +23,17 @@ description: 启动/停止本项目（lnrs）的前端与后端开发服务器�
 | 日志 `backend/.run/dev.log` / `dev.err.log` | 后台任务 stdout/stderr；或 `uv run main.py run --env=dev > backend/.run/dev.log 2> backend/.run/dev.err.log`（.run 目录需自建） |
 | `./.venv/Scripts/python.exe` | `./.venv/bin/python`（或 `uv run python`） |
 
-**Linux 环境 profile 与端口**——本机 dev 与 h196_3 两个后端 profile 并存（正文 8610 是 Windows 机器的 dev 端口；本机 dev 为 8001，勿混）：
+**Linux 环境 profile 与端口**——本机 dev 与 h196_3 两个后端 profile 并存，另有 dev_h1963（由 h196_3 派生，数据库走容器 `lnrs.pg.h1963`；正文 8610 是 Windows 机器的 dev 端口；本机 dev 为 8001，勿混）：
 
 | profile | 启动 | 端口 | 说明 |
 |---|---|---|---|
 | `dev` | `cd backend && uv run main.py run --env=dev`（后台任务） | 8001（`backend/env/.env.dev` 的 `SERVER_PORT`） | 无 pid 文件管理，停止用 pkill |
 | `h196_3` | 仓库根 `./run-h196_3.sh start\|stop\|restart\|status\|logs` | 8610（`backend/env/.env.h196_3`） | 后端为 systemd 服务 `lnrs-backend`（本机实测 active）；脚本同时管理前端 |
+| `dev_h1963` | `cd backend && uv run main.py run --env=dev_h1963`（后台任务） | 8610（`backend/env/.env.dev_h1963`） | 由 h196_3 派生，`DATABASE_HOST` 指向容器 `lnrs.pg.h1963`；无专用脚本，停止用 pkill；端口与 h196_3 相同，同机不可同时运行 |
 
 - 前端不变：`cd frontend/web && pnpm dev`（5610，`frontend/web/.env` 的 `VITE_PORT`）。
-- 验证 URL：dev → `http://localhost:8001/docs`；h196_3 → `http://localhost:8610/docs`；前端 → `http://localhost:5610/web`。
-- 两 profile 可同机共存（端口不同）；pkill / 验证时严格区分 `--env=` 参数与端口。
+- 验证 URL：dev → `http://localhost:8001/docs`；h196_3 / dev_h1963 → `http://localhost:8610/docs`；前端 → `http://localhost:5610/web`。
+- dev 与 h196_3 可同机共存（端口不同）；dev_h1963 与 h196_3 端口相同，同机互斥。pkill / 验证时严格区分 `--env=` 参数与端口。
 - `backend/run_linux.sh` 是交互式菜单版（`./run_linux.sh --start-dev` 可非交互启 dev）；agent 环境建议直接后台跑 `uv run main.py run --env=dev`。
 - `run-h196_3.sh` 依赖 `sudo`（systemctl）；sudo 不可用时退化为手动 `cd backend && uv run main.py run --env=h196_3`（后台任务）+ pkill。
 

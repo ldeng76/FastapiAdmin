@@ -10,6 +10,7 @@ class EnvironmentEnum(str, Enum):
     H125 = "h125"
     H42 = "h42"
     H196_3 = "h196_3"
+    DEV_H1963 = "dev_h1963"
 
 
 @unique

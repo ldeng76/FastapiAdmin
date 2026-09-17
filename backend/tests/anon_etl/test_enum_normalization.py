@@ -14,10 +14,12 @@ def test_normalize_all_enum_values(monkeypatch):
     assert n.normalize_rh_blood_type("阳性") == "2"
 
 
-def test_empty_and_unknown_are_none_except_sex(monkeypatch):
+def test_unmatched_fall_back_to_hqms_defaults(monkeypatch):
+    """未命中映射时按 _DEFAULTS 回退（Rev 未明确）：ethnicity 缺失不写、
+    smoking_status='9'（未知）、abo='6'（未查）、rh='4'（未查）。"""
     for name in ("_ETHNICITY_MAP_CACHE", "_SMOKING_MAP_CACHE", "_ABO_MAP_CACHE", "_RH_MAP_CACHE"):
         monkeypatch.setattr(n, name, {})
     assert n.normalize_ethnicity(None) is None
-    assert n.normalize_smoking_status("unknown") is None
-    assert n.normalize_abo_blood_type("A") is None
-    assert n.normalize_rh_blood_type("") is None
+    assert n.normalize_smoking_status("unknown") == "9"
+    assert n.normalize_abo_blood_type("A") == "6"
+    assert n.normalize_rh_blood_type("") == "4"

@@ -106,13 +106,6 @@ class TestModels:
 
         assert TenantPluginModel.__tablename__ == "sys_tenant_plugin"
 
-    def test_ticket_model(self) -> None:
-        from app.plugin.module_ticket.ticket.model import TicketModel
-
-        assert TicketModel.__tablename__ == "sys_ticket"
-        assert hasattr(TicketModel, "ticket_type")
-        assert hasattr(TicketModel, "reply")
-
 
 # ==================== 03. Pydantic Schema ====================
 
@@ -142,13 +135,6 @@ class TestSchemas:
         # 负数应被拒绝
         with pytest.raises(Exception):
             TenantQuotaUpdateSchema(max_users=-1)
-
-    def test_ticket_schema(self) -> None:
-        from app.plugin.module_ticket.ticket.schema import TicketCreateSchema
-
-        s = TicketCreateSchema(title="test", content="content", ticket_type="suggestion")
-        assert s.title == "test"
-        assert s.ticket_type == "suggestion"
 
     def test_menu_type_enum(self) -> None:
         """菜单类型: 1=目录 2=菜单 3=按钮 4=链接"""

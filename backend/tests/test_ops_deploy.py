@@ -1,4 +1,5 @@
 """Web 部署面板测试 — 状态解析 / 鉴权 / 命令构造（不触发真实部署单元）。"""
+import sys
 from pathlib import Path
 
 import pytest
@@ -115,6 +116,11 @@ def test_status_unknown_no_exit_code(ops_enabled, monkeypatch):
     assert d["exit_code"] is None
 
 
+# _build_run_command 内部 import pwd（POSIX 专属），systemd-run 亦为 Linux 逻辑
+linux_only = pytest.mark.skipif(sys.platform != "linux", reason="依赖 POSIX pwd 与 systemd-run")
+
+
+@linux_only
 def test_build_run_command(ops_enabled):
     cmd = ops._build_run_command(Path(ops_enabled) / "web-deploy.log", "/home/dzy/wk/lnrs/deploy-h196_3.sh")
     assert (cmd[0], cmd[1], cmd[2]) == ("sudo", "-n", "systemd-run")
@@ -133,6 +139,7 @@ def test_start_deploy_409_when_running(ops_enabled, monkeypatch):
     assert e.value.status_code == 409
 
 
+@linux_only
 def test_start_deploy_systemd_run_failure(ops_enabled, monkeypatch):
     monkeypatch.setattr(ops, "_unit_active", lambda: False)
 
@@ -147,6 +154,7 @@ def test_start_deploy_systemd_run_failure(ops_enabled, monkeypatch):
     assert e.value.status_code == 500
 
 
+@linux_only
 def test_start_deploy_writes_started_file(ops_enabled, monkeypatch):
     monkeypatch.setattr(ops, "_unit_active", lambda: False)
 

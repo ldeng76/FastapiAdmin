@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hmac
 import os
-import pwd
 import shlex
 import subprocess
 from datetime import datetime
@@ -129,6 +128,8 @@ def _build_run_command(log_file: Path, script: str) -> list[str]:
     wrapper: 先 source profile.d 预热 SOCKS5 隧道（net-on），再 exec 部署脚本，
     输出追加到日志文件。exec 使单元主进程即部署脚本，ExecMainStatus = 部署退出码。
     """
+    import pwd  # POSIX 专属，延迟导入以便模块在 Windows 上可导入（单测收集）
+
     pw = pwd.getpwuid(os.getuid())
     path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     workdir = str(Path(script).resolve().parent)

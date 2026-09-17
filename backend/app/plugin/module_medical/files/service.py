@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import func, select
+from sqlalchemy import asc, desc, func, select
 
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.api.v1.module_system.dict.model import DictDataModel
@@ -88,6 +88,35 @@ class MedFilesService:
         return query
 
 
+    @staticmethod
+    def _resolve_order_columns(
+        order_by: list[dict[str, str]] | None,
+        extra: dict[str, Any] | None = None,
+    ) -> list[Any]:
+        """把 order_by（[{"field": "asc"}]）解析成 SQLAlchemy 排序表达式。
+
+        extra 用于 select 里计算出来的列（如 file_size = coalesce(byte_size, 0)），
+        这类列不是模型属性，无法通过 getattr 拿到。
+        占位属性（file_name / file_type）与不存在的字段会被静默跳过，避免 asc(None) 报错；
+        全部被过滤时回退到 id desc。
+        """
+        extra = extra or {}
+        columns: list[Any] = []
+        for order in order_by or []:
+            if not isinstance(order, dict):
+                continue
+            for field, direction in order.items():
+                # 注意：不能用 `extra.get(field) or ...`——SQLAlchemy 表达式未定义 __bool__，
+                # 用 or 短路会抛 "Boolean value of this clause is not defined"。
+                column = extra.get(field)
+                if column is None:
+                    column = getattr(MedFilesModel, field, None)
+                # 只有真正的列表达式（带 __clause_element__）才能参与排序
+                if column is None or not hasattr(column, "__clause_element__"):
+                    continue
+                columns.append(desc(column) if str(direction).lower() == "desc" else asc(column))
+        return columns or [desc(MedFilesModel.id)]
+
     @classmethod
     async def page_service(
         cls,
@@ -102,18 +131,50 @@ class MedFilesService:
 
         exam_type 为多选（IN）查询条件，为空则忽略。
         file_type 数据库无对应列，已废弃，不参与筛选。
-        """
-        search: dict[str, Any] = {}
-        if exam_type:
-            search["exam_type"] = ("in", exam_type)
 
-        return await MedFilesCRUD(auth).page(
-            offset=offset,
-            limit=limit,
-            order_by=order_by,
-            search=search,
-            out_schema=MedicalFilesOutSchema,
+        file_size 取自 lnrs_anon_dicom_series.byte_size：按
+        dicom_series.dicom_study_uid == imaging_study.dicom_study_uid LEFT JOIN；
+        dicom_series 未落库的 study 记为 0。
+        """
+        m = MedFilesModel
+        s = AnonDicomSeriesModel
+
+        conditions = []
+        if exam_type:
+            conditions.append(m.exam_type.in_(exam_type))
+
+        # select 里计算出来的列，既用于返回也用于排序
+        file_size_col = func.coalesce(s.byte_size, 0).label("file_size")
+
+        sql = (
+            select(m, file_size_col)
+            .select_from(m)
+            .outerjoin(s, s.dicom_study_uid == m.dicom_study_uid)
+            .where(*conditions)
         )
+        sql = await Permission(m, auth).filter_query(sql)
+        sql = sql.order_by(
+            *cls._resolve_order_columns(order_by, extra={"file_size": file_size_col})
+        ).offset(offset).limit(limit)
+
+        count_sql = select(func.count(m.id)).select_from(m).where(*conditions)
+        count_sql = await Permission(m, auth).filter_query(count_sql)
+
+        total = int((await auth.db.execute(count_sql)).scalar() or 0)
+        rows = (await auth.db.execute(sql)).all()
+
+        items: list[dict] = []
+        for obj, file_size in rows:
+            data = MedicalFilesOutSchema.model_validate(obj).model_dump()
+            data["file_size"] = int(file_size or 0)
+            items.append(data)
+
+        return {
+            "page_no": offset // limit + 1 if limit else 1,
+            "page_size": limit or 10,
+            "total": total,
+            "items": items,
+        }
 
     # ------------------------------------------------------------------
     # 新增：字典接口 / 统计接口

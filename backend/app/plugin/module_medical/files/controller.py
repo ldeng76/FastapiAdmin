@@ -30,7 +30,7 @@ MedFilesRouter = APIRouter(
 # 允许排序的字段白名单（UNION 结果列别名，防止注入任意列）
 ALLOWED_SORT_FIELDS = {
     "id", "anon_exam_id", "file_name", "patient_id",
-    "exam_type", "file_type", "file_path", "exam_date",
+    "exam_type", "file_type", "file_path", "exam_date", "file_size",
 }
 # 允许的排序方式
 ALLOWED_SORT_ORDERS = {"asc", "desc"}

@@ -13,6 +13,7 @@ class MedicalFiles(BaseModel):
     exam_type: str | None = Field(default=None, description="模态类型")
     file_type: str | None = Field(default=None, description="文件类型")
     file_path: str | None = Field(default=None, description="文件路径")
+    file_size: int | None = Field(default=0, description="文件大小（字节，取自 dicom_series.byte_size）")
 
     @field_validator("file_name", mode="before")
     @classmethod

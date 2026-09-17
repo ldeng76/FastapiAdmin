@@ -150,3 +150,8 @@ TCGA样例数据-临床-基因
 /data_hos301/
 /data_xq0904/
 /.workbuddy/
+
+# 核验清单工作副本（主文件已入库，_bak/_ss 等衍生副本不入库）
+docs/etl2/数据导入核验清单_*.xlsx
+# Word「- 副本」临时副本
+docs/sour/* - 副本.docx

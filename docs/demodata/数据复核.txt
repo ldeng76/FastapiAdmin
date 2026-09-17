@@ -1,0 +1,5 @@
+省医的基因文本，3189条：
+/data/wlx/DATABASE/extracted_tables/shengyi/原始文本整合版/非隐私信息.就诊.实体肿瘤基因检测报告.*.parquet
+
+
+

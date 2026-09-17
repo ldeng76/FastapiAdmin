@@ -12,7 +12,6 @@
       @search="handleSearchBarSearch"
       @reset="()=>{
         searchForm = {}
-        replaceSearchParams({})
         getData(getNewQuery({}))
       }"
     />
@@ -108,7 +107,6 @@ const {
   data,
   loading,
   pagination,
-  replaceSearchParams,
   getData,
   handleSizeChange,
   handleCurrentChange,
@@ -214,7 +212,6 @@ function handleSearchBarSearch() {
     obj[sortParams.value.sort_field] = sortParams.value.sort_order
     params.order_by = JSON.stringify([obj])
   }
-  replaceSearchParams(params)
   getData(params);
 }
 

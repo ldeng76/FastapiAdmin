@@ -499,14 +499,18 @@ async function getCaptcha() {
     captchaState.img_base = data.img_base ?? "";
     captchaState.enable = data.enable;
     captchaState.mode = data.mode ?? "image";
-    captchaState.challenge = data.challenge ?? "";
     captchaState.expire_seconds = data.expire_seconds ?? 0;
+
 
     // ALTCHA：challenge 更新后通知子组件重置本地状态
     if (data.mode === "altcha") {
-      nextTick(() => {
+      captchaState.challenge = ""
+      await nextTick(() => {
+        captchaState.challenge = data.challenge ?? "";
         accountFormRef.value?.resetAltcha?.();
       });
+    } else {
+      captchaState.challenge = data.challenge ?? "";
     }
   } catch {
     captchaState.enable = false;

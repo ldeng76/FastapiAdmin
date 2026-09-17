@@ -414,7 +414,8 @@ class AnonDicomSeriesModel(MappedBase):
     )
     dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     file_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    series_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # series_no 已删除：2026-09-15 该表重构为 study 级后物理列不存在（0006 §7 建表 DDL 无此列），
+    # ORM 字段属遗留声明，2026-09-17 移除。将来若真要落 series 级数据，需同时补列 + 补回字段。
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),

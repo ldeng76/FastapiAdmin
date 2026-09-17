@@ -21,10 +21,13 @@ class MedFilesModel(MappedBase):
     anon_exam_id: Mapped[str | None] = mapped_column(
         String(40), nullable=True, comment="检查ID"
     )
-    file_name: Mapped[str | None] = mapped_column(
+    # 物理列 dicom_study_uid 仍存在，供 SQL 关联 dicom_series 使用（见 service 里的 join）
+    dicom_study_uid: Mapped[str | None] = mapped_column(
         "dicom_study_uid",
-        String(255), nullable=True, comment="文件名"
+        String(64), nullable=True, comment="DICOM StudyInstanceUID"
     )
+    # file_name 数据库无对应列，占位属性（非 Mapped，不参与 SQL 映射）
+    file_name: str = ""
     patient_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="患者编号"
     )

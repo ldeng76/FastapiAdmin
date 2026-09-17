@@ -14,6 +14,12 @@ class MedicalFiles(BaseModel):
     file_type: str | None = Field(default=None, description="文件类型")
     file_path: str | None = Field(default=None, description="文件路径")
 
+    @field_validator("file_name", mode="before")
+    @classmethod
+    def _normalize_file_name(cls, v):
+        """file_name 数据库无对应列（占位属性）；空串统一转成 None，避免 min_length 校验失败。"""
+        return v or None
+
     @field_validator("file_type", mode="before")
     @classmethod
     def _force_file_type_dcm(cls, v):

@@ -403,6 +403,7 @@ class AnonDicomSeriesModel(MappedBase):
     )
     dicom_study_uid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     file_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    series_no: Mapped[int] = mapped_column(Integer, nullable=False)
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),

@@ -209,6 +209,17 @@ class AnonExamModel(MappedBase):
         UniqueConstraint(
             "center_code", "source_exam_hash", name="lnrs_anon_uq_exam_source"
         ),
+        # 值域 = docs/all_modalities.json 26 键 + Other（0022 SQL 在库内加同名约束）
+        CheckConstraint(
+            "exam_type IS NULL OR exam_type IN ("
+            "'CT', 'pathology_WSI', 'pathology_text', 'gene', 'medical_record', "
+            "'imaging_report', 'basic_medical_info', 'diagnosis', 'drug_prescription', "
+            "'medical_orders', 'medical_testing', 'radiology', 'ultrasound', "
+            "'pulmonary_function', 'MRI', 'nuclear_medicine', 'bronchoscope', 'ECG', "
+            "'case_history', 'progress_note', 'basic_info', 'inhospital_record', "
+            "'IHC_record', 'operation', 'anesthesia', 'nursing', 'Other')",
+            name="lnrs_anon_ck_exam_type",
+        ),
         {"schema": "lnrs", "comment": "脱敏检查主表（跨模态桥梁）"},
     )
 

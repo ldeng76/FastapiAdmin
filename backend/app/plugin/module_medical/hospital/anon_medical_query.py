@@ -141,15 +141,46 @@ def _tag_row(row: dict[str, Any], table_label: str, modality: str) -> dict[str, 
 MODALITIES = ("clinical", "surgery", "ihc", "ultrasound", "radiology", "collection", "order", "other", "genetic", "pathology", "ct")
 # Other
 # exam_type → 模态分组
-# 数据来源：lnrs_anon_exam.exam_type 列（ETL-2 写入，已规整为英文枚举）
-# 珠江用 CT/Pathology/Genetic；省医用 Radiology/Ultrasound（也归影像类）
+# 数据来源：lnrs_anon_exam.exam_type 列（ETL-2 写入，Rev 2026-09-17 起为
+# all_modalities.json 26 键 + Other 的 27 值词表）
+# 旧 10 值键（Radiology/Ultrasound/Pathology/IHC/Genetic）保留用于
+# CHECK 约束生效前的历史数据；ECG/bronchoscope/pulmonary_function 等无
+# 专门分组的检查类落 other
 EXAM_TYPE_TO_MODALITY: dict[str, str] = {
+    # 检查类（exam 表实际产出的值）
     "CT": "ct",
+    "MRI": "radiology",
+    "nuclear_medicine": "radiology",
+    "imaging_report": "radiology",
+    "radiology": "radiology",
+    "ultrasound": "ultrasound",
+    "pathology_text": "pathology",
+    "pathology_WSI": "pathology",
+    "IHC_record": "ihc",
+    "gene": "genetic",
+    "ECG": "other",
+    "bronchoscope": "other",
+    "pulmonary_function": "other",
+    "Other": "other",
+    # 非检查类（27 值词表成员，防御性映射，当前 exam 表不产出）
+    "medical_record": "clinical",
+    "basic_medical_info": "clinical",
+    "basic_info": "clinical",
+    "case_history": "clinical",
+    "progress_note": "clinical",
+    "inhospital_record": "clinical",
+    "diagnosis": "clinical",
+    "nursing": "clinical",
+    "drug_prescription": "order",
+    "medical_orders": "order",
+    "medical_testing": "collection",
+    "operation": "surgery",
+    "anesthesia": "surgery",
+    # 旧词表（Rev 2026-09-17 前）
     "Radiology": "radiology",
     "Ultrasound": "ultrasound",
     "Pathology": "pathology",
     "IHC": "ihc",
-    "Other": "other",
     "Genetic": "genetic",
 }
 

@@ -1101,10 +1101,27 @@ async def _import_patient_table(
 
 
 # hos301/shengyi 扩展（Rev 2026-09-01/09-02）：exam_type 行级动态归一化
+# Rev 2026-09-17：值域对齐 docs/all_modalities.json 26 键 + Other = 27 值
 _EXAM_TYPE_DICT_VALUES = (
-    "CT", "Pathology", "Genetic", "IHC", "PETCT", "Radiology",
-    "Ultrasound", "MR", "ECG", "Other",
+    "CT", "pathology_WSI", "pathology_text", "gene", "medical_record",
+    "imaging_report", "basic_medical_info", "diagnosis", "drug_prescription",
+    "medical_orders", "medical_testing", "radiology", "ultrasound",
+    "pulmonary_function", "MRI", "nuclear_medicine", "bronchoscope", "ECG",
+    "case_history", "progress_note", "basic_info", "inhospital_record",
+    "IHC_record", "operation", "anesthesia", "nursing", "Other",
 )
+
+# 旧词表 → 新词表别名（Rev 2026-09-17 前的历史 staging parquet / etl1_adapt_*.py
+# 输出仍用旧 10 值；med_dict_mapping 命中前的最后一道代码级兜底）
+_EXAM_TYPE_LEGACY_ALIASES = {
+    "Pathology": "pathology_text",
+    "Genetic": "gene",
+    "IHC": "IHC_record",
+    "MR": "MRI",
+    "Radiology": "radiology",
+    "Ultrasound": "ultrasound",
+    "PETCT": "nuclear_medicine",
+}
 
 
 def _normalize_exam_type(
@@ -1113,9 +1130,11 @@ def _normalize_exam_type(
     """从行数据归一化 exam_type 值（hos301 examType / 省医 检查类型名称）。
 
     规则优先级：
-    1. 去空白/全角后与 med_exam_type 字典值精确匹配（命中直接返回）
-    2. med_dict_mapping raw_label → dict_value（预加载 cache）
-    3. 兜底 Other（记 warning）
+    1. 去空白/全角后与 27 值词表精确匹配（命中直接返回）
+    2. med_dict_mapping raw_label → dict_value（预加载 cache；字典行已原地
+       改名，历史 raw_label 如 'Pathology' 映射到新值 pathology_text）
+    3. 旧词表别名（历史 staging parquet / 适配层输出的 10 值旧词）
+    4. 兜底 Other（记 warning）
     """
     raw = str(row.get(field_name) or "").strip()
     if not raw:
@@ -1127,6 +1146,9 @@ def _normalize_exam_type(
     mapped = cache.get(normalized.lower())
     if mapped:
         return mapped
+    aliased = _EXAM_TYPE_LEGACY_ALIASES.get(normalized)
+    if aliased:
+        return aliased
     log.warning(f"ETL2: 未识别 exam_type: {raw!r}，兜底 Other")
     return "Other"
 
@@ -2397,8 +2419,9 @@ async def _import_observation_table(
 #   - src_table:    parquet 文件名（不含 .parquet 后缀）
 #   - kind:         patient / exam_text / surgery / visit_detail / lab / order /
 #                   diagnosis / document / history / observation
-#   - exam_type:    exam_text 的检查类型（CT/Pathology/Genetic/IHC/PETCT/Radiology/
-#                   Ultrasound，必须是 med_exam_type 字典中的 dict_value）
+#   - exam_type:    exam_text 的检查类型（Rev 2026-09-17 起为 27 值词表 =
+#                   docs/all_modalities.json 26 键 + Other，如 CT/pathology_text/
+#                   gene/radiology/ultrasound，必须是 med_exam_type 字典 dict_value）
 #   - id_field:     exam_text 的主键列名（parquet 中的 exam_id/specimen_id/test_id/report_id）
 #   - body_fields:  拼接进 report_text.body_clean 的正文列（无则 []）
 #   - detail_type:  exam_detail.detail_type（如 pathology/genetic/ihc/nodule_imaging）
@@ -2434,7 +2457,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         #    coalesce(检查日期, 报告日期, visit 入院时间) 回填 100%
         {
             "src_table": "pahology_specimen", "kind": "exam_text",
-            "exam_type": "Pathology", "id_field": "specimen_id",
+            "exam_type": "pathology_text", "id_field": "specimen_id",
             "body_fields": ["pathology_diagnosis"],
             "detail_type": "pathology",
             "detail_fields": [
@@ -2444,10 +2467,11 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             "date_field": "exam_date",
         },
         # 4. 影像：检查类型名称为自由文本，适配层按关键词规则归一化进 exam_type 列
-        #    （CT/PETCT/MR/Radiology/Ultrasound/Other），引擎行级精确匹配字典值
+        #    （历史输出为 CT/PETCT/MR/Radiology/Ultrasound/Other 旧词表，引擎经
+        #    _EXAM_TYPE_LEGACY_ALIASES 转 MRI/nuclear_medicine/radiology/ultrasound）
         {
             "src_table": "imaging_report", "kind": "exam_text",
-            "exam_type": "Radiology", "exam_type_field": "exam_type",
+            "exam_type": "radiology", "exam_type_field": "exam_type",
             "id_field": "report_id",
             "body_fields": ["exam_detail.findings", "exam_detail.impression"],
             "detail_type": "imaging_report",
@@ -2457,7 +2481,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         # 5. 超声：适配层按报告号聚合检查子项（1.56M 子项 → 181k 报告）
         {
             "src_table": "ultrasound_report", "kind": "exam_text",
-            "exam_type": "Ultrasound", "id_field": "report_id",
+            "exam_type": "ultrasound", "id_field": "report_id",
             "body_fields": ["ultrasound_finding"],
             "detail_type": "ultrasound",
             "detail_fields": ["exam_name", "body_part", "exam_detail"],
@@ -2477,7 +2501,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         #    适配层跳过）；无日期列 → date_lookup_field 反查 visit 入院时间
         {
             "src_table": "genetic_report", "kind": "exam_text",
-            "exam_type": "Genetic", "id_field": "report_id",
+            "exam_type": "gene", "id_field": "report_id",
             "body_fields": [],
             "detail_type": "genetic",
             "detail_fields": ["test_name", "variants"],
@@ -2569,7 +2593,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         {
             "src_table": "pathology_specimen",
             "kind": "exam_text",
-            "exam_type": "Pathology",
+            "exam_type": "pathology_text",
             # 源文件无 exam_id：适配层按 (patient_id, exam_date, 送检部位)
             # 合成确定性 specimen_id（跨行同组 exam 合并，同珠江 0825 病理模式）
             "id_field": "specimen_id",
@@ -2586,7 +2610,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         {
             "src_table": "genetic_test",
             "kind": "exam_text",
-            "exam_type": "Genetic",
+            "exam_type": "gene",
             # 源文件无 exam_id：适配层按 (patient_id, exam_date,
             # sample_source, test_method) 合成确定性 test_id（四元组行级唯一）
             "id_field": "test_id",
@@ -2633,7 +2657,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         {
             "src_table": "imaging_report",
             "kind": "exam_text",
-            "exam_type": "Radiology",
+            "exam_type": "radiology",
             "exam_type_field": "exam_type",
             "id_field": "exam_id",
             "body_fields": ["findings", "impression"],
@@ -2644,7 +2668,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         {
             "src_table": "pathology_specimen",
             "kind": "exam_text",
-            "exam_type": "Pathology",
+            "exam_type": "pathology_text",
             "id_field": "specimen_id",
             "body_fields": ["histology_class"],
             # 诊断文本由宽表 histology_class 提供；深层病理结构落 exam_detail JSONB
@@ -2666,7 +2690,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         {
             "src_table": "genetic_test",
             "kind": "exam_text",
-            "exam_type": "Genetic",
+            "exam_type": "gene",
             "id_field": "test_id",
             "body_fields": [],
             "detail_type": "genetic",
@@ -2679,7 +2703,7 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
         {
             "src_table": "ihc_result",
             "kind": "exam_text",
-            "exam_type": "IHC",
+            "exam_type": "IHC_record",
             "id_field": "specimen_id",
             "body_fields": [],
             "detail_type": "ihc",
@@ -2706,7 +2730,9 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
     ],
     # 301（nested parquet 批次，2026-09-01）：见 .claude/skills/nested-parquet-301-import
     # 与适配脚本 backend/etl1_adapt_hos301_exam.py；exam_type 由行内 examType 列
-    # 经 med_dict_mapping（0013 种子）归一化（CT/Pathology/Ultrasound/其他→Other）
+    # 经 med_dict_mapping（0013 种子 + 0021 升级）归一化（ＣＴ→CT/病理→pathology_text/
+    # 超声→ultrasound/心电图→ECG/放射→radiology/磁共振→MRI/核医学→nuclear_medicine/
+    # 肺功能→pulmonary_function/气管镜→bronchoscope/其余→Other）
     "hos301": [
         # patient 无 parquet（数据目录缺文件跳过；患者由 visit/exam 占位路径入库）
         {"src_table": "patient", "kind": "patient"},

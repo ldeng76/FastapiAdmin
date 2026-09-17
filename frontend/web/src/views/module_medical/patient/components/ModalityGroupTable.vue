@@ -56,6 +56,12 @@
       <ElTableColumn prop="collection_time" :label="getFieldLabel('collection_time')" />
     </template>
     <template v-else-if="tableName === '医嘱'">
+      <ElTableColumn prop="order_id" :label="getFieldLabel('order_id')" />
+      <ElTableColumn prop="order_name" :label="getFieldLabel('order_name')" />
+      <ElTableColumn prop="order_source" :label="getFieldLabel('order_source')" />
+      <ElTableColumn prop="order_dept" :label="getFieldLabel('order_dept')" />
+      <ElTableColumn prop="order_time" :label="getFieldLabel('order_time')" />
+      <ElTableColumn prop="order_type" :label="getFieldLabel('order_type')" />
       <ElTableColumn prop="dosage_form" :label="getFieldLabel('dosage_form')" />
       <ElTableColumn prop="dose" :label="getFieldLabel('dose')" />
       <ElTableColumn prop="dose_per_use" :label="getFieldLabel('dose_per_use')" />
@@ -67,12 +73,6 @@
       <ElTableColumn prop="duration_days" :label="getFieldLabel('duration_days')" />
       <ElTableColumn prop="duration_type" :label="getFieldLabel('duration_type')" />
       <ElTableColumn prop="frequency" :label="getFieldLabel('frequency')" />
-      <ElTableColumn prop="order_dept" :label="getFieldLabel('order_dept')" />
-      <ElTableColumn prop="order_id" :label="getFieldLabel('order_id')" />
-      <ElTableColumn prop="order_name" :label="getFieldLabel('order_name')" />
-      <ElTableColumn prop="order_source" :label="getFieldLabel('order_source')" />
-      <ElTableColumn prop="order_time" :label="getFieldLabel('order_time')" />
-      <ElTableColumn prop="order_type" :label="getFieldLabel('order_type')" />
       <ElTableColumn prop="original_patient_id" :label="getFieldLabel('original_patient_id')" />
       <ElTableColumn prop="prescribing_dept" :label="getFieldLabel('prescribing_dept')" />
       <ElTableColumn prop="prescription_date" :label="getFieldLabel('prescription_date')" />

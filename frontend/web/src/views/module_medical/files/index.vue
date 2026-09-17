@@ -6,7 +6,7 @@
           <el-collapse-item title="模态类型" name="examType">
             <el-checkbox-group v-model="selectedExamType">
               <div style="max-height: 300px;overflow: auto">
-                <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_exam_type')" :key="item.dict_value">
+                <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_modality')" :key="item.dict_value">
                   <el-checkbox class="file-checkbox" :label="item.dict_label" :value="item.dict_value" />
                   <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_exam_type') }}</div>
                 </div>
@@ -33,7 +33,7 @@
 
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
 
-          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
+          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总患者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
 
           <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
 
@@ -71,6 +71,7 @@ const sortParams = ref({sort_field:"",sort_order:""})
 const fileTypeDict = ref<any>([])
 const statisticsCount = ref<StatisticsCount>({})
 const loading = ref(false)
+
 function getCountDuration(value?:number){
   return !value || value <10 ? 0 :1000
 }
@@ -161,7 +162,7 @@ const {
         minWidth: 80,
         sortable :'custom',
         formatter(row){
-          return dictStore.getDictItemLabel("med_exam_type",row.exam_type)
+          return dictStore.getDictItemLabel("med_modality",row.exam_type)
         }
       },
       {
@@ -202,7 +203,7 @@ const {
 });
 
 onBeforeMount(async ()=>{
-  await dictStore.getDict(['med_exam_type','med_center'])
+  await dictStore.getDict(['med_modality','med_center'])
   loading.value = true
   fileTypeDict.value = await FilesApi.getFileType()
   statisticsCount.value = await FilesApi.statistics()

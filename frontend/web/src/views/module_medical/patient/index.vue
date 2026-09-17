@@ -81,7 +81,7 @@ const showSearchBar = ref(true);
 const patientSearchItems = ref<SearchFormItem[]>([])
 
 function getNewQuery(query:any){
-  query.is_placeholders = query.is_placeholders === 'true';
+  query.is_placeholders = true;
   return query
 }
 
@@ -110,7 +110,6 @@ const {
   pagination,
   replaceSearchParams,
   getData,
-  resetSearchParams,
   handleSizeChange,
   handleCurrentChange,
   refreshData,
@@ -209,7 +208,7 @@ watch([sortParams],function (){
 
 // 搜索
 function handleSearchBarSearch() {
-  let params:any = Object.assign({},searchForm.value)
+  let params:any = Object.assign({is_placeholders:true},searchForm.value)
   if(sortParams.value.sort_field && sortParams.value.sort_order){
     let obj :any = {}
     obj[sortParams.value.sort_field] = sortParams.value.sort_order
@@ -240,26 +239,16 @@ function fmtAgeBirthday(v?: string): string {
 onBeforeMount(async ()=>{
   const ageBuckets = await StatisticsAPI.getAgeBuckets()
   const bmiBuckets = await StatisticsAPI.getBmiBuckets()
-  await dictStore.getDict(['med_sex','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
+  await dictStore.getDict(['med_sex','med_center','med_exam_type','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
   patientSearchItems.value = [
-    {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 5},
-    {
-      key: "is_placeholders",
-      label: "显示暂无基本数据的患者",
-      type: "switch",
-      labelWidth:170,
-      props:{
-        inlinePrompt: true,
-        activeText: "显示",
-        inactiveText: "隐藏",
-      },
-      span: 5
-    },
-    {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 5},
-    {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 5 },
-    {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:80, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 5 },
-    {key: "smoking_status",label: getFieldLabel("smoking_status"),  type: "select", placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_smoking_status'), clearable: true,span: 5},
-    {key: "bmi_bucket",label: getFieldLabel("bmi"),  type: "select", placeholder: "请选择", options: bmiBuckets, clearable: true,span: 5},
+    {key: "center", label: getFieldLabel("source_center"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_center'), clearable: true,span: 4},
+    {key: "modality", label: getFieldLabel("modality"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_exam_type'), clearable: true,span: 4},
+    {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 4},
+    {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 4},
+    {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
+    {key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:80, type: "select", clearable: true, options:dictStore.getDictArrayForSearch('med_blood_type_abo'), placeholder: "请选择", span: 4 },
+    {key: "smoking_status",label: getFieldLabel("smoking_status"),  type: "select", placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_smoking_status'), clearable: true,span: 4},
+    {key: "bmi_bucket",label: getFieldLabel("bmi"),  type: "select", placeholder: "请选择", options: bmiBuckets, clearable: true,span: 4},
     {key: "latest_lung_rads",label: getFieldLabel("lung_rads")+"(最新)", labelWidth:150,  type: "select", placeholder: "请选择",
       options:[
         {label:'1',value:"1"},
@@ -270,7 +259,7 @@ onBeforeMount(async ()=>{
         {label:'4X',value:"4X"}
       ],
       clearable: true,
-      span: 5
+      span: 4
     }
   ]
 })

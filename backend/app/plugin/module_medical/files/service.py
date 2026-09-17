@@ -148,7 +148,9 @@ class MedFilesService:
             center_type: 可选，多选中心筛选（按 MedFilesModel.file_type 过滤）
 
         数据流（2026-09-15 重构自单 MedFilesModel 聚合）：
-        - file_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
+        - record_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
+        - file_count = record_count + Σ(每个 study 在 lnrs_anon_dicom_series 里的 series_no 个数)
+          （按 study 分组 COUNT(DISTINCT series_no) 后求和，非全局去重）
         - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
         - by_exam_type：GROUP BY MedFilesModel.exam_type（即 imaging_study.modality），label 取 med_exam_type 字典
           翻译；当前 h196_3 上 modality 100%='CT'，只会返回 1 行（事实告知用户）
@@ -158,10 +160,10 @@ class MedFilesService:
         """
         m = MedFilesModel
         e = AnonExamModel
+        s = AnonDicomSeriesModel
 
-        # ---- file_count / record_count / patient_count：基于 MedFilesModel（=imaging_study）----
+        # ---- record_count / patient_count：基于 MedFilesModel（=imaging_study）----
         count_sql = select(
-            func.count(m.id).label("file_count"),
             func.count(m.id).label("record_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
         )
@@ -170,9 +172,30 @@ class MedFilesService:
         )
         count_sql = await Permission(m, auth).filter_query(count_sql)
         count_row = (await auth.db.execute(count_sql)).one_or_none()
-        file_count = int(count_row[0] or 0) if count_row else 0
-        record_count = int(count_row[1] or 0) if count_row else 0
-        patient_count = int(count_row[2] or 0) if count_row else 0
+        record_count = int(count_row[0] or 0) if count_row else 0
+        patient_count = int(count_row[1] or 0) if count_row else 0
+
+        # ---- file_count = study 行数 + 每个 study 的 series_no 个数之和 ----
+        # series_no 在 dicom_series 里是 series 级字段，同一 study 下多行各有自己的
+        # series_no；必须按 study 分组去重计数后再求和，直接全局 COUNT(DISTINCT series_no)
+        # 会把不同 study 里同为 1 的序号合并掉。
+        per_study_series = (
+            select(func.count(func.distinct(s.series_no)).label("series_cnt"))
+            .select_from(s)
+            .join(m, s.dicom_study_uid == m.dicom_study_uid)
+            .group_by(m.id)
+        )
+        per_study_series = cls._apply_search_conditions(
+            per_study_series, exam_type=exam_type, file_type=file_type, center_type=center_type
+        )
+        per_study_series = await Permission(s, auth).filter_query(per_study_series)
+        series_no_subq = per_study_series.subquery()
+        series_no_count = int(
+            (await auth.db.execute(
+                select(func.coalesce(func.sum(series_no_subq.c.series_cnt), 0))
+            )).scalar() or 0
+        )
+        file_count = record_count + series_no_count
 
         # ---- total_patient_count：基于 AnonPatientModel（=lnrs_anon_patient 未删除行数）----
         total_patient_sql = select(func.count(AnonPatientModel.patient_id)).where(
@@ -182,6 +205,17 @@ class MedFilesService:
             total_patient_sql = total_patient_sql.where(
                 AnonPatientModel.center_code.in_(center_type)
             )
+        if exam_type:
+            # exam_type 是多选列表，必须用 in_（== list 会让 SQLAlchemy/asyncpg 无法编码参数）；
+            # 子查询需显式 scalar_subquery()，再交给 in_ 使用。
+            exam_patient_subq = cls._apply_exam_conditions(
+                select(e.patient_id), exam_type=exam_type, center_type=None
+            )
+            exam_patient_subq = await Permission(e, auth).filter_query(exam_patient_subq)
+            total_patient_sql = total_patient_sql.where(
+                AnonPatientModel.patient_id.in_(exam_patient_subq.distinct().scalar_subquery())
+            )
+        total_patient_sql = await Permission(AnonPatientModel, auth).filter_query(total_patient_sql)
         total_patient_count = int((await auth.db.execute(total_patient_sql)).scalar() or 0)
 
         # ---- exam_count：基于 AnonExamModel（=lnrs_anon_exam 行数）----
@@ -197,7 +231,7 @@ class MedFilesService:
         # 走同一筛选，保持 KPI 与 by_exam_type/by_center 一致。
         size_sql = select(func.coalesce(func.sum(AnonDicomSeriesModel.byte_size), 0))
         size_sql = size_sql.join(
-            m, AnonDicomSeriesModel.dicom_study_uid == m.file_name,
+            m, AnonDicomSeriesModel.dicom_study_uid == m.dicom_study_uid,
         )
         size_sql = cls._apply_search_conditions(
             size_sql, exam_type=exam_type, file_type=file_type, center_type=center_type
@@ -216,13 +250,17 @@ class MedFilesService:
         by_exam_sql = await Permission(m, auth).filter_query(by_exam_sql)
         by_exam_rows = (await auth.db.execute(by_exam_sql)).all()
 
+        # 分母用本分组的合计数：分组只统计 study 记录条数，不含 series，
+        # 与含 series 的 file_count 解耦，保证各项百分比之和 = 100%。
+        exam_total = sum(int(cnt or 0) for _, cnt in by_exam_rows)
+
         by_exam_type: list[dict] = []
         for raw, cnt in by_exam_rows:
             if raw in (None, ""):
                 continue
             value = str(raw)
             cnt = int(cnt)
-            pct = round(cnt / file_count * 100, 2) if file_count else 0.0
+            pct = round(cnt / exam_total * 100, 2) if exam_total else 0.0
             by_exam_type.append({
                 "value": value,
                 "label": exam_type_label_map.get(value, value),

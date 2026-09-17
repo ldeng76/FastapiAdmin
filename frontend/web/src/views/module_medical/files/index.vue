@@ -167,7 +167,7 @@ const {
       },
       {
         prop: "file_type",
-        label: "文件类型",
+        label: "数据格式",
         sortable :'custom',
         minWidth: 80
       },

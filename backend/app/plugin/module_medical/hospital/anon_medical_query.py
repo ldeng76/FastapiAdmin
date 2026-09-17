@@ -593,17 +593,18 @@ _STUDY_DESCRIPTION_EXPR = (
     AnonImagingStudyModel.modality
     + " "
     + func.to_char(_PATH_DATE_LITERAL, "YYYY-MM-DD")
-).label("study_description")
-# 2026-09-15 dicom_series 重构为 study 级：series_count 不再有意义
-# （原 series_uid 字段移除，视图 v_imaging_study_counts.series_count 固定 0）。
-# dicom_series 现在是 study 维度一对一，直接 LEFT JOIN 拿 file_count / byte_size，
-# 走 dicom_study_uid UNIQUE 索引命中毫秒级。
-# 保留 series_count 字段返回 0 以兼容前端 DicomStudy 类型契约。
+)
+
+# 2026-09-17 series_count 重新落库：dicom_series.series_count 由 ETL 实测写入
+# （实测口径与 DicomIndexer.register_folder 一致：按 SeriesInstanceUID 去重，
+#  跳过非图像模态与无 UID 文件）。NULL = 未实测；COALESCE 0 兜底以兼容前端
+#  DicomStudy 类型契约（series_count: number）。file_count / byte_size 字段不变。
 _DICOM_SERIES_LEFT = (
     select(
         AnonDicomSeriesModel.dicom_study_uid.label("study_uid"),
         AnonDicomSeriesModel.file_count.label("file_count"),
         AnonDicomSeriesModel.byte_size.label("byte_size"),
+        AnonDicomSeriesModel.series_count.label("series_count"),
     ).subquery()
 )
 # 列：与前端 DicomStudy 类型对齐
@@ -618,7 +619,7 @@ IMAGING_STUDY_LIST_COLS = [
     AnonImagingStudyModel.created_at,
     _STUDY_DATE_EXPR,
     _STUDY_DESCRIPTION_EXPR,
-    literal(0).label("series_count"),
+    func.coalesce(_DICOM_SERIES_LEFT.c.series_count, 0).label("series_count"),
     _DICOM_SERIES_LEFT.c.file_count,
     _DICOM_SERIES_LEFT.c.byte_size,
 ]
@@ -643,9 +644,8 @@ async def anon_list_patient_imaging_studies(
       - sop_count     = 该 Study 下影像切片数（仅展示）
       - source        = 数据来源盘标识
       - anon_exam_id  = 冗余 FK（ETL-2 回写时有值，离线灌库为空）
-      - series_count  = 由 lnrs_anon_dicom_series 聚合得出；series 未落库
-                        时为 0（前端 DicomViewer 顶部仍按需拉 series 接口
-                        实时补齐，但列表首屏即可展示稳定序列数）
+      - series_count  = lnrs_anon_dicom_series.series_count（ETL 实测）；NULL 时
+                        COALESCE 为 0；语义与 DicomIndexer.register_folder 一致
       - patient_id    = PT_xxx（脱敏后）
       - patient_name  = 从 lnrs_anon_patient 联表带出（便于 viewer overlay）
       - study_date        = image_path 末两级父目录 YYYYMMDD → DATE（ISO）
@@ -689,8 +689,7 @@ async def anon_list_patient_imaging_studies(
         d = dict(r)
         # study_id 别名：DicomViewer props.studyId 期望 = StudyInstanceUID
         d["study_id"] = d["study_uid"]
-        # series_count 固定为 0（dicom_series 重构为 study 级；2026-09-15）；
-        # 保留字段以兼容前端 DicomStudy 类型契约
+        # series_count：2026-09-17 起从 dicom_series.series_count 取真值（COALESCE 0）
         d["series_count"] = int(d.get("series_count") or 0)
         # file_count / byte_size：dicom_series 未落库时为 None → 0
         d["file_count"] = int(d.get("file_count") or 0)

@@ -3095,17 +3095,26 @@ async def _upsert_dicom_byte_size_for_study(
     返回：写入的 byte_size（bytes）；与 series 级实现对齐返回行数为兼容。
 
     关键决策（2026-09-15 重构自 series 级 _upsert_dicom_series_for_study）：
-    - 不调 DicomIndexer.register_folder：省掉 pydicom.dcmread 每个 .dcm header 的
-      CPU 解析开销（~10ms/instance）。DicomViewer 实时接口仍走 register_folder
-      （路径不变）。
-    - 仅 iterdir + stat() 累加：study 目录下所有文件 .dcm 的 st_size 之和。
-    - file_count：study 目录下文件数（不过滤非图像模态 SR/SEG/PR/...，
-      可能略大于真实 image instance 数；与 register_folder 行为差异由前端按需拉
-      DICOMweb 实时接口弥补）。
+    - byte_size / file_count：仍走 iterdir + stat() 累加（不解析 DICOM header），
+      保留 study 级重构的 10x 加速。
+    - series_count（2026-09-17 引入）：追加 DicomIndexer.register_folder 实测，
+      按 SeriesInstanceUID 去重计数，跳过非图像模态（SR/RTPLAN/RTDOSE/RTSTRUCT/ST）
+      与无 UID/解析失败文件。register_folder 内部按文件容错计数，不抛断。
+      实测完毕后调用 indexer.evict_study(study_uid) 释放内存索引，
+      沿用 _import_dicom_series_for_center 现有模式。
+    - file_count 与 series_count 语义不同：file_count 是目录下文件总数
+      （含 SR/RT/非图像），series_count 是图像模态序列数（实测）。
+    - 目录不存在 → 维持原状不写行（series_count 保持 NULL）。
+    - 目录在线但无 DICOM 文件 → 不写行（与重构前一致）。
+    - 目录在线但 register_folder 返回 None（无合法图像）→ file_count=0 也写行
+      （与重构前一致）；series_count=0。
     - 幂等键 dicom_study_uid（UNIQUE 约束），upsert by ON CONFLICT。
-    - 已写入的 study 重跑：byte_size / file_count 会被最新 run 覆盖，
+    - 已写入的 study 重跑：byte_size / file_count / series_count 都会被最新 run 覆盖，
       created_batch_id 保留首次入库（commit f8dd292e 设计延续）。
+    - 已知代价：每 study 增加一次 register_folder（~10ms/instance × N 文件），
+      study 级重构的提速部分回吐；与产品决策对齐（方案3：常态化落库）。
     """
+    from app.plugin.module_medical.dicom.repository import indexer
     from .anon_model import AnonDicomSeriesModel
 
     path = Path(image_path)
@@ -3134,15 +3143,41 @@ async def _upsert_dicom_byte_size_for_study(
             )
             continue
 
+    # 实测 series_count：调 DicomIndexer.register_folder 走与 DICOMViewer 一致的口径
+    # （按 SeriesInstanceUID 去重，跳过非图像模态与无 UID 文件）。
+    # register_folder 内部按文件容错，单文件失败不抛断；返回 None = 无合法图像。
+    series_count = 0
+    try:
+        reg = indexer.register_folder(path)
+        if reg and reg.get("series_count") is not None:
+            series_count = int(reg["series_count"])
+    except Exception as e:
+        # register_folder 不抛断；这里再兜一层兜底（极端路径错误等），series_count=0
+        log.warning(
+            f"ETL2: register_folder 异常 study={dicom_study_uid}: "
+            f"{type(e).__name__}: {e!s}"
+        )
+        series_count = 0
+    finally:
+        # 释放 LRU 槽位 + 反向索引，避免单例状态被下一次 ETL 污染
+        try:
+            indexer.evict_study(dicom_study_uid)
+        except Exception as e:
+            log.warning(
+                f"ETL2: evict_study 异常 study={dicom_study_uid}: "
+                f"{type(e).__name__}: {e!s}"
+            )
+
     # upsert: ON CONFLICT (dicom_study_uid) DO UPDATE
     # 不变列：series_id（PK）, created_batch_id（保留首次入库的批次元数据）
-    # 更新列：anon_exam_id / file_count / byte_size
+    # 更新列：anon_exam_id / file_count / byte_size / series_count
     stmt = pg_insert(AnonDicomSeriesModel.__table__).values(
         [{
             "anon_exam_id": anon_exam_id,
             "dicom_study_uid": dicom_study_uid,
             "file_count": file_count,
             "byte_size": byte_size,
+            "series_count": series_count,
             "created_batch_id": batch_id,
         }]
     )
@@ -3152,13 +3187,14 @@ async def _upsert_dicom_byte_size_for_study(
             "anon_exam_id": stmt.excluded.anon_exam_id,
             "file_count": stmt.excluded.file_count,
             "byte_size": stmt.excluded.byte_size,
+            "series_count": stmt.excluded.series_count,
         },
     )
     await db.execute(stmt)
 
     log.info(
         f"ETL2: dicom_byte_size upsert study={dicom_study_uid} "
-        f"file_count={file_count} byte_size={byte_size}"
+        f"file_count={file_count} byte_size={byte_size} series_count={series_count}"
     )
     # 返回 byte_size（与 series 级实现的"行数"返回值对齐为"工作量单位"语义；
     # _import_dicom_series_for_center 的 total_series 累加器语义变弱，仅作日志）

@@ -221,6 +221,11 @@ CREATE INDEX lnrs_anon_ix_finding_typeval ON lnrs.lnrs_anon_exam_finding (findin
 -- * file_count：study 目录下文件数（不过滤非图像模态 SR/SEG/PR/...，
 --   可能略大于真实 image instance 数；DICOMweb 实时接口仍按需拿真实数）。
 -- * byte_size NOT NULL：累加目录下所有 .dcm 的 st_size（字节）。
+-- * series_count INT NULL（2026-09-17 引入）：实测口径 = DicomIndexer.register_folder
+--   去重 SeriesInstanceUID 计数，跳过非图像模态（SR/RTPLAN/RTDOSE/RTSTRUCT/ST）。
+--   NULL = 未实测（目录离线 / ETL 未跑）；0 = 实测无合法 DICOM 图像；
+--   N = 实测 SeriesInstanceUID 数。CHECK >= 0 或 NULL。
+--   注意与 file_count 语义不同：file_count 是目录下文件总数（含 SR/RT/非图像）。
 -- * 实时接口路径不变：DicomViewer / DICOMweb 仍走 DicomIndexer 内存索引
 --   （app/plugin/module_medical/dicom/repository.py）。
 -- * 与 dicom_instance 表：原 §8 FK lnrs_anon_dicom_instance_series_id_fkey
@@ -229,19 +234,26 @@ CREATE INDEX lnrs_anon_ix_finding_typeval ON lnrs.lnrs_anon_exam_finding (findin
 
 CREATE TABLE lnrs.lnrs_anon_dicom_series (
     series_id           BIGSERIAL    PRIMARY KEY,
-    anon_exam_id        VARCHAR(40)  NOT NULL REFERENCES lnrs.lnrs_anon_exam(anon_exam_id) ON DELETE CASCADE,
+    anon_exam_id        VARCHAR(40)           REFERENCES lnrs.lnrs_anon_exam(anon_exam_id) ON DELETE CASCADE,
     dicom_study_uid     VARCHAR(64)  NOT NULL UNIQUE,
     file_count          INT          NOT NULL CHECK (file_count >= 0),
     byte_size           BIGINT       NOT NULL,
+    series_count        INT                   CHECK (series_count IS NULL OR series_count >= 0),
     created_batch_id    UUID         NOT NULL REFERENCES lnrs.lnrs_anon_ingest_batch(batch_id) ON DELETE CASCADE,
     created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT lnrs_anon_ck_dicom_series_file_count CHECK (file_count >= 0)
+    CONSTRAINT lnrs_anon_ck_dicom_series_file_count CHECK (file_count >= 0),
+    CONSTRAINT lnrs_anon_ck_dicom_series_series_count CHECK (series_count IS NULL OR series_count >= 0)
 );
 
 COMMENT ON TABLE lnrs.lnrs_anon_dicom_series IS
-    '影像研究级元数据（一行 = 一个 study；2026-09-15 重构自 series 级）。'
-    'file_count = study 目录下文件数；byte_size = 累加目录下所有 .dcm 的 st_size。';
+    '影像研究级元数据（一行 = 一个 study；2026-09-15 重构自 series 级，'
+    '2026-09-17 加 series_count + anon_exam_id 允许 NULL）。'
+    'file_count = study 目录下文件数；byte_size = 累加目录下所有 .dcm 的 st_size；'
+    'series_count = 实测 SeriesInstanceUID 去重计数（NULL = 未实测）；'
+    'anon_exam_id NULL = 无 exam 关联（仅 series_count 落库场景，回填脚本产物），'
+    '非 NULL = exam 关联（ETL-2 主路径产物）。'
+    '实测口径与 DicomViewer.register_folder 完全一致。';
 
 CREATE INDEX lnrs_anon_ix_dicom_series_exam      ON lnrs.lnrs_anon_dicom_series (anon_exam_id);
 CREATE INDEX lnrs_anon_ix_dicom_series_study_uid ON lnrs.lnrs_anon_dicom_series (dicom_study_uid);

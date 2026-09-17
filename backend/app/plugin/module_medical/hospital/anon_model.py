@@ -391,6 +391,13 @@ class AnonDicomSeriesModel(MappedBase):
       可能略大于真实 image instance 数）；CHECK >= 0
     - byte_size NOT NULL：累加目录下所有 .dcm 的 st_size（字节）；
       通过 file_count * 平均文件大小估算总容量
+    - series_count INT NULL（2026-09-17 引入）：实测 SeriesInstanceUID 去重计数。
+      NULL = 未实测（目录离线 / ETL 未跑 / 落库早于本迁移）；
+      0   = 已实测，目录在线但无合法 DICOM 图像 / 无图像模态文件；
+      N   = 已实测，N >= 1。CHECK >= 0 或 NULL。
+      实测口径与 DicomViewer.register_folder（repository.py:483）完全一致——
+      跳过非图像模态 SR/RTPLAN/RTDOSE/RTSTRUCT/ST。
+      注意与 file_count 语义不同：file_count 是目录下文件总数（含 SR/RT/非图像）。
     - 重构来源：原 series 级 schema 含 dicom_series_uid/modality/body_part/
       series_no/file_root/file_count_actual 字段，已在 2026-09-15 迁移移除。
       DICOMweb 实时接口（DicomViewer）仍走 DicomIndexer 内存索引（路径不变）。
@@ -402,7 +409,11 @@ class AnonDicomSeriesModel(MappedBase):
             "file_count >= 0",
             name="lnrs_anon_ck_dicom_series_file_count",
         ),
-        {"schema": "lnrs", "comment": "DICOM 影像研究级元数据（study-level；2026-09-15 重构自 series-level）"},
+        CheckConstraint(
+            "series_count IS NULL OR series_count >= 0",
+            name="lnrs_anon_ck_dicom_series_series_count",
+        ),
+        {"schema": "lnrs", "comment": "DICOM 影像研究级元数据（study-level；2026-09-15 重构自 series-level；2026-09-17 加 series_count）"},
     )
 
     series_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -417,6 +428,11 @@ class AnonDicomSeriesModel(MappedBase):
     # series_no 已删除：2026-09-15 该表重构为 study 级后物理列不存在（0006 §7 建表 DDL 无此列），
     # ORM 字段属遗留声明，2026-09-17 移除。将来若真要落 series 级数据，需同时补列 + 补回字段。
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    series_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="实测 SeriesInstanceUID 去重计数；NULL = 未实测",
+    )
     created_batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("lnrs.lnrs_anon_ingest_batch.batch_id", ondelete="CASCADE"),

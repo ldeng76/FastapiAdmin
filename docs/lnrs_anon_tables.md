@@ -333,8 +333,7 @@ exam 级 JSONB 深结构。PK 复合 `(anon_exam_id, detail_type, detail_ordinal
 
 非 ETL 灌库，仅审计锚定（由 `scripts/import_orphan_diagnosis.py` 等脚本写入）。
 
-### 6.4 `lnrs_anon_dicom_series`（2026-09-15 重构为 study 级）★
-
+### 6.4 `lnrs_anon_dicom_series`（2026-09-15 重构为 study 级，2026-09-17 加 series_count）★
 **一行 = 一个 study**：解析 `lnrs_anon_imaging_study.image_path` 目录后的研究级元数据。36,147 行（全部 zhujiang；其余中心待扫描）。
 
 | 字段 | 类型 | 语义 |
@@ -344,9 +343,9 @@ exam 级 JSONB 深结构。PK 复合 `(anon_exam_id, detail_type, detail_ordinal
 | `dicom_study_uid` | VARCHAR(64) UNIQUE NOT NULL | study 唯一键（v_imaging_study_counts 按它 join） |
 | `file_count` | INT NOT NULL CHECK ≥ 0 | study 目录下文件数（不过滤非图像模态，略大于真实 image instance 数） |
 | `byte_size` | BIGINT NOT NULL | 累加目录下所有 `.dcm` 的 st_size |
+| `series_count` | INT NULL CHECK ≥ 0 或 NULL | **2026-09-17 引入**：实测 SeriesInstanceUID 去重计数（口径与 DicomIndexer.register_folder 一致，跳过非图像模态 SR/RTPLAN/RTDOSE/RTSTRUCT/ST）；NULL = 未实测；0 = 实测无图像 |
 | `created_batch_id` | UUID FK NOT NULL | 批次 FK |
-| `created_at` / `updated_at` | TIMESTAMP | 无触发器（由 `_upsert_dicom_byte_size_for_study` 维护） |
-
+| `created_at` / `updated_at` | TIMESTAMP | 由 `_upsert_dicom_byte_size_for_study` 维护；**未通过 ON CONFLICT 更新 updated_at**（历史约定，series_count 新数据流受此约束） |
 旧 series 级字段（`dicom_series_uid` / `modality` / `body_part` / `instance_count` / `file_count_actual` / `file_root` / `series_no`）已全部移除，结构备份在 `_migration_old_dicom_series`（4 行）。
 写入方：`_import_dicom_series_for_center` + `_upsert_dicom_byte_size_for_study`（`{"src_table": "dicom_series", "kind": "dicom_series", "scope": "all"}` spec，各中心 2026-09-15 起启用）。
 
@@ -545,22 +544,25 @@ visit 级医嘱，drug + non_drug 合并。≈2,115 万行 / 13 GB。`anon_visit
 
 ⚠️ h1963 库中该视图**不再 join 任何业务表**，定义退化为 8 个 `NULL::类型` 占位列（`anon_exam_id` … `finding_count` / `series_count`），恒返回 1 行 NULL。旧文档里的"join patient+exam+report_text+finding+series 聚合"定义已失效。查询侧（`anon_query.py`）勿再依赖；待重建或删除（见 §12 差异 5）。
 
-### 10.3 视图 `lnrs_anon_v_imaging_study_counts`（2026-09-15 引入）
+### 10.3 视图 `lnrs_anon_v_imaging_study_counts`（2026-09-15 引入，2026-09-17 加 series_count 真值）
 
 study 维度聚合：给"患者详情 → 影像列表"展示 `series_count` / `instance_count` / `total_bytes`。
 
 ```sql
 SELECT ims.study_key, ims.dicom_study_uid, ims.center_code,
        ims.patient_id, ims.anon_exam_id,
-       0                          AS series_count,        -- 重构后固定 0
-       COALESCE(s.file_count, 0)  AS instance_count,      -- ← dicom_series.file_count
-       COALESCE(s.byte_size, 0)   AS total_bytes          -- ← dicom_series.byte_size
+       COALESCE(s.series_count, 0) AS series_count,   -- ← dicom_series.series_count（NULL → 0；2026-09-17 真值）
+       COALESCE(s.file_count, 0)   AS instance_count, -- ← dicom_series.file_count
+       COALESCE(s.byte_size, 0)    AS total_bytes     -- ← dicom_series.byte_size
 FROM lnrs.lnrs_anon_imaging_study ims
 LEFT JOIN lnrs.lnrs_anon_dicom_series s
        ON s.dicom_study_uid = ims.dicom_study_uid;
 ```
 
-LEFT JOIN 让 `dicom_series` 未落库的 study 也返回 0（前端显示「序列数 0」而不是 NULL）；单 patient 路径走 `lnrs_anon_ix_imaging_study_uid` + `lnrs_anon_ix_dicom_series_study_uid` 索引，毫秒级。
+LEFT JOIN 让 `dicom_series` 未落库的 study 也返回 0（前端显示「序列数 0」而不是 NULL）；
+`series_count` 的 NULL（未实测）→ COALESCE 0 兜底；实测过的 study 返回真实 SeriesInstanceUID 去重数。
+单 patient 路径走 `lnrs_anon_ix_imaging_study_uid` + `lnrs_anon_ix_dicom_series_study_uid` 索引，毫秒级。
+实测口径详见 `backend/sql/postgres/0023-dicom-series-count.sql` 与 `docs/etl2/prd/plan-restore-series-count.md`。
 
 ### 10.4 视图 `lnrs_anon_v_imaging_study` / `lnrs_anon_v_imaging_orphan` ★
 
@@ -624,7 +626,7 @@ ETL 事务内默认 `SET LOCAL synchronous_commit = off` 加速 commit（`LNRS_E
 1. **`lnrs_anon_sex_enum` 与 `lnrs_anon_laterality_enum` 在库内仍存在**（旧值 `M/F/U`、`L/R/Bilateral/N/A`）。0006 注释称"已删除，权威移交字典表"，但 `DROP TYPE` 并未实际执行——这两个 enum 当前是孤儿类型。约束侧已迁移：patient 用 `lnrs_anon_ck_patient_sex` CHECK，finding 用 `lnrs_anon_ck_finding_laterality` CHECK。**建议后续手动 DROP 这两个孤儿 enum**。另外 h1963 库**不存在** `med_sex` / `med_laterality` 表——旧文档"字典权威迁 med_sex/med_laterality"的表述不准确，实际权威是 CHECK 约束 + `med_dict_mapping`（医院维度 raw_label→标准值映射，`dict_type_id` 区分字典类型）。
 2. **`lnrs_anon_v_exam_full` 已退化为空壳视图**（SELECT NULL 占位、恒 1 行），`anon_query.py` 等查询侧若仍引用会得到空结果。待重建或删除。
 3. **`lnrs_anon_exam_file` 是无主表**：h1963 库内有表（`file_name`/`patient_id`/`exam_type`/`file_type`/`file_size`/`file_path`/`id`，3 行演示数据），但 SQL 迁移与代码均无对应；`module_medical/files` 的 `MedFilesModel` 实际映射的是 `lnrs_anon_imaging_study`。属遗留对象，可评估清理。
-4. **`dicom_series` 重构后语义漂移**：表名/主键 `series_id` 仍是 series 时代命名，实际一行 = 一个 study；`v_imaging_study_counts.series_count` 因此恒 0。旧 series 级数据备份在 `_migration_old_dicom_series`（4 行）。除 zhujiang 外其余中心尚未跑 series 扫描阶段。
+4. **`dicom_series` 重构后语义漂移**：表名/主键 `series_id` 仍是 series 时代命名，实际一行 = 一个 study。**2026-09-17 部分修复**：dicom_series 加 `series_count INT NULL` 列（NULL = 未实测；实测 = SeriesInstanceUID 去重数），由 ETL `_upsert_dicom_byte_size_for_study` 调 `DicomIndexer.register_folder` 写入；`v_imaging_study_counts.series_count` 从固定 0 改为 `COALESCE(s.series_count, 0)`，前端 `DicomStudy.series_count` 字段类型未变，API 出真值即生效。存量 study 需跑 `backend/etl2/backfill_dicom_series_count.py --apply` 补齐；磁盘离线时 series_count 保持 NULL（视图层 COALESCE 0 兜底）。旧 series 级数据备份在 `_migration_old_dicom_series`（4 行）。
 5. **`exam_finding` / `dicom_instance` / `dicom_uid_map`** 三张表 DDL + ORM 就绪但行数为 0：finding 明确不写入（自由文本不拆分）；dicom 两表等 `dicom_dir`/`dicom_zip` 源接入（ETL-3）。
 6. **0014 四张扩展表无 `last_seen_batch_id` / `updated_at` / 触发器**：与老表"重复导入刷新 last_seen"的约定不同，重复导入靠 `source_*_hash` UNIQUE 冲突跳过，行内容永不更新。读者单看 ORM 会误以为有 UPDATE 语义。
 7. **`report_text` 写入策略**：现网 ETL 明确把 `pii_replaced_count=0`、`clean_method='regex_only'`、`review_status='pending'`、`llm_model=NULL` 作为本轮约定——是设计而非 bug（先存原文待抽检）。
@@ -700,8 +702,7 @@ type:      lnrs_anon_clean_method_enum
 view:      lnrs_anon_v_exam_full            ⚠ 空壳（SELECT NULL 占位）
            lnrs_anon_v_imaging_orphan       ★
            lnrs_anon_v_imaging_study        ★
-           lnrs_anon_v_imaging_study_counts ★ series_count 恒 0
-
+           lnrs_anon_v_imaging_study_counts ★ series_count 2026-09-17 改为 dicom_series.series_count 真值（COALESCE 0）
 备份表:    _migration_old_dicom_series      ★ 重构前 series 级结构备份（4 行）
 ```
 

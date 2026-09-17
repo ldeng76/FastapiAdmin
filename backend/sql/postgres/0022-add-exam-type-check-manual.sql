@@ -1,7 +1,7 @@
 -- =====================================================================
 -- 0022 - lnrs_anon_exam.exam_type CHECK 约束（手动执行，需表属主权限）
 -- 目标: PostgreSQL 14+, database = postgres
--- 前提: 0021-exam-type-modalities-dict.sql 已执行（数据已对齐 27 值）
+-- 前提: 0023-exam-type-modalities-dict.sql 已执行（数据已对齐 27 值）
 --
 -- ⚠️ lnrs_anon_exam 属主是 postgres，lnrs 角色无 ALTER 权限，
 --    本文件请在服务器上以 postgres 身份执行，例如：

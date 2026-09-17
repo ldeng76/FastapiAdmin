@@ -214,7 +214,7 @@ visit 1:1 富信息（`UNIQUE(anon_visit_id)`）。`visit_detail_json` 忠实保
 | `anon_exam_id` | VARCHAR(40) PK | |
 | `patient_id` | VARCHAR(16) FK | → `lnrs_anon_patient`（CASCADE） |
 | `center_code` | VARCHAR(32) NOT NULL | |
-| `exam_type` | VARCHAR(32) | 值域 27 值 = `docs/all_modalities.json` 26 键 + `Other`，由 `lnrs_anon_ck_exam_type` CHECK 锁定（0022 SQL，需 postgres 属主执行）。Rev 2026-09-17 前的旧 10 值词表（Pathology/Genetic/IHC/MR/Radiology/Ultrasound/PETCT）已存量改名对齐：Pathology→pathology_text、Genetic→gene、IHC→IHC_record、MR→MRI、Radiology→radiology、Ultrasound→ultrasound、PETCT→nuclear_medicine（0021 SQL） |
+| `exam_type` | VARCHAR(32) | 值域 27 值 = `docs/all_modalities.json` 26 键 + `Other`，由 `lnrs_anon_ck_exam_type` CHECK 锁定（0022 SQL，需 postgres 属主执行）。Rev 2026-09-17 前的旧 10 值词表（Pathology/Genetic/IHC/MR/Radiology/Ultrasound/PETCT）已存量改名对齐：Pathology→pathology_text、Genetic→gene、IHC→IHC_record、MR→MRI、Radiology→radiology、Ultrasound→ultrasound、PETCT→nuclear_medicine（0023 SQL） |
 | `exam_date` | DATE NOT NULL | |
 | `source_exam_hash` | CHAR(64) | SHA256(center+exam_no)，幂等键 |
 | `anon_visit_id` | VARCHAR(40) FK NULL | → `lnrs_anon_visit`（SET NULL） |

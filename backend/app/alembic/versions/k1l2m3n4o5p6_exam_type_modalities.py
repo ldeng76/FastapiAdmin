@@ -5,7 +5,7 @@
 从 base 重放全部历史迁移而失败）。
 
 实际应用：
-1. 数据与字典变更由 `backend/sql/postgres/0021-exam-type-modalities-dict.sql`
+1. 数据与字典变更由 `backend/sql/postgres/0023-exam-type-modalities-dict.sql`
    （幂等，可重复执行）在目标库手工执行；2026-09-17 已在 dev_h1963 应用。
 2. `ADD CONSTRAINT lnrs_anon_ck_exam_type` 因 `lnrs_anon_exam` 属主为
    `postgres`（lnrs 角色无 ALTER 权限），由
@@ -84,9 +84,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """DDL/DML 已于 2026-09-17 在 dev_h1963 手工执行（0021 SQL + 一次性脚本）。
+    """DDL/DML 已于 2026-09-17 在 dev_h1963 手工执行（0023 SQL + 一次性脚本）。
 
-    详见模块 docstring 与 backend/sql/postgres/0021-exam-type-modalities-dict.sql、
+    详见模块 docstring 与 backend/sql/postgres/0023-exam-type-modalities-dict.sql、
     0022-add-exam-type-check-manual.sql。
     """
     # noop: not driven by alembic on dev_h1963

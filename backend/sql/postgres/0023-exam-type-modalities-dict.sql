@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0021 - exam_type 值域对齐 all_modalities.json 26 键（+Other = 27 值）
+-- 0023 - exam_type 值域对齐 all_modalities.json 26 键（+Other = 27 值）
 -- 目标: PostgreSQL 14+, schema = lnrs（sys_* / med_* 表所在 schema）
 -- 依据: docs/all_modalities.json（平台 modality 权威定义，26 键）
 -- 对应 alembic 归档: app/alembic/versions/k1l2m3n4o5p6_exam_type_modalities.py
@@ -98,7 +98,7 @@ SELECT
     gen_random_uuid(), s.sort, s.label, s.val, 'med_exam_type',
     (SELECT id FROM sys_dict_type WHERE dict_type = 'med_exam_type'),
     FALSE,
-    '医疗检查类型-' || s.label || '（all_modalities.json 26 键，0021 补齐）',
+    '医疗检查类型-' || s.label || '（all_modalities.json 26 键，0023 补齐）',
     1, '0', NOW(), NOW(), FALSE
 FROM (VALUES
     (400, '病理WSI',    'pathology_WSI'),
@@ -162,9 +162,9 @@ BEGIN
         'IHC_record', 'operation', 'anesthesia', 'nursing', 'Other'
       );
     IF bad_count > 0 THEN
-        RAISE EXCEPTION '0021: % 行 exam_type 越界，回滚', bad_count;
+        RAISE EXCEPTION '0023: % 行 exam_type 越界，回滚', bad_count;
     END IF;
-    RAISE NOTICE '0021 OK: exam_type 值域对齐完成，无越界值';
+    RAISE NOTICE '0023 OK: exam_type 值域对齐完成，无越界值';
 END $$;
 
 COMMIT;

@@ -27,13 +27,13 @@
     <el-main style="padding: 0">
       <ElCard class="fa-table-card" style="height: 100%;margin-top : 0">
         <div style="display: flex;align-items: center;justify-content: center;font-size: 16px">
-          <FaMenuRouteIcon icon="file" class="icon-count" /> 记录：<strong><FaCountTo :target="statisticsCount.record_count || 0" separator="," :duration="getCountDuration(statisticsCount.record_count)" /></strong>
+          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" /> 记录：<strong><FaCountTo :target="statisticsCount.record_count || 0" separator="," :duration="getCountDuration(statisticsCount.record_count)" /></strong>
 
           <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" /> 患者数: <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
 
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
 
-          <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总患者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
+          <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />总患者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
 
           <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
 

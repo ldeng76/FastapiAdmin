@@ -104,6 +104,7 @@ function handleCurrentChange(val: number) {
 .pagination {
   display: flex;
   justify-content: center;
+  height: 35px;
   // padding: 12px 0;
 }
 </style>

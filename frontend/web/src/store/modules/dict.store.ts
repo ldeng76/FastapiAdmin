@@ -29,6 +29,7 @@
  * - 使用 localStorage 存储
  * - 缓存已加载的字典数据
  * - 减少重复请求
+ * - 缓存带过期时间（1 小时），过期后自动重新拉取，避免服务端字典变更后浏览器长期展示旧选项
  *
  * @module store/modules/dict.store
  * @author FastapiAdmin Team
@@ -38,6 +39,14 @@ import DictAPI, { DictDataTable } from "@/api/module_system/dict";
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 
+/**
+ * 字典缓存过期时间（毫秒）
+ *
+ * 服务端字典（如 med_exam_type）变更后，旧缓存最多在该时长后失效并重新拉取，
+ * 避免浏览器因 localStorage 持久化而长期展示旧选项。
+ */
+const DICT_CACHE_TTL = 60 * 60 * 1000;
+
 export const useDictStore = defineStore(
   "dictStore",
   () => {
@@ -45,6 +54,8 @@ export const useDictStore = defineStore(
     const dictData = ref<Record<string, DictDataTable[]>>({});
     // 是否已加载
     const isLoaded = ref(false);
+    // 当前缓存的写入时间戳（毫秒），随 dictData 一起持久化，用于过期判定
+    const cachedAt = ref<number>(0);
 
     /**
      * 获取所有字典数据
@@ -79,6 +90,12 @@ export const useDictStore = defineStore(
      */
     async function getDict(types: string[],isForSearch = false): Promise<Record<string, DictDataTable[]>> {
       try {
+        // 缓存过期：丢弃 localStorage 恢复的旧字典，触发下方重新拉取
+        if (cachedAt.value && Date.now() - cachedAt.value > DICT_CACHE_TTL) {
+          dictData.value = {};
+          isLoaded.value = false;
+        }
+        let fetched = false;
         for (const type of types) {
           if (!dictData.value[type]) {
             const response = await DictAPI.getInitDict(type);
@@ -87,7 +104,11 @@ export const useDictStore = defineStore(
               (item) => item.dict_value !== undefined && item.dict_label !== undefined
             );
             isLoaded.value = true;
+            fetched = true;
           }
+        }
+        if (fetched) {
+          cachedAt.value = Date.now();
         }
         // 返回请求的字典数据
         return types.reduce(
@@ -150,11 +171,14 @@ export const useDictStore = defineStore(
      */
     function clearDictData() {
       dictData.value = {};
+      isLoaded.value = false;
+      cachedAt.value = 0;
     }
 
     return {
       dictData,
       isLoaded,
+      cachedAt,
       getDictData,
       getDictArray,
       getDictArrayForSearch,

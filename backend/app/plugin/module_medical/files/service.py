@@ -210,8 +210,10 @@ class MedFilesService:
 
         数据流（2026-09-15 重构自单 MedFilesModel 聚合）：
         - record_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
-        - file_count 暂等于 record_count（lnrs_anon_dicom_series 无 series_no 列；待该列落库后
-          改为 record_count + Σ(每个 study 的 series_no 个数)，须按 study 分组去重计数再求和）
+        - file_count = record_count + Σ(dicom_series.series_count)。series_count 是 2026-09-17
+          新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测按 0 计）；与 byte_size 同一次
+          join 查询累加，不再单独查一次。dicom_series 无 dicom_series_uid / series_no 列
+          （2026-09-15 重构为 study 级时移除），不能按 series 行去重统计。
         - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
         - by_exam_type：GROUP BY MedFilesModel.exam_type（即 imaging_study.modality），label 取 med_exam_type 字典
           翻译；当前 h196_3 上 modality 100%='CT'，只会返回 1 行（事实告知用户）
@@ -221,11 +223,9 @@ class MedFilesService:
         """
         m = MedFilesModel
         e = AnonExamModel
+        s = AnonDicomSeriesModel
 
         # ---- record_count / patient_count：基于 MedFilesModel（=imaging_study）----
-        # TODO(series_no)：lnrs_anon_dicom_series 目前无 series_no 列（ORM 字段 2026-09-17 已移除），
-        # 暂用 record_count 作为 file_count；将来若补回该列，需同时补 ORM 字段，再改为
-        # record_count + Σ(每个 study 的 series_no 个数)。
         count_sql = select(
             func.count(m.id).label("record_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
@@ -238,8 +238,7 @@ class MedFilesService:
         record_count = int(count_row[0] or 0) if count_row else 0
         patient_count = int(count_row[1] or 0) if count_row else 0
 
-        # file_count 暂用 record_count（dicom_series 无 series_no 列，见上方 TODO）
-        file_count = record_count
+        # 注意：file_count 在下方 size 查询之后才计算（要用到 series_count 求和）
 
         # ---- total_patient_count：基于 AnonPatientModel（=lnrs_anon_patient 未删除行数）----
         total_patient_sql = select(func.count(AnonPatientModel.patient_id)).where(
@@ -270,18 +269,28 @@ class MedFilesService:
         exam_sql = await Permission(e, auth).filter_query(exam_sql)
         exam_count = int((await auth.db.execute(exam_sql)).scalar() or 0)
 
-        # ---- total_size_bytes：从 dicom_series 累加（Permission 绑 dicom_series）----
+        # ---- total_size_bytes + series 数：从 dicom_series 累加（Permission 绑 dicom_series）----
         # center_type 按 imaging_study.center_code 过滤；exam_type/file_type 在 byte_size 维度下
         # 走同一筛选，保持 KPI 与 by_exam_type/by_center 一致。
-        size_sql = select(func.coalesce(func.sum(AnonDicomSeriesModel.byte_size), 0))
+        # series_count 是 2026-09-17 新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测），
+        # SUM 忽略 NULL，全部为 NULL 时 COALESCE 兜底 0。
+        size_sql = select(
+            func.coalesce(func.sum(s.byte_size), 0).label("total_size_bytes"),
+            func.coalesce(func.sum(s.series_count), 0).label("series_count_sum"),
+        )
         size_sql = size_sql.join(
-            m, AnonDicomSeriesModel.dicom_study_uid == m.dicom_study_uid,
+            m, s.dicom_study_uid == m.dicom_study_uid,
         )
         size_sql = cls._apply_search_conditions(
             size_sql, exam_type=exam_type, file_type=file_type, center_type=center_type
         )
-        size_sql = await Permission(AnonDicomSeriesModel, auth).filter_query(size_sql)
-        total_size_bytes = int((await auth.db.execute(size_sql)).scalar() or 0)
+        size_sql = await Permission(s, auth).filter_query(size_sql)
+        size_row = (await auth.db.execute(size_sql)).one_or_none()
+        total_size_bytes = int(size_row[0] or 0) if size_row else 0
+        series_count_sum = int(size_row[1] or 0) if size_row else 0
+
+        # file_count = study 行数 + 各 study 的 series 数（series 未实测的行按 0 计）
+        file_count = record_count + series_count_sum
 
         # ---- 字典 label ----
         exam_type_label_map = await cls._load_dict_labels(auth, "med_exam_type")

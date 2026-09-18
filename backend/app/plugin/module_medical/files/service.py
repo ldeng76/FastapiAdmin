@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import asc, desc, func, select
+from sqlalchemy import asc, case, desc, func, select
 
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.api.v1.module_system.dict.model import DictDataModel
@@ -210,10 +210,12 @@ class MedFilesService:
 
         数据流（2026-09-15 重构自单 MedFilesModel 聚合）：
         - record_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
-        - file_count = record_count + Σ(dicom_series.series_count)。series_count 是 2026-09-17
-          新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测按 0 计）；与 byte_size 同一次
-          join 查询累加，不再单独查一次。dicom_series 无 dicom_series_uid / series_no 列
-          （2026-09-15 重构为 study 级时移除），不能按 series 行去重统计。
+        - file_count = record_count + Σ(每个 study 的"额外"series 数)。series_count
+          是 2026-09-17 新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测按 0 计）；每个 study
+          的首个 series 已算在 record_count 里，故 CASE WHEN series_count > 1 THEN series_count - 1
+          ELSE 0 END：<=1 一律 0，2→1、3→2 …
+          与 byte_size 同一次 join 查询累加，不再单独查一次。dicom_series 无 dicom_series_uid /
+          series_no 列（2026-09-15 重构为 study 级时移除），不能按 series 行去重统计。
         - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
         - by_exam_type：GROUP BY MedFilesModel.exam_type（即 imaging_study.modality），label 取 med_exam_type 字典
           翻译；当前 h196_3 上 modality 100%='CT'，只会返回 1 行（事实告知用户）
@@ -272,11 +274,15 @@ class MedFilesService:
         # ---- total_size_bytes + series 数：从 dicom_series 累加（Permission 绑 dicom_series）----
         # center_type 按 imaging_study.center_code 过滤；exam_type/file_type 在 byte_size 维度下
         # 走同一筛选，保持 KPI 与 by_exam_type/by_center 一致。
-        # series_count 是 2026-09-17 新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测），
-        # SUM 忽略 NULL，全部为 NULL 时 COALESCE 兜底 0。
+        # series_count 是 2026-09-17 新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测）。
+        # 每个 study 的第 1 个 series 已计入 record_count，这里只累加"额外的"series：
+        #   series_count<=1 → 0，=2 → 1，=3 → 2 ...；NULL / 0 / 负数 一律按 0，不出负贡献。
+        extra_series_expr = case(
+            [(s.series_count > 1, s.series_count - 1)], else_=0
+        )
         size_sql = select(
             func.coalesce(func.sum(s.byte_size), 0).label("total_size_bytes"),
-            func.coalesce(func.sum(s.series_count), 0).label("series_count_sum"),
+            func.coalesce(func.sum(extra_series_expr), 0).label("series_count_sum"),
         )
         size_sql = size_sql.join(
             m, s.dicom_study_uid == m.dicom_study_uid,
@@ -289,7 +295,8 @@ class MedFilesService:
         total_size_bytes = int(size_row[0] or 0) if size_row else 0
         series_count_sum = int(size_row[1] or 0) if size_row else 0
 
-        # file_count = study 行数 + 各 study 的 series 数（series 未实测的行按 0 计）
+        # file_count = study 行数 + 各 study 的"额外"series 数
+        # （series_count<=1 → +0，=2 → +1，=3 → +2 …；NULL/0/负数按 0）
         file_count = record_count + series_count_sum
 
         # ---- 字典 label ----

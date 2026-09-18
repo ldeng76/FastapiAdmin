@@ -278,7 +278,7 @@ class MedFilesService:
         # 每个 study 的第 1 个 series 已计入 record_count，这里只累加"额外的"series：
         #   series_count<=1 → 0，=2 → 1，=3 → 2 ...；NULL / 0 / 负数 一律按 0，不出负贡献。
         extra_series_expr = case(
-            [(s.series_count > 1, s.series_count - 1)], else_=0
+            (s.series_count > 1, s.series_count - 1), else_=0
         )
         size_sql = select(
             func.coalesce(func.sum(s.byte_size), 0).label("total_size_bytes"),

@@ -8,11 +8,11 @@ class MedicalFiles(BaseModel):
     """医疗文件基础字段。"""
 
     id: int = Field(description="ID")
+    anon_exam_id: str | None = Field(default=None, description="检查ID")
     file_name: str | None = Field(default=None, min_length=1, max_length=255, description="文件名")
     patient_id: str | None = Field(default=None, description="患者编号")
     exam_type: str | None = Field(default=None, description="模态类型")
     file_type: str | None = Field(default=None, description="文件类型")
-    file_path: str | None = Field(default=None, description="文件路径")
     file_size: int | None = Field(default=0, description="文件大小（字节，取自 dicom_series.byte_size）")
 
     @field_validator("file_name", mode="before")

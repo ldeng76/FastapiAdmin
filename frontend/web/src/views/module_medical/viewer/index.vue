@@ -55,6 +55,8 @@ async function open(obj:params){
     FilesApi.getStudyUid(file_id).then(function (res){
       src.value = `/api/v1/medical/dicom/viewer?StudyInstanceUIDs=${res?.data?.data}`
       showToggle.value = true
+    }).catch(function (){
+       closeLoading()
     })
   }
 }

@@ -217,8 +217,12 @@ class MedFilesService:
           与 byte_size 同一次 join 查询累加，不再单独查一次。dicom_series 无 dicom_series_uid /
           series_no 列（2026-09-15 重构为 study 级时移除），不能按 series 行去重统计。
         - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
-        - by_exam_type：GROUP BY MedFilesModel.exam_type（即 imaging_study.modality），label 取 med_exam_type 字典
-          翻译；当前 h196_3 上 modality 100%='CT'，只会返回 1 行（事实告知用户）
+        - by_exam_type：GROUP BY AnonExamModel.exam_type（检查主表，值域=26 模态+Other），
+          label 取 med_exam_type 字典翻译；分母 = 全部模态数量之和，反映检查数据的模态分布。
+          2026-09-18 口径切换：原 GROUP BY imaging_study.modality 在 h196_3 上 100%='CT'
+          只返回 1 行，无法反映多模态分布；现与 dashboard query_modality_counts 统一为
+          exam 口径（跨模态桥梁表）。注意与文件列表口径不同：exam 有数据的模态
+          （如 gene）可能没有影像文件，列表为空属正常。
         - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
         - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
           不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
@@ -302,12 +306,16 @@ class MedFilesService:
         # ---- 字典 label ----
         exam_type_label_map = await cls._load_dict_labels(auth, "med_exam_type")
 
-        # ---- by_exam_type：GROUP BY MedFilesModel.exam_type（=imaging_study.modality）----
-        by_exam_sql = select(m.exam_type, func.count().label("n")).group_by(m.exam_type)
-        by_exam_sql = cls._apply_search_conditions(
-            by_exam_sql, exam_type=exam_type, file_type=file_type, center_type=center_type
+        # ---- by_exam_type：GROUP BY AnonExamModel.exam_type（检查主表，26 模态+Other）----
+        # 2026-09-18 口径切换：imaging_study.modality 只有 CT，改 exam 表后
+        # 分母 = 全部模态数量之和；筛选映射走 exam 维度（exam_type/center_type），
+        # file_type 已废弃不参与本分组。与 exam_count 同源，保证筛选态下
+        # by_exam_type 合计 = exam_count。
+        by_exam_sql = select(e.exam_type, func.count().label("n")).group_by(e.exam_type)
+        by_exam_sql = cls._apply_exam_conditions(
+            by_exam_sql, exam_type=exam_type, center_type=center_type
         )
-        by_exam_sql = await Permission(m, auth).filter_query(by_exam_sql)
+        by_exam_sql = await Permission(e, auth).filter_query(by_exam_sql)
         by_exam_rows = (await auth.db.execute(by_exam_sql)).all()
 
         # 分母用本分组的合计数：分组只统计 study 记录条数，不含 series，

@@ -42,3 +42,40 @@ issue 已 self-contained：包含 Parent / What to build / Acceptance criteria /
 
 - 本次 commit：PRD + 4 个 issue 落到 `docs/etl2/prd/`，不 push。
 - 用户 review → 选择接下来跑哪个 issue（在哪个新会话用 `/implement` 启动）。
+
+---
+
+## 第二组：影像导入收尾（issue-5 ~ issue-11）
+
+第一组（issue-1~4）是方案 B 的链路。第二组来自珠江三盘导入（86,927 study）与新桥导入（33,314 study）
+落地后的收尾盘点，父文档主要是 [`../plan-disk1-disk2-disk4-zhujiang-import.md`](../plan-disk1-disk2-disk4-zhujiang-import.md)。
+
+| 文件 | 用途 | 阻塞 |
+|---|---|---|
+| `issue-5-extend-path-study-date-zhujiang-prefixes.md` | Issue 5: 扩 `lnrs.path_study_date` 支持 `yd*`/`new*` 前缀（3,710 study 取不到日期） | 无 |
+| `issue-6-ingest-zhujiang-ct-exam-and-backfill-anon-exam-id.md` | Issue 6: 补 zhujiang CT exam 入库 + 回填 `imaging_study.anon_exam_id` | Issue 5 |
+| `issue-7-fix-etl2-cli-and-backfill-series-count.md` | Issue 7: 修 ETL-2 CLI 三处缺陷 + `dicom_series.series_count` 86,203 行全量回填 | 无 |
+| `issue-8-resolve-zhujiang-empty-studies.md` | Issue 8: 415 个零文件 study 处置 + 141 行陈旧 `dicom_series` 计数修复 | 无（落地需拍板） |
+| `issue-9-fix-shengyi-placeholder-flag.md` | Issue 9: 修复 shengyi 占位漏标（82,682 个 `is_placeholder` 应为 TRUE） | 无 |
+| `issue-10-sync-h196-3-to-h42-imaging-tables.md` | Issue 10: h196_3 → 1.59（h42）三中心影像表同步 | Issue 6, 7 |
+| `issue-11-purge-historical-phi-destructive.md` | Issue 11: 清除 git 历史 PHI（**破坏性**） | 无（需批准） |
+
+### 第二组依赖关系
+
+```
+Issue 5 ──→ Issue 6 ──┐
+                      ├──→ Issue 10
+Issue 7 ──────────────┘
+
+Issue 8  （独立；落地需用户拍板 3 套方案）
+Issue 9  （独立）
+Issue 11 （独立；破坏性，需用户批准 + push 恢复）
+```
+
+### 与第一组的关系
+
+- Issue 6 是 `issue-1` 的**前置修正**：issue-1 假设 exam 表有 CT 行，实测 zhujiang 只有 1,091 行 gene exam、
+  与影像患者交集仅 23 人 —— 不补 CT exam，issue-1 跑了也接近 0 覆盖。
+- Issue 7 与 `issue-2` **有边界重叠**：issue-2 走 ETL-2 main path 会顺带产出 `series_count`（新行），
+  但不会回填已存在的 86,203 行；两者都扫同一批目录，跑之前需确认顺序（详见 issue-7 的「与 Issue 2 的边界」）。
+- Issue 7 的 `series_count` 是 `issue-3`（service 切视图）的视图字段之一。

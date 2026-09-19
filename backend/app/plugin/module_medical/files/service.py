@@ -223,6 +223,9 @@ class MedFilesService:
           只返回 1 行，无法反映多模态分布；现与 dashboard query_modality_counts 统一为
           exam 口径（跨模态桥梁表）。注意与文件列表口径不同：exam 有数据的模态
           （如 gene）可能没有影像文件，列表为空属正常。
+          2026-09-19 全局分布常显：本分组不随 exam_type 勾选过滤（center_type 仍生效），
+          作为左侧「模态类型」筛选器的 facet 计数始终展示全量分布，勾选态下
+          CT 仍显示 22.88% 而非 100%。
         - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
         - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
           不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
@@ -308,12 +311,15 @@ class MedFilesService:
 
         # ---- by_exam_type：GROUP BY AnonExamModel.exam_type（检查主表，26 模态+Other）----
         # 2026-09-18 口径切换：imaging_study.modality 只有 CT，改 exam 表后
-        # 分母 = 全部模态数量之和；筛选映射走 exam 维度（exam_type/center_type），
-        # file_type 已废弃不参与本分组。与 exam_count 同源，保证筛选态下
-        # by_exam_type 合计 = exam_count。
+        # 分母 = 全部模态数量之和。
+        # 2026-09-19 全局分布常显：本分组刻意不应用 exam_type 筛选（center_type 仍生效）。
+        # 它是左侧「模态类型」筛选器的 facet 计数：若随勾选过滤，勾选组会变成
+        # 100%、其余归 0，丢失全局分布信息（分母≠全部模态之和）。因此勾选态下
+        # 各模态计数/百分比与初始加载一致；筛选统计由 KPI 区（exam_count 等）承担。
+        # file_type 已废弃不参与本分组。
         by_exam_sql = select(e.exam_type, func.count().label("n")).group_by(e.exam_type)
         by_exam_sql = cls._apply_exam_conditions(
-            by_exam_sql, exam_type=exam_type, center_type=center_type
+            by_exam_sql, exam_type=None, center_type=center_type
         )
         by_exam_sql = await Permission(e, auth).filter_query(by_exam_sql)
         by_exam_rows = (await auth.db.execute(by_exam_sql)).all()

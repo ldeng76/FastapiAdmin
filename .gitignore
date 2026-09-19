@@ -167,3 +167,8 @@ docs/sour/* - 副本.docx
 docs/sour/ct_image_patient_map*.csv
 docs/sour/*_imaging_study_patient_added.txt
 docs/sour/scan_skipped_dirs.txt
+
+# 新桥 PHI（明文院内 PID，仅磁盘保留，不入库 git）
+docs/sour/ct_image_patient_map_xinqiao.csv
+docs/sour/xinqiao_imaging_study_patient_added.txt
+docs/sour/scan_skipped_dirs_xinqiao.txt

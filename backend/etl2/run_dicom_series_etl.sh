@@ -21,6 +21,11 @@
 # 用途：
 #   - 默认 DRY-RUN：打印将处理的中心 + dicom_series DB-SCAN 分支，不连库写入
 #   - --apply：实际跑 ETL-2（重构后预计 zhujiang ~18 分钟；shengyi 0% 覆盖 < 1 分钟）
+#   - --allow-null-exam：让 imaging_study.anon_exam_id IS NULL 的 study 仍写 dicom_series 行
+#     （anon_exam_id 落 NULL，0024 已允许 FK NULL）。用于「先 series 后 exam」的灌库序列
+#     （如 2026-09-19 zhujiang 三盘灌库：B 方案 exam 表 0 行无法做关联）。
+#     等价于 export LNRS_DICOM_ALLOW_NULL_EXAM=1 后执行（spec.allow_null_exam > env > 默认）。
+#     既有 shengyi 等中心不指定则保持原行为（anon_exam_id NULL 时 skip）—— 重跑结果一致。
 #
 # 用法：
 #   # 1) dry-run（不修改任何数据）
@@ -37,11 +42,8 @@
 #       （注：增量模式需直接调 anon_etl_engine._import_dicom_series_for_center(scope='unexamined')；
 #        本脚本的 --incremental 仅作 hook 提示，未真正切换 spec.scope，见后注）
 #
-# 预计耗时（h196_3 全量；2026-09-15 重构后）：
-#   - zhujiang（36,356 study；36,342 已回填 exam）：~18 分钟（仅 stat + iterdir）
-#   - shengyi（82,994 study；anon_exam_id 回填覆盖率 0.26%，219/82,988 patient）：
-#     实际 series 落库数极小，可快速跑完
-#   - xinqiao / hos301：study 数较小（< 1000）
+#   # 5) B 方案（exam 表 0 行无法做关联，allow_null_exam=True 让 dicom_series 仍落库）
+#   ENVIRONMENT=h196_3 ./run_dicom_series_etl.sh --apply --centers zhujiang --allow-null-exam
 #
 # 回退：
 #   - 幂等：ON CONFLICT (dicom_study_uid) DO UPDATE，重跑不会重复落库
@@ -57,6 +59,7 @@ BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APPLY=0
 CENTERS="zhujiang,shengyi,xinqiao"
 INCREMENTAL=0
+ALLOW_NULL_EXAM=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,16 +67,16 @@ while [[ $# -gt 0 ]]; do
             APPLY=1
             shift
             ;;
-        --centers)
-            CENTERS="$2"
-            shift 2
-            ;;
         --incremental)
             INCREMENTAL=1
             shift
             ;;
+        --allow-null-exam)
+            ALLOW_NULL_EXAM=1
+            shift
+            ;;
         -h|--help)
-            sed -n '2,40p' "$0"
+            sed -n '2,50p' "$0"
             exit 0
             ;;
         *)
@@ -97,10 +100,14 @@ echo "  ENVIRONMENT = $ENVIRONMENT"
 echo "  centers     = $CENTERS"
 echo "  mode        = $([[ $APPLY -eq 1 ]] && echo 'APPLY（实际跑）' || echo 'DRY-RUN（仅打印）')"
 echo "  incremental = $([[ $INCREMENTAL -eq 1 ]] && echo 'yes（仅扫 dicom_series=0 的 study）' || echo 'no（全量）')"
+echo "  allow_null_exam = $([[ $ALLOW_NULL_EXAM -eq 1 ]] && echo 'yes（imaging_study.anon_exam_id NULL 也写 dicom_series 行；0024 已允许）' || echo 'no（既有行为：无 exam 关联的 study skip）')"
 echo "  backend dir = $BACKEND_DIR"
 echo "============================================================"
 
-# 前置检查：imaging_study.anon_exam_id 回填覆盖率
+# 把 ALLOW_NULL_EXAM 透传给引擎（spec.allow_null_exam > env > 默认 False）
+# DRY-RUN / APPLY 两条路径都要 export，避免 spec 路径下 spec.allow_null_exam 未设时丢失标志
+export LNRS_DICOM_ALLOW_NULL_EXAM="$ALLOW_NULL_EXAM"
+
 echo
 echo "[前置检查] imaging_study.anon_exam_id 回填覆盖率…"
 cd "$BACKEND_DIR"

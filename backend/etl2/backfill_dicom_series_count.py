@@ -316,20 +316,11 @@ async def run_apply_bypass(center: str | None, limit: int | None) -> None:
                     continue
 
                 try:
-                    # 1. register_folder 实测 series_count
-                    series_count = 0
-                    try:
-                        reg = indexer.register_folder(path)
-                        if reg and reg.get("series_count") is not None:
-                            series_count = int(reg["series_count"])
-                    except Exception as e:
-                        log.warning(
-                            f"[APPLY-BYPASS] register_folder 异常 study={row.dicom_study_uid}: "
-                            f"{type(e).__name__}: {e!s}"
-                        )
-                        series_count = 0
+                    # 1. 跳过 register_folder（DicomIndexer 每 study 解析 DICOM 元数据极慢，对 zhujiang 86k study 估时 90+ h）；
+                    #    series_count 留 NULL，等 DicomViewer 实时按需算（R 列定义允许 NULL）。
+                    #    shengyi 已实测：byte_size + file_count 是必需列；series_count 可后补。
+                    series_count = None
 
-                    # 2. iterdir + stat → file_count, byte_size
                     files = [p for p in path.iterdir() if p.is_file()]
                     file_count = len(files)
                     byte_size = 0

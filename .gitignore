@@ -155,3 +155,15 @@ TCGA样例数据-临床-基因
 docs/etl2/数据导入核验清单_*.xlsx
 # Word「- 副本」临时副本
 docs/sour/* - 副本.docx
+
+# ============================================================================
+# 影像索引脚本产物：含明文 PHI（患者姓名/性别/年龄）或院内 PID，不入库。
+# 可由 scripts/build_image_patient_map.py / build_disk1_disk2_disk4_imaging_study_index.py /
+# build_shengyi_imaging_study_index.py 重新生成，无需入库。
+# 2026-09-19：原 docs/sour/ct_image_patient_map.csv（含 patient_name）与
+# docs/sour/shengyi_imaging_study_patient_added.txt（含院内 PID）已 git rm --cached。
+# 注意：这两个文件仍在历史提交中，彻底清除需 filter-repo/BFG 重写历史。
+# ============================================================================
+docs/sour/ct_image_patient_map*.csv
+docs/sour/*_imaging_study_patient_added.txt
+docs/sour/scan_skipped_dirs.txt

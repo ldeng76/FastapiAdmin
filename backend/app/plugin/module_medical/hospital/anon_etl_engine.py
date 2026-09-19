@@ -28,11 +28,13 @@ import json
 import os
 import re
 import uuid
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+import duckdb
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,9 +53,9 @@ from .anon_model import (
     AnonPhiAuditModel,
     AnonReportTextModel,
     AnonSurgeryModel,
-    AnonVitalObservationModel,
     AnonVisitDetailModel,
     AnonVisitModel,
+    AnonVitalObservationModel,
 )
 from .anonymize import (
     CLEAN_METHOD_REGEX_ONLY,
@@ -135,6 +137,7 @@ async def _read_parquet_async(parquet_path: Path) -> tuple[list[str], list[tuple
 def _row_to_dict(cols: list[str], row: tuple) -> dict[str, Any]:
     return {col: val for col, val in zip(cols, row)}
 
+
 # asyncpg 单次查询参数上限 32767；10M-row 级表（如检验/护理）的 visit 预读
 # 若一次 IN 全表 anon_visit_id 会爆栈，故统一改分块查询
 _IN_CHUNK_SIZE = 10_000
@@ -154,6 +157,8 @@ async def _in_lookup_chunked(
         chunk = ids[i : i + _IN_CHUNK_SIZE]
         results.extend((await db.execute(build(chunk))).fetchall())
     return results
+
+
 async def _copy_then_merge(
     db: AsyncSession,
     *,
@@ -210,6 +215,7 @@ async def _copy_then_merge(
             await inner.execute(f"DROP TABLE IF EXISTS {tmp_name}")
         except Exception:
             pass
+
 
 async def _maybe_commit(
     db: AsyncSession,
@@ -273,7 +279,6 @@ async def _maybe_commit(
     if rows_done > 0 and rows_done % SUB_TX_ROWS == 0:
         await db.commit()
         log.info(f"ETL2: {label} sub-tx commit @ {rows_done:,} 行")
-
 
 
 def _clean_str(val: Any) -> str | None:
@@ -368,7 +373,8 @@ def _json_safe(obj: Any) -> Any:
     parquet 读出的 struct 含 date 类型（如 admission_time），直接塞 JSONB 会抛
     "date is not JSON serializable"。本函数在构造 *_detail_json 时统一过一遍。
     """
-    from datetime import date as _date, datetime as _dt
+    from datetime import date as _date
+    from datetime import datetime as _dt
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -630,6 +636,7 @@ async def _batch_upsert_exam_detail(
         await db.execute(stmt)
         await _maybe_commit(db, rows_done=i + len(batch), label="exam_detail")
 
+
 async def _batch_upsert_visits(
     db: AsyncSession,
     *,
@@ -838,6 +845,7 @@ async def _batch_upsert_orders(
         await db.execute(stmt)
         await _maybe_commit(db, rows_done=i + len(batch), label="order")
 
+
 async def _write_phi_audit_batch(
     db: AsyncSession,
     *,
@@ -877,13 +885,13 @@ async def _resolve_hospital_id(db: AsyncSession, center_code: str) -> int:
     平台租户名下污染其它中心的映射缓存。
     """
     # 延迟导入避免循环依赖
-    from app.plugin.module_medical.hospital.model import HospitalModel
     # 触发 HospitalModel 的 relationship 依赖类注册到 metadata：
     #   - tenant         → TenantModel
     #   - mapping_rules  → MappingRuleModel（同文件，已随 HospitalModel 注册）
     #   - dict_mappings  → DictMappingModel
     from app.api.v1.module_system.tenant.model import TenantModel  # noqa: F401
     from app.plugin.module_medical.dict_mapping.model import DictMappingModel  # noqa: F401
+    from app.plugin.module_medical.hospital.model import HospitalModel
 
     stmt = select(HospitalModel.id).where(HospitalModel.code == center_code)
     result = (await db.execute(stmt)).scalar_one_or_none()
@@ -1101,14 +1109,18 @@ async def _import_patient_table(
 
 
 # hos301/shengyi 扩展（Rev 2026-09-01/09-02）：exam_type 行级动态归一化
-# Rev 2026-09-17：值域对齐 docs/all_modalities.json 26 键 + Other = 27 值
+# Rev 2026-09-19 终态：值域对齐 docs/all_modalities.json 26 键（删 Other）
+# 0025 已删字典项 + 收紧 CHECK，词表移除 Other 保证 fail-fast 一致。
 _EXAM_TYPE_DICT_VALUES = (
     "CT", "pathology_WSI", "pathology_text", "gene", "medical_record",
     "imaging_report", "basic_medical_info", "diagnosis", "drug_prescription",
     "medical_orders", "medical_testing", "radiology", "ultrasound",
     "pulmonary_function", "MRI", "nuclear_medicine", "bronchoscope", "ECG",
     "case_history", "progress_note", "basic_info", "inhospital_record",
-    "IHC_record", "operation", "anesthesia", "nursing", "Other",
+    "IHC_record", "operation", "anesthesia", "nursing",
+)
+assert len(_EXAM_TYPE_DICT_VALUES) == 26, (
+    f"_EXAM_TYPE_DICT_VALUES must have 26 entries, got {len(_EXAM_TYPE_DICT_VALUES)}"
 )
 
 # 旧词表 → 新词表别名（Rev 2026-09-17 前的历史 staging parquet / etl1_adapt_*.py
@@ -1130,15 +1142,21 @@ def _normalize_exam_type(
     """从行数据归一化 exam_type 值（hos301 examType / 省医 检查类型名称）。
 
     规则优先级：
-    1. 去空白/全角后与 27 值词表精确匹配（命中直接返回）
+    1. 去空白/全角后与 26 值词表精确匹配（命中直接返回）
     2. med_dict_mapping raw_label → dict_value（预加载 cache；字典行已原地
        改名，历史 raw_label 如 'Pathology' 映射到新值 pathology_text）
     3. 旧词表别名（历史 staging parquet / 适配层输出的 10 值旧词）
-    4. 兜底 Other（记 warning）
+    4. 2026-09-19 终态：未知值/空值 fail-fast（raise ValueError）。
+       兜底 'Other' 已废除（0025 删除字典项 + 收紧 CHECK），
+       调用方 _import_exam_text_table 会中断导入并留日志，
+       人工补 med_dict_mapping 后重跑即可（upsert 幂等，安全）。
     """
     raw = str(row.get(field_name) or "").strip()
     if not raw:
-        return "Other"
+        raise ValueError(
+            f"unmapped exam_type: 空值（field={field_name!r}），"
+            "请在 med_dict_mapping 或 sys_dict_data 中补映射后重跑"
+        )
     # 全角 → 半角 C/T + 去空白（301 examClass/examType 原始数据用全角）
     normalized = raw.replace("Ｃ", "C").replace("Ｔ", "T").replace("　", " ").replace(" ", "")
     if normalized in _EXAM_TYPE_DICT_VALUES:
@@ -1149,8 +1167,10 @@ def _normalize_exam_type(
     aliased = _EXAM_TYPE_LEGACY_ALIASES.get(normalized)
     if aliased:
         return aliased
-    log.warning(f"ETL2: 未识别 exam_type: {raw!r}，兜底 Other")
-    return "Other"
+    raise ValueError(
+        f"unmapped exam_type: {raw!r}（field={field_name!r}），"
+        "请在 med_dict_mapping 或 sys_dict_data 中补映射后重跑"
+    )
 
 
 async def _import_exam_text_table(
@@ -2809,7 +2829,6 @@ async def import_center(
     from .enum_normalization import load_all_enum_mappings
     await load_all_enum_mappings(db, hospital_id=hospital_id)
 
-
     result: dict[str, int] = {}
     specs = _CENTER_PARQUET_SPECS.get(center_code)
     if not specs:
@@ -2965,6 +2984,7 @@ async def import_center(
 
     return result
 
+
 async def _import_dicom_series_for_center(
     db: AsyncSession,
     *,
@@ -2980,6 +3000,13 @@ async def _import_dicom_series_for_center(
         * "scope"：可空，'all' (默认) | 'unexamined'
           'all' = 全量扫描该 center 的 study 行（默认；首次灌库用）；
           'unexamined' = 仅扫 dicom_series 为 0 行的 study（增量补漏用）。
+        * "allow_null_exam"：可空，bool（默认 False）。
+          False = 既有行为：imaging_study.anon_exam_id IS NULL 时 skip（不写 dicom_series 行）；
+          True  = imaging_study.anon_exam_id IS NULL 时仍写 dicom_series 行（anon_exam_id=NULL，
+                  0024 已允许 FK NULL）。用于「先 series 后 exam」的灌库序列（B 方案/2026-09-19
+                  zhujiang 三盘灌库）。
+          也可由环境变量 LNRS_DICOM_ALLOW_NULL_EXAM=1/true/yes 启用（CLI 优先）。
+          既有 shengyi 等中心不指定则保持原行为（False）—— 重跑结果与改动前一致。
 
     返回：写入的 series 行数（含 upsert 的 update）。
 
@@ -2989,11 +3016,13 @@ async def _import_dicom_series_for_center(
     - DicomIndexer 单例是线程安全的，但 ETL 是单线程顺序遍历，
       不在 async gather 里并发调用 register_folder（注释明示）。
     """
-    from .anon_model import AnonImagingStudyModel
-    from .anon_model import AnonDicomSeriesModel
-    from app.plugin.module_medical.dicom.repository import indexer
+
+    from .anon_model import AnonDicomSeriesModel, AnonImagingStudyModel
 
     scope = (spec or {}).get("scope", "all")
+    # allow_null_exam 优先级：spec 显式 > 环境变量 > 默认 False（兼容既有行为）
+    _env_allow = os.getenv("LNRS_DICOM_ALLOW_NULL_EXAM", "").strip().lower() in ("1", "true", "yes")
+    allow_null_exam = bool((spec or {}).get("allow_null_exam")) or _env_allow
 
     # 1. 查本中心所有 study 行（与 dicom_series LEFT JOIN 以便 'unexamined' 过滤）
     s_alias = AnonDicomSeriesModel
@@ -3007,7 +3036,6 @@ async def _import_dicom_series_for_center(
         )
         .select_from(AnonImagingStudyModel)
         .outerjoin(
-            s_alias,
             s_alias.dicom_study_uid == AnonImagingStudyModel.dicom_study_uid,
         )
         .where(AnonImagingStudyModel.center_code == center_code)
@@ -3040,10 +3068,14 @@ async def _import_dicom_series_for_center(
             continue
 
         # 离线灌库场景：imaging_study 行没有 exam 关联。
-        # dicom_series.anon_exam_id NOT NULL，扫到则跳过并打 INFO。
+        # 既有行为（allow_null_exam=False）：skip 并打 INFO。
+        # allow_null_exam=True（B 方案/2026-09-19 zhujiang 三盘）：仍写 dicom_series 行，
+        # anon_exam_id=NULL（0024 已允许 FK NULL）；skipped_no_exam 仍计数但语义
+        # 转为「本可 skip 但显式选择不 skip」，便于审计区分。
         if not anon_exam_id:
             skipped_no_exam += 1
-            continue
+            if not allow_null_exam:
+                continue
 
         scanned += 1
         try:
@@ -3068,8 +3100,8 @@ async def _import_dicom_series_for_center(
         if (i + 1) % BATCH_COMMIT_EVERY == 0:
             await db.commit()
             log.info(
-                f"ETL2: {center_code} dicom_series 进度 {i+1}/{len(rows)} "
-                f"scanned={scanned} series_upserted={total_series//(1024*1024)} MB"
+                f"ETL2: {center_code} dicom_series 进度 {i + 1}/{len(rows)} "
+                f"scanned={scanned} series_upserted={total_series // (1024 * 1024)} MB"
             )
 
     # 最终提交剩余 INSERT
@@ -3082,12 +3114,13 @@ async def _import_dicom_series_for_center(
     )
     return total_series
 
+
 async def _upsert_dicom_byte_size_for_study(
     db: AsyncSession,
     *,
     image_path: str,
     dicom_study_uid: str,
-    anon_exam_id: str,
+    anon_exam_id: str | None,
     batch_id: str,
 ) -> int:
     """对单个 Study 目录累加 .dcm 字节数并 upsert 进 lnrs_anon_dicom_series（study 级）。
@@ -3115,6 +3148,7 @@ async def _upsert_dicom_byte_size_for_study(
       study 级重构的提速部分回吐；与产品决策对齐（方案3：常态化落库）。
     """
     from app.plugin.module_medical.dicom.repository import indexer
+
     from .anon_model import AnonDicomSeriesModel
 
     path = Path(image_path)
@@ -3171,6 +3205,11 @@ async def _upsert_dicom_byte_size_for_study(
     # upsert: ON CONFLICT (dicom_study_uid) DO UPDATE
     # 不变列：series_id（PK）, created_batch_id（保留首次入库的批次元数据）
     # 更新列：anon_exam_id / file_count / byte_size / series_count
+    # 注意（2026-09-19 zhujiang 三盘灌库）：
+    #   allow_null_exam=True 时 imaging_study.anon_exam_id 可能为 NULL；
+    #   重跑场景下 dicom_series 行已有 anon_exam_id=NULL，下次重跑仍写 NULL，
+    #   COALESCE(excluded, existing) 保留旧值——避免清空未来 exam backfill 写入的关联。
+    #   反之：imaging_study.anon_exam_id 已有值时 excluded 非 NULL，COALESCE 仍取新值（与原行为一致）。
     stmt = pg_insert(AnonDicomSeriesModel.__table__).values(
         [{
             "anon_exam_id": anon_exam_id,
@@ -3184,7 +3223,10 @@ async def _upsert_dicom_byte_size_for_study(
     stmt = stmt.on_conflict_do_update(
         index_elements=[AnonDicomSeriesModel.__table__.c.dicom_study_uid],
         set_={
-            "anon_exam_id": stmt.excluded.anon_exam_id,
+            "anon_exam_id": func.coalesce(
+                stmt.excluded.anon_exam_id,
+                AnonDicomSeriesModel.__table__.c.anon_exam_id,
+            ),
             "file_count": stmt.excluded.file_count,
             "byte_size": stmt.excluded.byte_size,
             "series_count": stmt.excluded.series_count,

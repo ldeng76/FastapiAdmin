@@ -101,7 +101,7 @@ class MedFilesStatisticsOutSchema(BaseModel):
         description=(
             "有检查记录的患者数（lnrs_anon_exam.patient_id 去重）。"
             "注意：与 medicalDashboard 的「患者总量」不同 —— 后者查 lnrs_anon_patient 全集。"
-            "两者之差为「入过册但从未做过任何检查的患者」。"
+            "两者之差为「无 exam 记录的患者」：shengyi 实测 103,185 = 纯影像人群 82,682（有 DICOM 档案、8 类临床文书全空）+ 仅有临床文书 20,503（就诊/诊断等，无 exam 行）。"
             "2026-09-20 由 lnrs_anon_patient 切换为 exam 口径。"
         ),
     )

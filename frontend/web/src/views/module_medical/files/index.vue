@@ -34,7 +34,7 @@
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
 
           <el-tooltip placement="top" effect="light"
-            content="有检查记录的患者数（lnrs_anon_exam.patient_id 去重）。注意与 medicalDashboard 的「患者总量」不同——后者查 lnrs_anon_patient 全集。差额为「入过册但从未做过任何检查的患者」。2026-09-20 切换口径。">
+            content="有检查(exam)记录的患者数。与 medicalDashboard「患者总量」(患者主数据全集)不同：差额 103,185 = 纯影像人群 82,682（有 DICOM 档案、无临床文书）+ 仅有临床文书 20,503（就诊/诊断等，无 exam 行）。">
             <span style="cursor: help">
               <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />有检查记录的患者数：<strong><FaCountTo :target="statisticsCount.exam_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_patient_count)" /></strong>
             </span>

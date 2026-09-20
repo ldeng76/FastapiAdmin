@@ -231,10 +231,14 @@ class MedFilesService:
           center_type→exam.center_code）。
           2026-09-20 由 lnrs_anon_patient 切换为 exam 口径（详见 schema 字段 description）。
         - 与 medicalDashboard 口径对照：
-            dashboard 「患者总量」 = lnrs_anon_patient 全集
-            medicalFiles 「有检查记录的患者数」 = exam_patient_count ⊆ 全集
-            差额 = 「入过册但从未做过任何检查的患者」。例如 shengyi：
-            全集 169,820 vs exam_patient_count 66,635（差 103,185，约 60.8%）。
+            dashboard 「患者总量」 = lnrs_anon_patient 全集（shengyi 169,820；
+              实测与「影像∪临床」10 表并集相等，十表全空患者 = 0）
+            medicalFiles 「有检查记录的患者数」 = exam_patient_count（shengyi 66,635）
+            差额 103,185 = 无 exam 记录者：纯影像人群 82,682（有 DICOM 档案、
+              8 类临床文书全空）+ 仅有临床文书 20,503（就诊/诊断等，无 exam 行）。
+            注意：exam 世界与影像世界几乎不相交（shengyi exam∩imaging = 219），
+              本字段不覆盖纯影像人群 —— 同页「患者数」(imaging 口径 82,988)
+              反而大于本字段，属已知倒挂（2026-09-20 十表探针复核）。
         - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
         - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
           不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源

@@ -509,10 +509,12 @@ DDL 无法在不重写的前提下改指另一个 schema。
 |---|---|---:|
 | medicalDashboard 的「患者总量」 | `COUNT(*) FROM lnrs_anon_patient WHERE center_code=:c` | **169,820** |
 | medicalFiles 的「有检查记录的患者数」<br/>（改名自「总患者数」） | `COUNT(DISTINCT patient_id) FROM lnrs_anon_exam WHERE center_code=:c` | **66,635** |
-| medicalFiles 的「患者数」 | `COUNT(DISTINCT patient_id) FROM lnrs_anon_imaging_study WHERE center_code=:c` | — |
-| medicalFiles 的「总记录」 | `COUNT(*) FROM lnrs_anon_exam WHERE center_code=:c` | — |
+| medicalFiles 的「患者数」（imaging 口径） | `COUNT(DISTINCT patient_id) FROM lnrs_anon_imaging_study WHERE center_code=:c` | **82,988** |
+| medicalFiles 的「总记录」（exam 口径） | `COUNT(*) FROM lnrs_anon_exam WHERE center_code=:c` | 1,037,523 |
 
-差额 169,820 − 66,635 = **103,185**（约 60.8%）=「入过册但从未做过任何检查的患者」。
+差额 169,820 − 66,635 = **103,185**（约 60.8%）= 无 exam 记录者。⚠️ 初版曾把这笔差额
+整体注为「入过册但从未做过任何检查的患者」—— **不成立**，更正见 §11.7：
+其中 82,682 人是**纯影像人群**（有真实 DICOM 档案）。
 
 ### 11.4 改动
 
@@ -539,3 +541,40 @@ DDL 无法在不重写的前提下改指另一个 schema。
 - 真实切换 commit：`fa0761bc`（`调整患者数总计的算法`）
 - 本次补齐 commit：`b4cfe0a3`
 - service.py docstring 旧注释位置：`backend/app/plugin/module_medical/files/service.py:229`
+
+### 11.7 更正记录（2026-09-20 晚，用户 5 条抽样证伪后复核）
+
+初版 §11.3 把 169,820 − 66,635 = 103,185 注为「入过册但从未做过任何检查的患者」。
+用户从「九表无记录」抽样中取 5 条（PT_00414804 等）反查 `lnrs_anon_imaging_study`，
+**5/5 命中** —— 证明该抽样人群有影像档案，初版表述是错的。
+根因：当时的探针表集合是 9 张**临床**表，漏了 `imaging_study`（及经它关联的 `dicom_series`）。
+
+十表全量探针（169,820 人 × 10 表 EXISTS，实测 13.5 s）后的正确结构：
+
+```
+169,820 省医患者（主数据全集；= 影像∪临床并集，十表全空 = 0）
+├─ 临床世界 87,138（visit/diagnosis/病历/医嘱/检验/手术/体征 至少其一）
+│   ├─ 66,635 有 exam 行（exam ⊂ 临床世界）
+│   └─ 20,503 仅有临床文书、无 exam 行（其中 87 人另有影像）
+└─ 纯影像世界 82,682（8 类临床全空；imaging_study 有 study、
+    dicom_series 有真实字节 —— 抽样 5/5 各 125~251 MB）
+两世界交集 306；exam∩imaging = 219（与 issue-1「219/82,988」精确吻合）
+```
+
+**82,682 的来历**：与 issue-9 人口学判据（sex='0' 且 8 个人口学列全 NULL）精确相等 ——
+两者圈定的是同一批人：省医影像灌库脚本（batch `913e071d`，2026-09-14 15:54:53 同秒写入）
+按 DICOM 目录建的 stub 患者， demographics 全空。
+
+**sop_count 陷阱**：省医 imaging_study 全部 82,994 条 sop_count=0（灌库未数 SOP），
+但 series 层有真实字节 —— `sop_count=0` ≠ 无数据。
+
+**本次连带暴露的三个未决问题**（记录在案，另行开 issue 决策）：
+1. **KPI 倒挂**：medicalFiles 同页「患者数」(imaging 口径 82,988) > 「有检查记录的患者数」
+   (exam 口径 66,635)，"总数"比子集小。fa0761bc 把「总患者数」切到 exam 口径造成；
+   exam 人群与页面所列影像文件几乎不相交（219/82,988）。
+2. **placeholder 语义三向冲突**：zhujiang 74,450 全 TRUE（有 19 TB 真实数据）、
+   xinqiao 49,664 全 TRUE（issue-15 待翻 FALSE，有 4 TB）、shengyi 82,682 待按 issue-9
+   翻 TRUE（有 15 TB）—— 结构相同（影像灌库 stub + demographics 空 + 真实字节），
+   三个方向。执行 issue-9 前必须先统一语义，否则真实患者会被占位过滤藏掉。
+3. **exam 世界与影像世界脱节**：219/82,988 的交集意味着省医 RIS/exam 数据源
+   与 DICOM 归档是两套人群，PACS/RIS 关联缺失（issue-4 调研的延伸）。

@@ -3,7 +3,7 @@ from enum import Enum, unique
 
 @unique
 class EnvironmentEnum(str, Enum):
-    """应用运行环境（开发 / 生产）。"""
+    """应用运行环境（开发 / 生产 / 各部署点 / 测试沙箱）。"""
 
     DEV = "dev"
     PROD = "prod"
@@ -11,6 +11,10 @@ class EnvironmentEnum(str, Enum):
     H42 = "h42"
     H196_3 = "h196_3"
     DEV_H1963 = "dev_h1963"
+    # 测试环境：加载 env/.env.test，指向可丢弃的沙箱库 lnrs_dev。
+    # 写库测试必须在此环境下运行 —— 见
+    # docs/etl2/findings/incident-20260920-test-cascade-delete.md
+    TEST = "test"
 
 
 @unique

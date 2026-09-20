@@ -12,37 +12,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import pytest
 from sqlalchemy import text
 
 
-def _pg_available() -> bool:
-    if os.getenv("ENVIRONMENT") != "dev":
-        return False
-    try:
-        import asyncpg
-    except ImportError:
-        return False
-    try:
-
-        async def _t():
-            conn = await asyncpg.connect(
-                host="127.0.0.1", port=5432, user="lnrs",
-                password="lnrs_pwd", database="postgres",
-            )
-            await conn.close()
-
-        asyncio.run(_t())
-        return True
-    except Exception:
-        return False
-
-
-PG_READY = _pg_available()
-SKIP_REASON = "需要 ENVIRONMENT=dev 且本地 PG（lnrs:lnrs_pwd@127.0.0.1:5432/postgres）"
+# 库选择与安全闸统一在 tests/anon_etl/_db_guard.py（单一落点）。
+# 语义：仅 ENVIRONMENT=test（沙箱库 lnrs_dev）下运行；库名命中真库集合则 fail。
+from _db_guard import PG_READY, SKIP_REASON  # noqa: E402
 
 
 # 与 0018 migration 一致的 8 个人口学列

@@ -320,9 +320,13 @@ issue-13 的 `verify_no_drift` 报「跨中心零漂移 + xinqiao 非 anon_exam_
   纪律能约束"记得用合成名"，但约束不了"清理的作用域" —— 本次的合成名纪律**并没有被违反**，
   被违反的是"只删自己创建的东西"。
 
-落地形状：`tests/conftest.py` 提供 `db_url` fixture，指向可丢弃的库/ schema；
-`async_db_session()` 的引擎由 fixture 注入；测试结束整库回滚或 drop。
+落地形状：测试指向一个可丢弃的库，引擎跟随该配置；测试结束整库回滚或 drop。
 这是**架构改动**，不是测试改动 → **交接 `/improve-codebase-architecture`**。
+
+> **✅ 已实施（2026-09-20 同日）** —— 见 §10「隔离落地记录」。
+> 采用**独立数据库**而非独立 schema：代码里有 470 处硬编码 `lnrs.` 前缀
+> （Python 177 + SQL 293）会绕过 `search_path`，schema 方案要重写 470 处且每新增
+> 一处就静默漏出沙箱；独立数据库里 `lnrs` 是另一个同名 schema，硬编码原样生效。
 
 ### 7.2 次选：把行为守卫跑起来（已有，缺 CI）
 
@@ -383,3 +387,83 @@ issue-13 的 `verify_no_drift` 报「跨中心零漂移 + xinqiao 非 anon_exam_
 - 恢复源备份：`/tmp/lnrs_backup/20260920_xinqiao_pre/`
 - 恢复前安全备份：`/tmp/lnrs_backup/20260920_restore_safety_113330/`
 - 相关技能：`diagnosing-bugs`（本复盘的 Phase 6）、`improve-codebase-architecture`（§7.1 的交接对象）
+
+
+---
+
+## 10. 隔离落地记录（2026-09-20 同日实施）
+
+### 10.1 选型：独立**数据库**，不是独立 schema
+
+| | 新 schema `lnrs_dev` | **新 database `lnrs_dev`（采纳）** |
+|---|---|---|
+| 470 处硬编码 `lnrs.`（Py 177 + SQL 293） | **绕过隔离**（仍打真表） | **自动指向沙箱**（同名 schema） |
+| DDL 是否要改 | 要（112 处表名限定 + `search_path`，且每个新迁移都要） | **不用**，原样跑 |
+| 隔离由什么保证 | `search_path`（纪律） | **连接串**（机制） |
+| 漏一处硬编码的后果 | 静默写真库 | 不存在这种可能 |
+
+决定性证据：`0006-anonymized-schema-lnrs.sql` 自身就是混合写法 ——
+112 处 `lnrs.lnrs_anon*` 表名限定，而 27 个 `CREATE INDEX` **全部不带前缀**、
+依赖 `SET LOCAL search_path = lnrs`（文件内注释自述「索引/触发器名不能带 lnrs. 前缀」）。
+DDL 无法在不重写的前提下改指另一个 schema。
+
+### 10.2 沙箱内容
+
+- **结构以 live 库为准**（`pg_dump --schema-only --schema=lnrs`），**不是**以 DDL 文件为准
+  —— 因为 live 与 DDL 的 FK 集已分叉（§3.1）。实测结构完全对齐：
+  **72 表 / 6 视图 / 45 序列 / 421 索引 / 109 FK**，与 live 逐项相同。
+- **参考数据**（字典 / 中心注册 / 菜单 / 用户等小表）全量复制；**医学数据表
+  （`lnrs_anon_*`）不复制**（空表，测试自建数据）。
+- 扩展 `pg_trgm` / `pg_stat_statements` 必须装在 **`lnrs` schema**（与 live 一致），
+  否则 `lnrs.gin_trgm_ops` 缺失会让索引创建失败 —— pg_dump **不会**导出扩展。
+
+### 10.3 改动清单
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/provision_lnrs_dev_sandbox.sh` | 可复现地重建沙箱（DROP → CREATE → 结构 → 参考数据 → 授权） |
+| `backend/env/.env.test` | `ENVIRONMENT=test` → `DATABASE_NAME=lnrs_dev`（Redis DB 15，隔离键空间） |
+| `backend/app/common/enums.py` | `EnvironmentEnum.TEST` |
+| `backend/tests/anon_etl/_db_guard.py` | **单一落点**的库选择与安全闸（取代逐文件复制的 `_pg_available()`） |
+| `backend/tests/anon_etl/conftest.py` | `sys.path` 注入 + autouse 安全闸 |
+| 5 个 `tests/anon_etl/test_*.py` | 删除各自的 `_pg_available()`，改 `from _db_guard import PG_READY, SKIP_REASON` |
+
+**新语义**（取代「可用性门」）：
+
+| 条件 | 行为 |
+|---|---|
+| `ENVIRONMENT != "test"` | 写库测试 **skip**（不跑就没风险） |
+| `ENVIRONMENT == "test"` 且库名 ∈ `{"postgres"}` | **fail**（配置错误必须炸，不能静默写真库） |
+| `ENVIRONMENT == "test"` 且沙箱可连 | 正常跑 |
+
+### 10.4 验证（`pg_stat` 写入计数对比）
+
+**正向** —— `ENVIRONMENT=test` 跑 5 个写库测试文件：
+
+```
+沙箱 lnrs_dev:  lnrs_anon_ingest_batch  ins 0→4   del 0→4
+                lnrs_anon_patient       ins 0→2   upd 0→4   del 0→2
+真库 postgres:  行数 与 pg_stat 计数器  —— diff 为空（逐字节相同）
+```
+
+**反向** —— `ENVIRONMENT=h196_3`（真库）跑同样测试：**19 skipped in 0.17s**，真库零差异。
+
+结论：测试的**写入与删除**全部落在沙箱；真库连一次连接都没有。
+
+### 10.5 遗留：沙箱的数据保真度
+
+沙箱上跑 5 个写库文件：**12 passed / 5 failed / 2 skipped**。5 个失败**全部**是
+「依赖真库才有的数据」，不是隔离问题：
+
+| 失败用例 | 原因 |
+|---|---|
+| `test_anon_patient_placeholder::test_hidden_by_default_and_total_diff` | 断言「dev 库应有非占位患者」——沙箱无医学数据 |
+| `test_shengyi_placeholder_backfill::test_dry_run_is_idempotent_and_readonly` | 断言「shengyi 应至少 1 行（PRD 82,682）」——**直接断言生产数据量** |
+| `test_shengyi_placeholder_backfill::test_apply_then_rollback_round_trip` | event-loop（既有模式，与数据无关） |
+| `test_etl_smoke::test_shengyi_import_and_idempotent` | 需要 `data/shengyi/*.parquet`（本机不存在） |
+
+**这是一条真实的设计发现**：这几个用例**断言生产数据的绝对量**（82,682 / 非占位患者存在），
+本质上是对真库的集成断言，不是单元测试。在沙箱上它们无法通过，除非：
+(a) 复制真库样本数据进沙箱；或 (b) 改为自建 fixture（**推荐**，与隔离方向一致）。
+在此之前，这些用例会在沙箱上持续红 —— **红是安全的**（它们不再碰真库），
+但需要在后续 issue 里收敛。

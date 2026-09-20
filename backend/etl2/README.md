@@ -86,6 +86,13 @@ lnrs_anon_v_imaging_study_counts   视图（SUM byte_size → total_bytes）
 | 步骤 2 落库 | `DELETE FROM lnrs.lnrs_anon_dicom_series WHERE created_batch_id = '<batch>';` |
 | 完整回退 | `DROP TABLE lnrs.lnrs_anon_dicom_series;` + 重跑 `0006-anonymized-schema-lnrs.sql §7` |
 
+> ⚠ **回退前必读**：`lnrs_anon_dicom_series` 是 `ingest_batch` 的 CASCADE 子表 ——
+> `DELETE FROM lnrs_anon_ingest_batch WHERE ...` 会连带删除对应 `dicom_series` 行
+> （2026-09-20 事故：一条按 `center_code` 的测试清理删掉 168,260 行）。
+> 完整复盘见 [`docs/etl2/findings/incident-20260920-test-cascade-delete.md`](../../docs/etl2/findings/incident-20260920-test-cascade-delete.md)。
+> 另注：该文档 §3.1 记录了 **DDL 文件与 live schema 的 FK 已分叉** ——
+> 判断级联范围请查 live `pg_constraint`，不要读 DDL。
+
 ## 与既有核验的关系
 
 `/home/dzy/wk/lnrs/docs/etl2/数据导入核验清单.xlsx`（2026-09-14 收口）覆盖 shengyi 的 23 张 parquet 派生表。本目录的两个脚本对应**核验清单之外的 dicom_series 落库**——数据源是磁盘 DICOM 目录（不在 parquet 体系内），从未进入核验清单。

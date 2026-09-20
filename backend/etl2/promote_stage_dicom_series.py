@@ -20,17 +20,25 @@ ON CONFLICT ON CONSTRAINT DO UPDATE）—— 不另写第二套 upsert。
 - series_id（PK）不参与 promote：column_order 排除主键，新行由生产表
   sequence 现场分配 —— stage 清空重跑后再 promote 也不会撞主键。
 
+护栏（issue-22，promote_guardrails）：
+- 前置校验闸：promote 前校验 stage 不变量（非空 / 行数 / NOT NULL+CHECK /
+  外键完整性），不过则拒绝、生产库零变化、退出码 3；
+- 审计：每次 promote（含 dry-run）写 lnrs_promote_audit（+ 行级明细，
+  update 行存 promote 前像）；
+- 回滚：`--rollback <batch_id>` 按批次撤销（删 insert 行 + 还原 update 行）。
+
 安全：
 - 本命令是唯一的 stage→生产写入点，自带 issue-21 闸（--apply 写非沙箱库
   必须 --target 显式声明；沙箱 lnrs_dev 免声明）。
 - stage 表可随时 TRUNCATE，不影响生产（stage 无 FK/CHECK，见迁移
   n4o5p6q7r8s9）。
-"""
+ """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import sys
+import uuid
 from pathlib import Path
 
 # 允许直接 `python backend/etl2/promote_stage_dicom_series.py` 跑
@@ -43,6 +51,19 @@ from sqlalchemy import text  # noqa: E402
 from app.core.database import async_db_session  # noqa: E402
 from app.core.logger import log  # noqa: E402
 from app.plugin.module_medical.hospital.anon_pg_copy import copy_then_merge  # noqa: E402
+from etl2.promote_guardrails import (  # noqa: E402
+    AUDIT_TABLE,
+    PromoteRefused,
+    audit_by_batch,
+    record_audit,
+    record_batch_detail,
+    finalize_audit,
+    rollback_batch,
+    validate_stage,
+)
+
+#: 校验闸拒绝 promote 时的退出码（区别于 issue-21 闸的 2）
+REFUSED_EXIT_CODE = 3
 
 STAGE_TABLE = "lnrs.lnrs_stage_dicom_series"
 PROD_TABLE = "lnrs.lnrs_anon_dicom_series"
@@ -73,9 +94,15 @@ UPDATE_COLUMNS = [
 ]
 
 
-async def stage_row_count(db, stage_table: str = STAGE_TABLE) -> int:
-    """stage 中待 promote 的行数（dry-run 输出口径）。"""
-    return int((await db.execute(text(f"SELECT COUNT(*) FROM {stage_table}"))).scalar() or 0)
+async def _stage_rows(db, stage_table: str) -> tuple[int, list[dict]]:
+    """stage 待 promote 行数与行内容（单次读取，行数校验同源）。"""
+    rows = (await db.execute(
+        text(f"SELECT {', '.join(PROMOTE_COLUMNS)} FROM {stage_table}")
+    )).mappings().all()
+    n = int((await db.execute(
+        text(f"SELECT COUNT(*) FROM {stage_table}")
+    )).scalar() or 0)
+    return n, [dict(r) for r in rows]
 
 
 async def promote(
@@ -84,78 +111,141 @@ async def promote(
     stage_table: str = STAGE_TABLE,
     prod_table: str = PROD_TABLE,
     constraint: str = PROD_CONSTRAINT,
-) -> int:
-    """把 stage 表全部行经 copy_then_merge 幂等 upsert 进生产表。返回处理行数。
+    key_column: str = "dicom_study_uid",
+    mode: str = "apply",
+) -> tuple[int, str]:
+    """带护栏的 promote：校验闸 → (dry-run 出口) → 审计 → 明细 → upsert。
 
+    返回 (upsert 行数, batch_id)。校验不过抛 PromoteRefused，生产零变化。
     stage_table/prod_table/constraint 可注入 —— 供沙箱测试在 scratch 表上
-    验证 promote 语义，不触碰生产表。
+    验证语义，不触碰生产表。
     """
-    col_list = ", ".join(PROMOTE_COLUMNS)
-    rows = (await db.execute(
-        text(f"SELECT {col_list} FROM {stage_table}")
-    )).mappings().all()
-    if not rows:
-        log.info("[PROMOTE] stage 表为空，nothing to do")
-        return 0
+    batch_id = uuid.uuid4()
+    n_stage, rows = await _stage_rows(db, stage_table)
+    violations = await validate_stage(
+        db, stage_table=stage_table, prod_table=prod_table,
+        promote_columns=PROMOTE_COLUMNS)
+    if violations:
+        # 校验闸拒绝：生产库零变化，只留一条 rejected 审计
+        audit_id = await record_audit(
+            db, batch_id=batch_id, target_table=prod_table, mode=mode,
+            stage_rows=n_stage, validation="rejected", violations=violations)
+        await db.commit()
+        log.warning(f"[PROMOTE] 校验闸拒绝 batch={batch_id} audit={audit_id}: {violations}")
+        raise PromoteRefused(violations)
+
+    audit_id = await record_audit(
+        db, batch_id=batch_id, target_table=prod_table, mode=mode,
+        stage_rows=n_stage, validation="passed",
+        upsert_rows=len(rows) if mode == "apply" else 0)
+    if mode == "dry_run":
+        await db.commit()
+        log.info(f"[PROMOTE] dry-run 通过 batch={batch_id} audit={audit_id}，未写生产")
+        return 0, str(batch_id)
+
+    # 明细必须在合并前抓（preimage = promote 前的值）
+    await record_batch_detail(
+        db, audit_id=audit_id, stage_table=stage_table,
+        prod_table=prod_table, key_column=key_column)
     n = await copy_then_merge(
         db,
         target_table_name=prod_table,
-        rows=[dict(r) for r in rows],
+        rows=rows,
         constraint=constraint,
         update_set=dict.fromkeys(UPDATE_COLUMNS, 1),
         column_order=PROMOTE_COLUMNS,
     )
+    await finalize_audit(db, audit_id=audit_id, upsert_rows=n)
     await db.commit()
-    log.info(f"[PROMOTE] {stage_table} → {prod_table} upsert {n} 行")
-    return n
+    log.info(f"[PROMOTE] {stage_table} → {prod_table} upsert {n} 行 batch={batch_id}")
+    return n, str(batch_id)
 
 
 async def run_dry_run() -> int:
-    """打印将要 promote 的行数，不写库。"""
+    """校验 + 审计（mode=dry_run），不写生产。"""
     async with async_db_session() as db:
-        n = await stage_row_count(db)
-    print(f"[PROMOTE-DRY-RUN] {STAGE_TABLE} 待 promote 行数: {n}")
-    print("[PROMOTE-DRY-RUN] 未写库。正式执行：--apply（写非沙箱库加 --target production）")
+        n = int((await db.execute(text(f"SELECT COUNT(*) FROM {STAGE_TABLE}"))).scalar() or 0)
+        print(f"[PROMOTE-DRY-RUN] {STAGE_TABLE} 待 promote 行数: {n}")
+        try:
+            _, batch_id = await promote(db, mode="dry_run")
+            print(f"[PROMOTE-DRY-RUN] 校验通过 batch={batch_id}，未写生产表")
+        except PromoteRefused as e:
+            for v in e.violations:
+                print(f"[PROMOTE-DRY-RUN] 违规: {v}")
+            print("[PROMOTE-DRY-RUN] 校验不通过，--apply 将被拒绝")
+    print("[PROMOTE-DRY-RUN] 正式执行：--apply（写非沙箱库加 --target production）")
     return 0
 
 
 async def run_apply() -> int:
-    """实际 promote。"""
+    """实际 promote；校验闸拒绝 → 退出码 3，生产零变化。"""
     async with async_db_session() as db:
-        n = await stage_row_count(db)
+        n = int((await db.execute(text(f"SELECT COUNT(*) FROM {STAGE_TABLE}"))).scalar() or 0)
         print(f"[PROMOTE] {STAGE_TABLE} 待 promote 行数: {n}")
-        if not n:
-            print("[PROMOTE] stage 表为空，nothing to do")
-            return 0
-        await promote(db)
-    print(f"[PROMOTE] 完成：upsert {n} 行 → {PROD_TABLE}")
+        try:
+            upserted, batch_id = await promote(db)
+        except PromoteRefused as e:
+            for v in e.violations:
+                print(f"[PROMOTE-REFUSED] {v}", file=sys.stderr)
+            print(f"[PROMOTE-REFUSED] 校验闸拒绝 promote，生产库零变化", file=sys.stderr)
+            return REFUSED_EXIT_CODE
+    print(f"[PROMOTE] 完成：upsert {upserted} 行 → {PROD_TABLE} batch={batch_id}")
+    print(f"[PROMOTE] 回滚命令：--rollback {batch_id}")
+    return 0
+
+
+async def run_rollback(batch_id: str) -> int:
+    """按批次回滚一次 promote。"""
+    async with async_db_session() as db:
+        audits = await audit_by_batch(db, batch_id)
+        if not audits:
+            print(f"[ROLLBACK] 未找到 batch={batch_id} 的审计记录", file=sys.stderr)
+            return REFUSED_EXIT_CODE
+        for a in audits:
+            print(f"[ROLLBACK] 审计: {a['target_table']} mode={a['mode']}"
+                  f" upsert={a['upsert_rows']} validation={a['validation']}"
+                  f" rolled_back_at={a['rolled_back_at']}")
+        try:
+            r = await rollback_batch(
+                db, batch_id=batch_id, prod_table=PROD_TABLE,
+                key_column="dicom_study_uid", promote_columns=PROMOTE_COLUMNS)
+        except PromoteRefused as e:
+            for v in e.violations:
+                print(f"[ROLLBACK-REFUSED] {v}", file=sys.stderr)
+            return REFUSED_EXIT_CODE
+        await db.commit()
+    print(f"[ROLLBACK] 完成 batch={batch_id}: 删除 {r['deleted']} 行,"
+          f" 还原 {r['restored']} 行")
     return 0
 
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="promote_stage_dicom_series",
-        description="把 lnrs_stage_dicom_series 幂等 promote 到生产表（issue-20）",
+        description="把 lnrs_stage_dicom_series 带护栏 promote 到生产表（issue-20/22）",
     )
     g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--dry-run", action="store_true", help="仅打印待 promote 行数，不写库")
+    g.add_argument("--dry-run", action="store_true", help="校验+审计，不写生产表")
     g.add_argument("--apply", action="store_true", help="实际 promote（写非沙箱库需 --target）")
+    g.add_argument("--rollback", metavar="BATCH_ID", help="按批次回滚一次 promote")
     add_target_argument(p)
     return p.parse_args()
 
 
 async def main() -> int:
     args = _parse_args()
-    # issue-21 闸：promote 是 stage→生产的唯一写入点，apply 写非沙箱库必须显式声明。
+    # issue-21 闸：本命令是 stage→生产的唯一写入点，写非沙箱库必须显式声明。
     gate(
         schema="lnrs",
-        tables=[PROD_TABLE],
+        tables=[PROD_TABLE, AUDIT_TABLE, "lnrs.lnrs_promote_audit_row"],
         declared=args.target,
         estimated_rows=None,
         action="read" if args.dry_run else "write",
     )
     if args.dry_run:
         return await run_dry_run()
+    if args.rollback:
+        return await run_rollback(args.rollback)
     return await run_apply()
 
 

@@ -7,6 +7,9 @@
 4. stage 清空重灌后再 promote：行数不变（series_id 不参与 promote，不撞主键）
 5. stage TRUNCATE 不影响生产
 
+issue-22 起 promote 带护栏：返回 (行数, batch_id)，空 stage 是校验异常
+（拒绝），不再 no-op 返回 0 —— 见 test_promote_guardrails.py。
+
 promote 语义在 scratch 克隆表上验证（LIKE ... INCLUDING ALL），**不写生产表**
 （2026-09-20 事故教训：测试绝不碰真实数据行）。
 """
@@ -131,7 +134,7 @@ class TestStageDicomSeriesPromote:
                 await db.commit()
 
                 # 1) 首次 promote → 生产可见
-                n = await promote(
+                n, batch1 = await promote(
                     db, stage_table=SCRATCH_STAGE, prod_table=SCRATCH_PROD,
                     constraint=SCRATCH_PROD_UQ,
                 )
@@ -142,8 +145,8 @@ class TestStageDicomSeriesPromote:
                 ))).fetchall()
                 assert rows == [("uid-a", 10, 3), ("uid-b", 10, None)]
 
-                # 2) 重放同一批 → 行数与字段值不变
-                n = await promote(
+                # 2) 重放同一批 → 行数与字段值不变（幂等）
+                n, _ = await promote(
                     db, stage_table=SCRATCH_STAGE, prod_table=SCRATCH_PROD,
                     constraint=SCRATCH_PROD_UQ,
                 )
@@ -161,7 +164,7 @@ class TestStageDicomSeriesPromote:
                 await db.execute(text(f"TRUNCATE {SCRATCH_STAGE}"))
                 await db.execute(text(_stage_row("uid-a", batch_id, 5)))
                 await db.commit()
-                n = await promote(
+                n, _ = await promote(
                     db, stage_table=SCRATCH_STAGE, prod_table=SCRATCH_PROD,
                     constraint=SCRATCH_PROD_UQ,
                 )
@@ -174,6 +177,7 @@ class TestStageDicomSeriesPromote:
                     " WHERE dicom_study_uid = 'uid-a'"))).fetchone()
                 assert sc == 5, "重灌后 promote 应更新字段值"
 
+
                 # 4) TRUNCATE stage 不影响生产
                 await db.execute(text(f"TRUNCATE {SCRATCH_STAGE}"))
                 await db.commit()
@@ -185,8 +189,8 @@ class TestStageDicomSeriesPromote:
                     await db.execute(text(stmt))
                 await db.commit()
 
-    def test_promote_empty_stage_noop(self):
-        """空 stage → no-op 返回 0。"""
+    def test_promote_empty_stage_refused(self):
+        """issue-22：空 stage 是校验异常 → PromoteRefused（不再 no-op）。"""
         asyncio.run(self._body_empty())
 
     @staticmethod
@@ -200,11 +204,13 @@ class TestStageDicomSeriesPromote:
             for stmt in _setup_sql():
                 await db.execute(text(stmt))
             try:
-                n = await promote(
-                    db, stage_table=SCRATCH_STAGE, prod_table=SCRATCH_PROD,
-                    constraint=SCRATCH_PROD_UQ,
-                )
-                assert n == 0
+                # issue-22：空集是校验异常，拒绝 promote
+                from etl2.promote_guardrails import PromoteRefused
+                with pytest.raises(PromoteRefused):
+                    await promote(
+                        db, stage_table=SCRATCH_STAGE, prod_table=SCRATCH_PROD,
+                        constraint=SCRATCH_PROD_UQ,
+                    )
             finally:
                 for stmt in _teardown_sql():
                     await db.execute(text(stmt))

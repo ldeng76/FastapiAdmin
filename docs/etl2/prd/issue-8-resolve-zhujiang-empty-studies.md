@@ -57,3 +57,33 @@ None - can start immediately（**调研部分**）。
 - 相关背景：`plan-restore-series-count.md` 提到「part 离线 → series_count NULL → 视图/API COALESCE 0」的既有模式，
   本 issue 的 B 子集与它同源（磁盘状态与库内计数漂移）。
 - 若发现是**挂载/权限**问题（`drwxr-xr-x+` 带 ACL），先修挂载再复核，不要基于错误前提改库。
+
+## Implementation record (2026-09-20)
+
+实际状态 vs PRD 描述的差异：
+
+| 维度 | PRD 描述（写于 ~2026-09-19） | 当前实测（2026-09-20） |
+|---|---|---|
+| A 子集（真空 / 一致） | 274 | **415**（磁盘目录全空） |
+| B 子集（陈旧计数） | 141 | **0**（后续全量 ETL / DB 重建已移除） |
+| zhujiang dicom_series 总行数 | — | **0** |
+
+B 子集当前为 0 → PRD 的「B 子集 141 行修复 + 备份表 + 一致性断言」自然满足（B=0 → 0 行需修）。
+
+用户拍板方案：**方案 (c) 视图层过滤**（最小侵入，零数据修改）。
+
+交付：
+
+| 文件 | 说明 |
+|---|---|
+| `backend/etl2/investigate_zhujiang_empty_studies.py` | 调研脚本（输出 CSV + Markdown 报告，含 3 方案分析 + shengyi 旁路观察） |
+| `backend/sql/postgres/0026-imaging-study-counts-filter-zero-sop.sql` | 视图迁移：`lnrs_anon_v_imaging_study_counts` 加 zero-sop 守卫 |
+| `docs/etl2/verify_issue8_zhujiang_empty_studies.sql` | 验收 SQL（A1-A4 断言） |
+| `docs/etl2/verify_result/zhujiang_empty_studies_20260920.{csv,md}` | 调研产物（415 行 inventory + 报告） |
+
+验收结果（dev PG 实测）：
+
+- A1 (B-subset consistency): `mismatches = 0` ✓
+- A2 (view filter): zhujiang 视图行 86,927 → **86,512**（-415） ✓
+- A3 (sop_count>0 不变): 86,512 = 86,512 OK ✓
+- A4 (数据未改): imaging_study 行数与 zero-sop 行数与调研基线一致 ✓

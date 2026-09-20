@@ -9,6 +9,7 @@ class MedicalFiles(BaseModel):
 
     id: int = Field(description="ID")
     anon_exam_id: str | None = Field(default=None, description="检查ID")
+    dicom_study_uid: str | None = Field(default=None, description="DICOM StudyInstanceUID")
     series_anon_exam_id: str | None = Field(
         default=None, description="检查ID（取自 dicom_series.anon_exam_id，dicom_series 未落库时为 null）"
     )

@@ -92,17 +92,24 @@ class GroupStatItem(BaseModel):
 class MedFilesStatisticsOutSchema(BaseModel):
     """医疗文件统计响应。"""
 
-    file_count: int = Field(description="影像文件数")
+    file_count: int = Field(description="影像文件数（Σ imaging_study.sop_count，真实 DICOM 文件数，issue-28）")
     record_count: int = Field(description="影像记录行数（lnrs_anon_imaging_study 行数）")
+    total_patient_count: int = Field(
+        description=(
+            "总患者数（患者主数据口径，issue-28 回切）。与 medicalDashboard「患者总量」"
+            "同源同值：lnrs_anon_patient 中 deleted_at IS NULL 且非占位"
+            "（is_placeholder=FALSE，ADR 0012）+ center 筛选；不随 exam_type 过滤。"
+            "恒 ≥ patient_count（影像口径）与 exam_patient_count（exam 口径）。"
+        ),
+    )
     patient_count: int = Field(
-        description="有影像文件的患者数（lnrs_anon_imaging_study.patient_id 去重）"
+        description="患者数（影像口径：lnrs_anon_imaging_study.patient_id 去重，issue-28 标签改为「有影像文件的患者数」语义自描述）"
     )
     exam_patient_count: int = Field(
         description=(
             "有检查记录的患者数（lnrs_anon_exam.patient_id 去重）。"
-            "注意：与 medicalDashboard 的「患者总量」不同 —— 后者查 lnrs_anon_patient 全集。"
-            "两者之差为「无 exam 记录的患者」：shengyi 实测 103,185 = 纯影像人群 82,682（有 DICOM 档案、8 类临床文书全空）+ 仅有临床文书 20,503（就诊/诊断等，无 exam 行）。"
-            "2026-09-20 由 lnrs_anon_patient 切换为 exam 口径。"
+            "与「总患者数」（主数据口径）、「患者数」（影像口径）三标签互斥；"
+            "exam 世界与影像世界几乎不相交（shengyi exam∩imaging = 219）。"
         ),
     )
     exam_count: int = Field(

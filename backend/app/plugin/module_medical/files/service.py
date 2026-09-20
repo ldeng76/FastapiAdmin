@@ -4,20 +4,21 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import asc, case, desc, func, select
+from sqlalchemy import asc, desc, func, select
 
 from app.api.v1.module_system.auth.schema import AuthSchema
 from app.api.v1.module_system.dict.model import DictDataModel
 from app.config.setting import settings
 from app.core.exceptions import CustomException
 from app.core.logger import log
-
 from app.core.permission import Permission
 
-from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel
+from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel, AnonPatientModel
+from ..hospital.stats_query import _not_deleted_patient
+from .crud import MedFilesCRUD
 from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
-from .crud import MedFilesCRUD
+
 
 def _human_readable_size(num_bytes: int | None) -> str | None:
     """把字节数格式化成易读字符串（保留 2 位小数，自动进位到 KB/MB/GB/TB）。"""
@@ -69,6 +70,7 @@ class MedFilesService:
             query = query.where(m.center_code.in_(center_type))
 
         return query
+
     @staticmethod
     def _apply_exam_conditions(
         query,
@@ -86,7 +88,6 @@ class MedFilesService:
         if center_type:
             query = query.where(e.center_code.in_(center_type))
         return query
-
 
     @staticmethod
     def _resolve_order_columns(
@@ -208,49 +209,48 @@ class MedFilesService:
             file_type:   可选，多选文件类型（MedFilesModel.file_type 物理映射 imaging_study.center_code）
             center_type: 可选，多选中心筛选（按 MedFilesModel.file_type 过滤）
 
-        数据流（2026-09-15 重构自单 MedFilesModel 聚合）：
-        - record_count / patient_count / exam_count：查 lnrs_anon_imaging_study（=MedFilesModel）
-        - file_count = record_count + Σ(每个 study 的"额外"series 数)。series_count
-          是 2026-09-17 新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测按 0 计）；每个 study
-          的首个 series 已算在 record_count 里，故 CASE WHEN series_count > 1 THEN series_count - 1
-          ELSE 0 END：<=1 一律 0，2→1、3→2 …
-          与 byte_size 同一次 join 查询累加，不再单独查一次。dicom_series 无 dicom_series_uid /
-          series_no 列（2026-09-15 重构为 study 级时移除），不能按 series 行去重统计。
+        数据流（2026-09-15 重构自单 MedFilesModel 聚合；2026-09-20 issue-28 口径修订）：
+        - record_count / patient_count / file_count：查 lnrs_anon_imaging_study（=MedFilesModel）
+        - file_count = Σ imaging_study.sop_count（真实 DICOM 文件数，issue-28）。
+          旧公式 record_count + Σ(series_count−1) 在 dicom_series 重构为 study 级
+          （每 study 一行、series_count=1）后退化为 record_count，对省医
+          （82,994 study / 2,901 万文件）严重失真；sop_count 经
+          backfill_shengyi_sop_count.py 回填后与 series 层 Σ file_count 一致。
+        - total_patient_count：患者主数据口径（issue-28 回切），与 medicalDashboard
+          「患者总量」同源同值（StatsQuery.count_patients 的同一组条件，见下方代码注释）。
+          不随 exam_type 过滤；与「患者数」（影像口径）、「有检查记录的患者数」
+          （exam 口径）三个标签互斥、各自自描述，修复「总数 < 子集」倒挂。
         - total_size_bytes：查 lnrs_anon_dicom_series.byte_size 累加（ETL-2 重构后 study 级 byte_size 落库）
         - by_exam_type：GROUP BY AnonExamModel.exam_type（检查主表，值域=26 模态+Other），
           label 取 med_exam_type 字典翻译；分母 = 全部模态数量之和，反映检查数据的模态分布。
-          2026-09-18 口径切换：原 GROUP BY imaging_study.modality 在 h196_3 上 100%='CT'
-          只返回 1 行，无法反映多模态分布；现与 dashboard query_modality_counts 统一为
-          exam 口径（跨模态桥梁表）。注意与文件列表口径不同：exam 有数据的模态
-          （如 gene）可能没有影像文件，列表为空属正常。
-          2026-09-19 全局分布常显：本分组不随 exam_type 勾选过滤（center_type 仍生效），
-          作为左侧「模态类型」筛选器的 facet 计数始终展示全量分布，勾选态下
-          CT 仍显示 22.88% 而非 100%。
+          2026-09-19 全局分布常显：本分组不随 exam_type 勾选过滤（center_type 仍生效）。
+          issue-28：前端「模态类型」筛选器候选改由本分组驱动（裁剪到实际存在的
+          exam_type），「全选」与「不选」等价（IN 覆盖全部值域 = 无过滤，有测试钉住）。
         - exam_patient_count：lnrs_anon_exam.patient_id 去重计数（一个患者多次检查会重复，
           必须 COUNT(DISTINCT)）；筛选条件与 exam_count 完全一致（exam_type→exam.exam_type，
           center_type→exam.center_code）。
-          2026-09-20 由 lnrs_anon_patient 切换为 exam 口径（详见 schema 字段 description）。
-        - 与 medicalDashboard 口径对照：
-            dashboard 「患者总量」 = lnrs_anon_patient 全集（shengyi 169,820；
-              实测与「影像∪临床」10 表并集相等，十表全空患者 = 0）
+        - 与 medicalDashboard 口径对照（2026-09-20 十表探针）：
+            dashboard 「患者总量」 = total_patient_count（同源，两处数值恒等）
+            medicalFiles 「患者数」 = patient_count（影像口径，shengyi 82,988）
             medicalFiles 「有检查记录的患者数」 = exam_patient_count（shengyi 66,635）
-            差额 103,185 = 无 exam 记录者：纯影像人群 82,682（有 DICOM 档案、
-              8 类临床文书全空）+ 仅有临床文书 20,503（就诊/诊断等，无 exam 行）。
-            注意：exam 世界与影像世界几乎不相交（shengyi exam∩imaging = 219），
-              本字段不覆盖纯影像人群 —— 同页「患者数」(imaging 口径 82,988)
-              反而大于本字段，属已知倒挂（2026-09-20 十表探针复核）。
-        - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
+            exam∩imaging = 219 —— 三口径描述的是三个不同的人群截面，
+            标签已各自自描述；「总患者数 ≥ 患者数」在全部筛选组合下恒成立。
         - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
           不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
         """
         m = MedFilesModel
         e = AnonExamModel
         s = AnonDicomSeriesModel
-
-        # ---- record_count / patient_count：基于 MedFilesModel（=imaging_study）----
+        # ---- record_count / patient_count / file_count：基于 MedFilesModel（=imaging_study）----
+        # issue-28：file_count 改为 Σ imaging_study.sop_count（真实 DICOM 文件数）。
+        # 旧公式 record_count + Σ(series_count−1) 在 series 表重构为 study 级后
+        # 退化为 record_count（每个 study 一行 series、series_count=1），
+        # 对省医（82,994 study / 2,901 万文件）严重失真。sop_count 经
+        # backfill_shengyi_sop_count.py 回填后与 series 层 Σ file_count 一致。
         count_sql = select(
             func.count(m.id).label("record_count"),
             func.count(func.distinct(m.patient_id)).label("patient_count"),
+            func.coalesce(func.sum(func.coalesce(m.sop_count, 0)), 0).label("file_count_sum"),
         )
         count_sql = cls._apply_search_conditions(
             count_sql, exam_type=exam_type, file_type=file_type, center_type=center_type
@@ -260,6 +260,29 @@ class MedFilesService:
         record_count = int(count_row[0] or 0) if count_row else 0
         patient_count = int(count_row[1] or 0) if count_row else 0
 
+        # ---- total_patient_count：患者主数据口径（issue-28 回切）----
+        # 与 medicalDashboard「患者总量」同源同值（StatsQuery.count_patients，见
+        # hospital/stats_query.py::_patient_filters）：lnrs_anon_patient 中
+        # deleted_at IS NULL 且非占位（is_placeholder=FALSE，ADR 0012 数据型语义，
+        # 2026-09-20 回填后占位行仅剩合成中心 5 行）+ center_code IN center_type。
+        # 不随 exam_type 过滤 —— 人口是总体指标；与「患者数」（影像口径）、
+        # 「有检查记录的患者数」（exam 口径）三标签互斥、各自自描述。
+        total_patient_sql = (
+            select(func.count())
+            .select_from(AnonPatientModel)
+            .where(
+                _not_deleted_patient(),
+                AnonPatientModel.is_placeholder.is_(False),
+                *(
+                    [AnonPatientModel.center_code.in_(center_type)]
+                    if center_type
+                    else []
+                ),
+            )
+        )
+        total_patient_count = int(
+            (await auth.db.execute(total_patient_sql)).scalar() or 0
+        )
         # ---- exam_patient_count：基于 AnonExamModel（=lnrs_anon_exam）的 patient_id 去重 ----
         # 一个患者会有多次检查，exam 表里 patient_id 会重复，必须 COUNT(DISTINCT patient_id)。
         # 筛选条件与 exam_count 完全一致（exam_type→exam.exam_type，center_type→exam.center_code）。
@@ -279,18 +302,11 @@ class MedFilesService:
         exam_sql = await Permission(e, auth).filter_query(exam_sql)
         exam_count = int((await auth.db.execute(exam_sql)).scalar() or 0)
 
-        # ---- total_size_bytes + series 数：从 dicom_series 累加（Permission 绑 dicom_series）----
+        # ---- total_size_bytes：从 dicom_series 累加（Permission 绑 dicom_series）----
         # center_type 按 imaging_study.center_code 过滤；exam_type/file_type 在 byte_size 维度下
         # 走同一筛选，保持 KPI 与 by_exam_type/by_center 一致。
-        # series_count 是 2026-09-17 新增列（实测 SeriesInstanceUID 去重计数，NULL = 未实测）。
-        # 每个 study 的第 1 个 series 已计入 record_count，这里只累加"额外的"series：
-        #   series_count<=1 → 0，=2 → 1，=3 → 2 ...；NULL / 0 / 负数 一律按 0，不出负贡献。
-        extra_series_expr = case(
-            (s.series_count > 1, s.series_count - 1), else_=0
-        )
         size_sql = select(
             func.coalesce(func.sum(s.byte_size), 0).label("total_size_bytes"),
-            func.coalesce(func.sum(extra_series_expr), 0).label("series_count_sum"),
         )
         size_sql = size_sql.join(
             m, s.dicom_study_uid == m.dicom_study_uid,
@@ -301,11 +317,9 @@ class MedFilesService:
         size_sql = await Permission(s, auth).filter_query(size_sql)
         size_row = (await auth.db.execute(size_sql)).one_or_none()
         total_size_bytes = int(size_row[0] or 0) if size_row else 0
-        series_count_sum = int(size_row[1] or 0) if size_row else 0
 
-        # file_count = study 行数 + 各 study 的"额外"series 数
-        # （series_count<=1 → +0，=2 → +1，=3 → +2 …；NULL/0/负数按 0）
-        file_count = record_count + series_count_sum
+        # file_count = Σ imaging_study.sop_count（见 count_sql 处注释，issue-28）
+        file_count = int(count_row[2] or 0) if count_row else 0
 
         # ---- 字典 label ----
         exam_type_label_map = await cls._load_dict_labels(auth, "med_exam_type")
@@ -342,10 +356,10 @@ class MedFilesService:
                 "count": cnt,
                 "percentage": pct,
             })
-        by_exam_type.sort(key=lambda x: -x["count"])
-
         return {
             "file_count": file_count,
+            "record_count": record_count,
+            "total_patient_count": total_patient_count,
             "exam_patient_count": exam_patient_count,
             "patient_count": patient_count,
             "exam_count": exam_count,

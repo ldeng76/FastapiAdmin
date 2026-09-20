@@ -45,3 +45,6 @@ class MedFilesModel(MappedBase):
         "image_path",
         String(512), nullable=True, comment="文件路径"
     )
+    sop_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="DICOM 文件（SOP 实例）数"
+    )

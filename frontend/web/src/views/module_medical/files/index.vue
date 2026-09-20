@@ -6,9 +6,11 @@
           <el-collapse-item title="模态类型" name="examType">
             <el-checkbox-group v-model="selectedExamType">
               <div style="max-height: 300px;overflow: auto">
-                <div class="flex justify-between"  v-for="item in dictStore.getDictArray('med_modality')" :key="item.dict_value">
-                  <el-checkbox class="file-checkbox" :label="item.dict_label" :value="item.dict_value" />
-                  <div class="el-checkbox" style="cursor: default">{{ statisticsTypeText(item.dict_value,'by_exam_type') }}</div>
+                <!-- issue-28：候选由后端 by_exam_type 驱动（裁剪到 exam 表实际存在的 exam_type，
+                     虚胖字典值不再出现）；「全选」与「不选」等价（IN 覆盖全部值域 = 无过滤）。 -->
+                <div class="flex justify-between"  v-for="item in examTypeOptions" :key="item.value">
+                  <el-checkbox class="file-checkbox" :label="item.label" :value="item.value" />
+                  <div class="el-checkbox" style="cursor: default">{{ item.count }}({{ item.percentage }}%)</div>
                 </div>
               </div>
             </el-checkbox-group>
@@ -29,20 +31,36 @@
         <div style="display: flex;align-items: center;justify-content: center;font-size: 16px">
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" /> 记录：<strong><FaCountTo :target="statisticsCount.record_count || 0" separator="," :duration="getCountDuration(statisticsCount.record_count)" /></strong>
 
-          <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" /> 患者数: <strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
+          <el-tooltip placement="top" effect="light"
+            content="有影像文件的患者数（影像口径：imaging_study.patient_id 去重）。只统计名下有影像记录的患者，小于「总患者数」。">
+            <span style="cursor: help">
+              <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />有影像文件的患者数：<strong><FaCountTo :target="statisticsCount.patient_count || 0 " :duration="getCountDuration(statisticsCount.patient_count)" separator="," /></strong>
+            </span>
+          </el-tooltip>
+
+          <el-tooltip placement="top" effect="light"
+            content="总患者数（患者主数据口径）：lnrs_anon_patient 全集（未删除、非占位），与 medicalDashboard「患者总量」同源同值；只随中心筛选变化，不随模态筛选变化。">
+            <span style="cursor: help">
+              <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />总患者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
+            </span>
+          </el-tooltip>
 
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
 
           <el-tooltip placement="top" effect="light"
-            content="有检查(exam)记录的患者数。与 medicalDashboard「患者总量」(患者主数据全集)不同：差额 103,185 = 纯影像人群 82,682（有 DICOM 档案、无临床文书）+ 仅有临床文书 20,503（就诊/诊断等，无 exam 行）。">
+            content="有检查记录的患者数（exam 口径：lnrs_anon_exam.patient_id 去重）。exam 世界与影像世界几乎不相交（省医 exam∩imaging = 219），故本数与「有影像文件的患者数」互不覆盖，两者均小于「总患者数」。">
             <span style="cursor: help">
               <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />有检查记录的患者数：<strong><FaCountTo :target="statisticsCount.exam_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_patient_count)" /></strong>
             </span>
           </el-tooltip>
 
-          <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
+          <el-tooltip placement="top" effect="light"
+            content="总文件个数 = Σ imaging_study.sop_count（真实 DICOM 文件数，issue-28）。省医 sop_count 已按 dicom_series.file_count 回填。">
+            <span style="cursor: help">
+              <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
+            </span>
+          </el-tooltip>
 
-          <FaMenuRouteIcon icon="ri:hard-drive-2-fill" class="icon-count" /> 总大小：<span v-html="fileSize(statisticsCount.total_size_bytes,true)"></span>
         </div>
         <FaTable
           :data="data"
@@ -61,7 +79,7 @@
 </template>
 <script setup lang="ts">
 import {useDictStore} from "@/store";
-import {h, ref, watch} from 'vue';
+import {computed, h, ref, watch} from 'vue';
 import {useTable} from "@/hooks";
 import type {ColumnOption} from "@/types";
 import FilesApi, {FilesTable, StatisticsCount} from "@api/module_medical/files.ts";
@@ -105,17 +123,10 @@ function onSortChange({ prop, order }:any){
     sort_order:order
   }
 }
-function statisticsTypeText(type:string,key:'by_exam_type'|'by_file_type'){
-  let text = '0(0%)'
-  if(statisticsCount.value[key] instanceof Array){
-    let data = statisticsCount.value[key];
-    let item = data.find(function (n){ return n.value === type })
-    if(item !== undefined){
-      text = `${item.count}(${item.percentage}%)`
-    }
-  }
-  return text
-}
+// issue-28：模态筛选候选由后端 by_exam_type 驱动 —— 裁剪到 exam 表实际存在的
+// exam_type（虚胖字典值不再出现），计数/百分比即 facet，label 已由后端按
+// med_exam_type 字典翻译。「全选」与「不选」等价（IN 覆盖全部值域 = 无过滤）。
+const examTypeOptions = computed(() => statisticsCount.value.by_exam_type || []);
 watch([selectedExamType,selectedFileType,selectedCenterType,sortParams],async function (arr){
   let examType = arr[0]
   let fileType = arr[1]

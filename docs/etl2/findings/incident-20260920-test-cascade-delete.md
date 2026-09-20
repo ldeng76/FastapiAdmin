@@ -467,3 +467,75 @@ DDL 无法在不重写的前提下改指另一个 schema。
 (a) 复制真库样本数据进沙箱；或 (b) 改为自建 fixture（**推荐**，与隔离方向一致）。
 在此之前，这些用例会在沙箱上持续红 —— **红是安全的**（它们不再碰真库），
 但需要在后续 issue 里收敛。
+
+
+---
+
+## 11. 医疗页面 KPI 口径切换（2026-09-20 事故**之外**的同日发现）
+
+### 11.1 现象
+
+> 来自用户实测：
+>   medicalDashboard → shengyi → 「患者总量」     = 169,820
+>   medicalFiles     → shengyi → 「总患者数」     =  66,635
+>
+> 两数相差 ~60%，用户**第一反应**是「是不是 9-20 事故又删了数据」。
+
+事故复盘已确认**无关**（事故只动 `dicom_series`，`patient` / `exam` 一字未改）；
+但口径不一致是真问题 —— 下次任何人在事故类对话里看到这俩数字，仍会重复怀疑一次。
+本节把这件事归档，避免**事故复盘文档**与**同日的非事故改动**混在一起误导后人。
+**本节与本事故 0 关联**，只是同一天被看到。
+
+### 11.2 三个时间点（必看）
+
+1. **真实切换点**：commit `fa0761bc` —— `service.py::statistics_service`
+   把 `total_patient_count` 的 SQL 从
+   `SELECT COUNT(*) FROM lnrs_anon_patient WHERE center_code=:c`
+   改为
+   `SELECT COUNT(DISTINCT patient_id) FROM lnrs_anon_exam WHERE center_code=:c`。
+   commit message 与 service.py docstring 均标注「**2026-09-20 由 `lnrs_anon_patient` 切换为 exam 口径**」 —— 这里的 9-20 是**算法变更日期**，不是事故日期。
+2. **事故日**：2026-09-20（§1 起），与本次口径切换**无任何因果关系**，
+   事故只动 `dicom_series`（168,260 行），`patient` / `exam` 表零写入。
+3. **本次补齐**：commit `b4cfe0a3` —— 把算法改完之后**没人补**的事做了：
+   字段重命名 `total_patient_count → exam_patient_count`、
+   schema description 自描述口径对照、medicalFiles 标签文案 + el-tooltip。
+
+**如果跳过本节，下次回看时会把 (2) 和 (1) 误读成同一个 9-20 的两件事**——
+这是 §10 之后追加本节的核心动机。
+
+### 11.3 口径对照表（代码与文档已固化）
+
+| 字段 / 标签 | SQL 等价 | shengyi 实测 |
+|---|---|---:|
+| medicalDashboard 的「患者总量」 | `COUNT(*) FROM lnrs_anon_patient WHERE center_code=:c` | **169,820** |
+| medicalFiles 的「有检查记录的患者数」<br/>（改名自「总患者数」） | `COUNT(DISTINCT patient_id) FROM lnrs_anon_exam WHERE center_code=:c` | **66,635** |
+| medicalFiles 的「患者数」 | `COUNT(DISTINCT patient_id) FROM lnrs_anon_imaging_study WHERE center_code=:c` | — |
+| medicalFiles 的「总记录」 | `COUNT(*) FROM lnrs_anon_exam WHERE center_code=:c` | — |
+
+差额 169,820 − 66,635 = **103,185**（约 60.8%）=「入过册但从未做过任何检查的患者」。
+
+### 11.4 改动
+
+| 文件 | 改动 |
+|---|---|
+| `backend/app/plugin/module_medical/files/schema.py` | `total_patient_count` → `exam_patient_count`，description 自描述 |
+| `backend/app/plugin/module_medical/files/service.py` | 同步重命名；docstring 加 §11.3 口径对照表 |
+| `frontend/web/src/api/module_medical/files.ts` | TS 类型同步 |
+| `frontend/web/src/views/module_medical/files/index.vue` | 标签「总患者数」→「有检查记录的患者数」+ el-tooltip 自描述 |
+
+**行为 0 变更**：66,635 = 切换前的同一数字；本次纯文案/命名。
+
+### 11.5 给后来人的两条建议
+
+1. **改字段命名时，先 grep 全仓**。本次重命名前 `grep -rn 'total_patient_count'` 命中 4 处
+   （schema / service ×3），全在本次改动范围内 —— **没漏**。如果跨仓调用，应搜调用方 SDK、
+   前端 store / 类型定义 / 测试断言。
+2. **「切换口径」与「事故」不要混写同一份 commit message / 文档**。本事故复盘文档已经有过一次
+   「2026-09-20 切换口径」的注释埋在 service.py docstring 里，差点被读成事故的一部分；
+   本节就是为这件事再加一道锁。
+
+### 11.6 参考
+
+- 真实切换 commit：`fa0761bc`（`调整患者数总计的算法`）
+- 本次补齐 commit：`b4cfe0a3`
+- service.py docstring 旧注释位置：`backend/app/plugin/module_medical/files/service.py:229`

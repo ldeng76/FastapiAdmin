@@ -171,3 +171,37 @@ Issue 21  （独立，与 19/20/22/23 正交）
   Issue 7 的 CLI 三处修复已完成，本组只改**写入目标**，不改其计算口径。
 - Issue 21 是 [Issue 19](./issue-19-prefactor-share-copy-then-merge.md)
   与测试沙箱安全闸的**同思路扩展**：那个面向 pytest，这个面向脚本。
+
+---
+
+## 第五组：新桥数据源收尾（issue-24 ~ issue-26）
+
+来源：`ct_mapped.parquet`（CT 报告+DICOM 合并版，2026-09-20 就位）与 5万例人口学
+CSV 的对账调研。对账基线：
+[`../verify_result/xinqiao-series-counts-fix-20260920.md`](../verify_result/xinqiao-series-counts-fix-20260920.md)
+（含同日已完成的 dicom_series 计数校正，commit `3a48640c`，不另立单）。
+
+| 文件 | 用途 | 阻塞 |
+|---|---|---|
+| `issue-24-xinqiao-cxf-ingest-via-ct-mapped.md` | Issue 24: cxf_archives 7,984 study 入库（ct_mapped 解除 issue-18 的外部映射阻塞） | 无 |
+| `issue-25-xinqiao-exam-report-source-completion.md` | Issue 25: exam 报告源补全 — 83,010 Accession 纯报告 + 262 新检查 | 无 |
+| `issue-26-xinqiao-placeholder-realization-v2.md` | Issue 26: 占位真实化 v2（承接 issue-15，源改 5万例 CSV，原 exam 机制作废） | 无 |
+
+### 第五组依赖关系
+
+```
+Issue 24 （独立；同源，与 25 可并行，exam 灌库路径可复用）
+Issue 25 （独立）
+Issue 26 （独立；按 PID 键直填，不依赖 24/25；两个决策门需用户拍板）
+```
+
+### 与前三组的关系
+
+- Issue 24 实现 [Issue 18](./issue-18-xinqiao-cxf-archives-ingest.md) 的目标
+  （18 原文保持不动），并含「用 ct_mapped 复核 issue-13 的 33,110 个
+  `anon_exam_id` 回填」验收项。
+- Issue 26 承接 [Issue 15](./issue-15-xinqiao-placeholder-realization.md)
+  （15 原文保持不动）：原「exam 行取人口学」机制经实测作废（exam/ct_mapped 均无
+  sex/birth_date 列），改用 5万例 CSV 真实源；issue-15 的验收断言 1/2 原样继承。
+- 三张单完成后，[Issue 16](./issue-16-resync-xinqiao-to-h42.md)（h196_3 → 1.59
+  重同步）建议重跑一次，让 h42 看到完整的新桥数据面。

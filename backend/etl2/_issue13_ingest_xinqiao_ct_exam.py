@@ -61,6 +61,12 @@ sys.path.insert(0, str(_BACKEND_ROOT))
 sys.path.insert(0, str(_ETL2_DIR))
 
 import duckdb  # noqa: E402
+from _script_guard import (  # noqa: E402
+    EXAM_TEXT_INGEST_TABLES,
+    add_target_argument,
+    count_parquet_rows,
+    gate,
+)
 from sqlalchemy import text  # noqa: E402
 
 from app.core.database import async_db_session  # noqa: E402
@@ -337,13 +343,22 @@ async def ingest_ct_exam(center: str, parquet_path: Path, data_dir: Path) -> dic
 # ---------- 回填 tier-1（复用 backfill 模块） ----------
 
 
-async def run_tier1(center: str) -> int:
-    """dry-run 报告 + apply；返回 matchable（实测 31,098）。"""
+async def run_tier1(center: str, declared: str | None = None) -> int:
+    """dry-run 报告 + 安全闸确认 + apply；返回 matchable（实测 31,098）。"""
     from backfill_imaging_study_exam_id import run_apply, run_dry_run
+
     rows = await run_dry_run(center)
     row = next((r for r in rows if r.center_code == center), None)
     matchable = int(row.matchable) if row else 0
     log.info(f"[TIER-1] dry-run matchable={matchable} no_study_date={row.no_study_date if row else 0}")
+    # 安全闸（issue-21）：backfill apply 前再确认一次；预计行数取自 dry-run
+    gate(
+        schema="lnrs",
+        tables=["lnrs.lnrs_anon_imaging_study"],
+        declared=declared,
+        estimated_rows=matchable,
+        action="write",
+    )
     await run_apply(center)
     return matchable
 
@@ -568,6 +583,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--skip-ingest", action="store_true", help="跳过灌库（已灌库时）")
     p.add_argument("--dry-run", action="store_true",
                    help="只报告（源文件/覆盖统计/残留预估），不写库")
+    add_target_argument(p)
     return p.parse_args()
 
 
@@ -594,6 +610,25 @@ async def main() -> int:
     src_ct = Path(args.src_ct)
     src_map = Path(args.src_map)
     staging = Path(args.staging)
+
+    # 安全闸（issue-21）：--dry-run 只读（action=read）；正式执行写生产库必须
+    # --target 显式声明，沙箱库 lnrs_dev 免声明。预计影响行数优先取 staging
+    # 灌库 parquet 行数，缺失时退回源文件行数作估算（都不在 → 未知）。
+    est = count_parquet_rows(staging / "nodule_imaging.parquet")
+    if est is None:
+        est = count_parquet_rows(src_ct)
+    gate(
+        schema="lnrs",
+        tables=[
+            *EXAM_TEXT_INGEST_TABLES,
+            "lnrs.lnrs_anon_imaging_study (backfill)",
+            "lnrs.lnrs_anon_dicom_series (backfill)",
+            "lnrs_tmp_issue13_series_before (backup)",
+        ],
+        declared=args.target,
+        estimated_rows=est,
+        action="read" if args.dry_run else "write",
+    )
 
     await preflight(center, src_ct, src_map)
     if args.dry_run:
@@ -641,7 +676,7 @@ async def main() -> int:
         """), {"c": center})).scalar()
     expected_new_exams = int(post_exam) - int(pre["exam:all"].get(center, 0))
 
-    matchable = await run_tier1(center)
+    matchable = await run_tier1(center, declared=args.target)
     rules = await run_residual(center, src_ct, src_map)
     series_n = await backfill_dicom_series(center)
     out = await verify(center)

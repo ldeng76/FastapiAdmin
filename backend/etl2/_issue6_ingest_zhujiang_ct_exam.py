@@ -26,6 +26,12 @@ from pathlib import Path
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_ROOT))
 
+from _script_guard import (  # noqa: E402
+    EXAM_TEXT_INGEST_TABLES,
+    add_target_argument,
+    count_parquet_rows,
+    gate,
+)
 from sqlalchemy import text  # noqa: E402
 
 from app.core.database import async_db_session  # noqa: E402
@@ -94,7 +100,7 @@ async def ingest_nodule_only(data_root: str) -> dict:
     log.info(f"[ETL-2] batch_id={batch_id}")
 
     async with async_db_session() as sess:
-        hospital_id = await _resolve_hospital_id(sess, "zhujiang")
+        await _resolve_hospital_id(sess, "zhujiang")
         n = await _import_exam_text_table(
             sess,
             center_code="zhujiang",
@@ -133,14 +139,11 @@ async def post_ingest_distribution() -> None:
 async def run_backfill_dry_run(center: str) -> dict | None:
     """跑 backfill dry-run, 返回 matchable。"""
     sys.path.insert(0, str(_BACKEND_ROOT / "etl2"))
-    from backfill_imaging_study_exam_id import run_dry_run, _center_filter_sql
+    from backfill_imaging_study_exam_id import _center_filter_sql
 
     log.info(f"[backfill] --dry-run --center {center}")
-    # run_dry_run prints; we want to also capture the matchable value via SQL
     async with async_db_session() as s:
-        from app.plugin.module_medical.hospital.anon_etl_engine import _CENTER_PARQUET_SPECS  # noqa
-        # 直接用脚本里的 SQL_COVERAGE_REPORT
-        from backfill_imaging_study_exam_id import SQL_COVERAGE_REPORT  # noqa
+        from backfill_imaging_study_exam_id import SQL_COVERAGE_REPORT
         sql = SQL_COVERAGE_REPORT.format(center_filter=_center_filter_sql(center))
         r = await s.execute(text(sql))
         rows = [dict(x._mapping) for x in r]
@@ -230,7 +233,25 @@ async def main() -> int:
         action="store_true",
         help="仅灌库不跑 backfill apply",
     )
+    add_target_argument(parser)
     args = parser.parse_args()
+
+    # 安全闸（issue-21）：写生产库必须 --target 显式声明；沙箱库 lnrs_dev 免声明。
+    # backup / ingest / backfill-apply 全跳过时本调用只读（action=read，永不拒绝）。
+    # 预计影响行数取灌库源 nodule_imaging.parquet 行数（不连库；backfill 部分见下第二次确认）。
+    will_write = not (args.skip_backup and args.skip_ingest and args.skip_apply)
+    nodule_pq = Path(args.data_root) / "zhujiang" / "nodule_imaging.parquet"
+    gate(
+        schema="lnrs",
+        tables=[
+            *EXAM_TEXT_INGEST_TABLES,
+            "lnrs.lnrs_anon_imaging_study (backfill)",
+            "lnrs_tmp_issue6_study_before (backup)",
+        ],
+        declared=args.target,
+        estimated_rows=None if args.skip_ingest else count_parquet_rows(nodule_pq),
+        action="write" if will_write else "read",
+    )
 
     if not args.skip_backup:
         await backup_imaging_study_state()
@@ -245,6 +266,15 @@ async def main() -> int:
     log.info(f"[backfill dry-run] matchable = {expected_matchable}")
 
     if not args.skip_apply:
+        # 第二次确认（issue-21）：backfill apply 的预计行数取自 dry-run 口径
+        # （SQL_COVERAGE_REPORT.matchable，上方 run_backfill_dry_run 已算出）
+        gate(
+            schema="lnrs",
+            tables=["lnrs.lnrs_anon_imaging_study"],
+            declared=args.target,
+            estimated_rows=expected_matchable,
+            action="write",
+        )
         await run_backfill_apply("zhujiang")
         await verify_after_apply("zhujiang", expected_matchable)
 

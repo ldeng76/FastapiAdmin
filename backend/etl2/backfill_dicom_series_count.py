@@ -53,6 +53,7 @@ from pathlib import Path
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_ROOT))
 
+from _script_guard import add_target_argument, gate  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 from app.core.database import async_db_session  # noqa: E402
@@ -64,17 +65,22 @@ from app.plugin.module_medical.hospital.anon_etl_engine import (  # noqa: E402
 
 # ---------- SQL 块 ----------
 
-# 仅筛选需要回填的 study：series_count IS NULL 且 image_path 非空
-SQL_PENDING = (
-    "SELECT s.study_key, s.dicom_study_uid, s.center_code, "
-    "s.image_path, s.anon_exam_id "
+# 仅筛选需要回填的 study：series_count IS NULL 且 image_path 非空。
+# FROM/JOIN/WHERE 由 SQL_PENDING / SQL_DRY_RUN_REPORT / SQL_ESTIMATE 共享——谓词单源，避免漂移。
+SQL_PENDING_BASE = (
     "FROM lnrs.lnrs_anon_imaging_study s "
     "LEFT JOIN lnrs.lnrs_anon_dicom_series d "
     "       ON d.dicom_study_uid = s.dicom_study_uid "
     "WHERE d.series_count IS NULL "
     "  AND s.image_path IS NOT NULL "
     "  {center_filter} "
-    "ORDER BY s.study_key"
+)
+
+SQL_PENDING = (
+    "SELECT s.study_key, s.dicom_study_uid, s.center_code, "
+    "s.image_path, s.anon_exam_id "
+    + SQL_PENDING_BASE
+    + "ORDER BY s.study_key"
 )
 
 # dry-run 阶段统计：分中心 + 待回填 study 数（不含目录在线探测）。
@@ -85,16 +91,14 @@ SQL_DRY_RUN_REPORT = (
     "SELECT center_code, count(*) AS pending_total "
     "FROM ( "
     "  SELECT s.study_key, s.center_code "
-    "  FROM lnrs.lnrs_anon_imaging_study s "
-    "  LEFT JOIN lnrs.lnrs_anon_dicom_series d "
-    "         ON d.dicom_study_uid = s.dicom_study_uid "
-    "  WHERE d.series_count IS NULL "
-    "    AND s.image_path IS NOT NULL "
-    "    {center_filter} "
-    ") p "
+    + SQL_PENDING_BASE
+    + ") p "
     "GROUP BY center_code "
     "ORDER BY center_code"
 )
+
+# 闸 banner 用：预计影响行数（与 SQL_PENDING / --dry-run 同口径，共享谓词派生）
+SQL_ESTIMATE = "SELECT count(*) " + SQL_PENDING_BASE
 
 # bypass 模式：anon_exam_id = NULL，created_batch_id 从 ingest_batch 取真实 UUID
 SQL_GET_BATCH_ID = (
@@ -123,6 +127,15 @@ WHERE lnrs.lnrs_anon_dicom_series.series_count IS NULL
 
 def _center_filter_sql(center: str | None) -> str:
     return f"AND s.center_code = '{center}'" if center else ""
+
+
+async def _estimate_pending(center: str | None, limit: int | None) -> int:
+    """预计影响行数（--dry-run 同口径：series_count IS NULL 的待回填 study 数）。"""
+    sql = SQL_ESTIMATE.format(center_filter=_center_filter_sql(center))
+    async with async_db_session() as db:
+        n = (await db.execute(text(sql))).scalar()
+    n = int(n or 0)
+    return min(n, limit) if limit else n
 
 
 # ---------- 业务函数 ----------
@@ -381,6 +394,7 @@ def _parse_args() -> argparse.Namespace:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true", help="仅输出待回填统计")
     g.add_argument("--apply", action="store_true", help="实际回填 series_count")
+    add_target_argument(p)
     p.add_argument(
         "--center",
         default=None,
@@ -404,6 +418,19 @@ def _parse_args() -> argparse.Namespace:
 
 async def main() -> int:
     args = _parse_args()
+    # 安全闸（issue-21）：写生产库必须 --target 显式声明；沙箱库 lnrs_dev 免声明。
+    # banner 与拒绝判断在任何 DB 连接之前完成（闸本身不依赖 DB 可达）。
+    writing = not args.dry_run
+    gate(
+        schema="lnrs",
+        tables=["lnrs.lnrs_anon_dicom_series"],
+        declared=args.target,
+        estimated_rows=None,
+        action="write" if writing else "read",
+    )
+    # 闸放行后补报预计影响行数（--dry-run 同口径，SQL_ESTIMATE）
+    est = await _estimate_pending(args.center, args.limit)
+    print(f"[WRITE-GATE] 预计影响行数（--dry-run 口径）: {est} study")
     if args.dry_run:
         await run_dry_run(args.center, args.limit)
     elif args.bypass_exam_fk:

@@ -226,9 +226,15 @@ class MedFilesService:
           2026-09-19 全局分布常显：本分组不随 exam_type 勾选过滤（center_type 仍生效），
           作为左侧「模态类型」筛选器的 facet 计数始终展示全量分布，勾选态下
           CT 仍显示 22.88% 而非 100%。
-        - total_patient_count：lnrs_anon_exam.patient_id 去重计数（一个患者多次检查会重复，
-          必须 COUNT(DISTINCT)）；筛选条件与 exam_count 完全一致（2026-09-20 由
-          lnrs_anon_patient 切换为 exam 口径）
+        - exam_patient_count：lnrs_anon_exam.patient_id 去重计数（一个患者多次检查会重复，
+          必须 COUNT(DISTINCT)）；筛选条件与 exam_count 完全一致（exam_type→exam.exam_type，
+          center_type→exam.center_code）。
+          2026-09-20 由 lnrs_anon_patient 切换为 exam 口径（详见 schema 字段 description）。
+        - 与 medicalDashboard 口径对照：
+            dashboard 「患者总量」 = lnrs_anon_patient 全集
+            medicalFiles 「有检查记录的患者数」 = exam_patient_count ⊆ 全集
+            差额 = 「入过册但从未做过任何检查的患者」。例如 shengyi：
+            全集 169,820 vs exam_patient_count 66,635（差 103,185，约 60.8%）。
         - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
         - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
           不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
@@ -250,17 +256,16 @@ class MedFilesService:
         record_count = int(count_row[0] or 0) if count_row else 0
         patient_count = int(count_row[1] or 0) if count_row else 0
 
-        # 注意：file_count 在下方 size 查询之后才计算（要用到 series_count 求和）
-
-        # ---- total_patient_count：基于 AnonExamModel（=lnrs_anon_exam）的 patient_id 去重 ----
+        # ---- exam_patient_count：基于 AnonExamModel（=lnrs_anon_exam）的 patient_id 去重 ----
         # 一个患者会有多次检查，exam 表里 patient_id 会重复，必须 COUNT(DISTINCT patient_id)。
         # 筛选条件与 exam_count 完全一致（exam_type→exam.exam_type，center_type→exam.center_code）。
-        total_patient_sql = select(func.count(func.distinct(e.patient_id)))
-        total_patient_sql = cls._apply_exam_conditions(
-            total_patient_sql, exam_type=exam_type, center_type=center_type
+        # 与 medicalDashboard 的「患者总量」不同 —— 后者查 lnrs_anon_patient 全集。
+        exam_patient_sql = select(func.count(func.distinct(e.patient_id)))
+        exam_patient_sql = cls._apply_exam_conditions(
+            exam_patient_sql, exam_type=exam_type, center_type=center_type
         )
-        total_patient_sql = await Permission(e, auth).filter_query(total_patient_sql)
-        total_patient_count = int((await auth.db.execute(total_patient_sql)).scalar() or 0)
+        exam_patient_sql = await Permission(e, auth).filter_query(exam_patient_sql)
+        exam_patient_count = int((await auth.db.execute(exam_patient_sql)).scalar() or 0)
 
         # ---- exam_count：基于 AnonExamModel（=lnrs_anon_exam 行数）----
         # 注意：exam_count 不等于 file_count —— 一次临床检查可能 0/N 个影像文件。
@@ -337,10 +342,10 @@ class MedFilesService:
 
         return {
             "file_count": file_count,
-            "record_count": record_count,
+            "exam_patient_count": exam_patient_count,
             "patient_count": patient_count,
-            "total_patient_count": total_patient_count,
             "exam_count": exam_count,
+
             "total_size_bytes": total_size_bytes,
             "total_size_text": _human_readable_size(total_size_bytes),
             "by_exam_type": by_exam_type,

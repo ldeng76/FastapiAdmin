@@ -33,7 +33,12 @@
 
           <FaMenuRouteIcon icon="el-icon-Tickets" class="icon-count" />总记录：<strong><FaCountTo :target="statisticsCount.exam_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_count)" /></strong>
 
-          <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />总患者数：<strong><FaCountTo :target="statisticsCount.total_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.total_patient_count)" /></strong>
+          <el-tooltip placement="top" effect="light"
+            content="有检查记录的患者数（lnrs_anon_exam.patient_id 去重）。注意与 medicalDashboard 的「患者总量」不同——后者查 lnrs_anon_patient 全集。差额为「入过册但从未做过任何检查的患者」。2026-09-20 切换口径。">
+            <span style="cursor: help">
+              <FaMenuRouteIcon icon="ri:file-user-fill" class="icon-count" />有检查记录的患者数：<strong><FaCountTo :target="statisticsCount.exam_patient_count || 0" separator="," :duration="getCountDuration(statisticsCount.exam_patient_count)" /></strong>
+            </span>
+          </el-tooltip>
 
           <FaMenuRouteIcon icon="file" class="icon-count" /> 总文件个数：<strong><FaCountTo :target="statisticsCount.file_count || 0" separator="," :duration="getCountDuration(statisticsCount.file_count)" /></strong>
 

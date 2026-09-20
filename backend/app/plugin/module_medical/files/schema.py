@@ -97,8 +97,13 @@ class MedFilesStatisticsOutSchema(BaseModel):
     patient_count: int = Field(
         description="有影像文件的患者数（lnrs_anon_imaging_study.patient_id 去重）"
     )
-    total_patient_count: int = Field(
-        description="总患者数（lnrs_anon_exam.patient_id 去重计数）"
+    exam_patient_count: int = Field(
+        description=(
+            "有检查记录的患者数（lnrs_anon_exam.patient_id 去重）。"
+            "注意：与 medicalDashboard 的「患者总量」不同 —— 后者查 lnrs_anon_patient 全集。"
+            "两者之差为「入过册但从未做过任何检查的患者」。"
+            "2026-09-20 由 lnrs_anon_patient 切换为 exam 口径。"
+        ),
     )
     exam_count: int = Field(
         description="检查量（lnrs_anon_exam 行数；与影像文件数不同——一次临床检查可能 0/N 个影像文件）"

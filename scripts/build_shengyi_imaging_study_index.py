@@ -201,10 +201,13 @@ def main() -> int:
             patient_insert_sql = """
                 INSERT INTO lnrs.lnrs_anon_patient
                     (patient_id, anon_id, center_code, sex,
+                     is_placeholder,  -- Issue 9 修复：显式写 TRUE
                      created_batch_id, last_seen_batch_id)
                 VALUES (
                     'PT_' || LPAD(nextval('lnrs.lnrs_anon_patient_seq')::text, 8, '0'),
-                    %s, %s, '0', %s, %s
+                    %s, %s, '0',
+                    TRUE,  -- 与 zhujiang/xinqiao 同口径；默认 FALSE 会让占位漏标（R16）
+                    %s, %s
                 )
                 ON CONFLICT (anon_id) DO NOTHING
                 RETURNING patient_id, anon_id

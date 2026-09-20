@@ -28,17 +28,28 @@
         @refresh="refreshData"
       />
 
-      <FaTable
-        ref="faTableRef"
-        :loading="loading"
-        :data="data"
-        :header-cell-style="{ backgroundColor: '#f5f7fa' }"
-        :columns="columns"
-        :pagination="pagination"
-        @sort-change="onSortChange"
-        @pagination:size-change="handleSizeChange"
-        @pagination:current-change="handleCurrentChange"
-      />
+    <FaTable
+      ref="faTableRef"
+      :loading="loading"
+      :data="data"
+      :header-cell-style="{ backgroundColor: '#f5f7fa' }"
+      :columns="columns"
+      :pagination="pagination"
+      @sort-change="onSortChange"
+      @pagination:size-change="handleSizeChange"
+      @pagination:current-change="handleCurrentChange"
+    >
+      <template #patient_id_cell="{ row }">
+        <span>{{ row.patient_id }}</span>
+        <el-tooltip
+          v-if="row.is_placeholder"
+          content="影像灌库建档的占位患者（人口学缺失）：调研确认其影像 ID 与本中心 HIS 临床/检查数据不可关联，无检查记录属数据源事实而非遗漏（issue-29）"
+          placement="top"
+        >
+          <el-tag type="info" size="small" effect="plain" style="margin-left: 4px">影像占位</el-tag>
+        </el-tooltip>
+      </template>
+    </FaTable>
     </ElCard>
   </div>
   <el-dialog :bodyClass="'patientDetailBody'" v-model="showDetail" fullscreen>
@@ -120,9 +131,10 @@ const {
       {
         prop: "patient_id",
         label: getFieldLabel("patient_id"),
-        minWidth: 120,
+        minWidth: 160,
         sortable: "custom",
-        showOverflowTooltip: true
+        useSlot: true,
+        slotName: "patient_id_cell"
       },
       {
         prop: "sex",

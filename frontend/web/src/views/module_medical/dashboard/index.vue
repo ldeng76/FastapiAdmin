@@ -215,10 +215,10 @@ function upDateChatsView(overview:StatsOverview){
 }
 onBeforeMount(async function (){
   const ageBuckets = await StatisticsAPI.getAgeBuckets()
-  const dictObj = await dictStore.getDict(['med_sex','med_center','med_exam_type','med_blood_type_abo','med_blood_type_rh','med_smoking_status'],true)
+  const dictObj = await dictStore.getDict(['med_sex','med_center','med_modality','med_blood_type_abo','med_blood_type_rh','med_smoking_status'],true)
   searchItems.value = [
     { key: "center", label: getFieldLabel("source_center"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_center, placeholder: "请选择", span: 4 },
-    { key: "modality", label: getFieldLabel("modality"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_exam_type, placeholder: "请选择", span: 4 },
+    { key: "modality", label: getFieldLabel("modality"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_modality, placeholder: "请选择", span: 4 },
     { key: "sex", label: getFieldLabel("sex"),labelWidth:100,type :"select", clearable: true,options: dictObj.med_sex, placeholder: "请选择", span: 4 },
     { key: "age_bucket", label: getFieldLabel("age_bucket"),labelWidth:100, type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },
     { key: "abo_blood_type", label: getFieldLabel("abo_blood_type"),labelWidth:100, type: "select", clearable: true, options: dictObj.med_blood_type_abo, placeholder: "请选择", span: 4 },

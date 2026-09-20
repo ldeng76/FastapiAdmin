@@ -236,10 +236,10 @@ function fmtAgeBirthday(v?: string): string {
 onBeforeMount(async ()=>{
   const ageBuckets = await StatisticsAPI.getAgeBuckets()
   const bmiBuckets = await StatisticsAPI.getBmiBuckets()
-  await dictStore.getDict(['med_sex','med_center','med_exam_type','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
+  await dictStore.getDict(['med_sex','med_center','med_modality','med_blood_type_abo','med_blood_type_rh','med_smoking_status'])
   patientSearchItems.value = [
     {key: "center", label: getFieldLabel("source_center"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_center'), clearable: true,span: 4},
-    {key: "modality", label: getFieldLabel("modality"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_exam_type'), clearable: true,span: 4},
+    {key: "modality", label: getFieldLabel("modality"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_modality'), clearable: true,span: 4},
     {key: "patient_id", label: getFieldLabel("patient_id"), type: "input" ,clearable: true, placeholder: "请输入"+getFieldLabel("patient_id"), span: 4},
     {key: "sex", label: getFieldLabel("sex"),type: "select",placeholder: "请选择", options: dictStore.getDictArrayForSearch('med_sex'), clearable: true,span: 4},
     {key: "age_bucket", label: getFieldLabel("age"),type: "select", clearable: true, options:ageBuckets, placeholder: "请选择", span: 4 },

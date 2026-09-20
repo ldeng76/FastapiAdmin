@@ -196,26 +196,121 @@ FROM {src('pathology')}
 LEFT JOIN adm a ON a.visit_id = {c('pathology', '就诊编号')}
 WHERE {c('pathology', '报告编号')} IS NOT NULL AND {c('pathology', '报告编号')} <> ''
 """
-
 SQL_IMAGING = f"""
 SELECT
     {q('患者编号')} AS patient_id,
     {c('imaging', '就诊编号')} AS visit_id,
     {c('imaging', '报告编号')} AS report_id,
-    -- 检查类型名称自由文本 → 关键词归一化（引擎行级精确匹配字典值）
+    -- 检查类型名称自由文本 → 26 值新词表（Rev 2026-09-19；
+    -- 详见 docs/handoff-20260919-reclassify-other-exam-type.md §5 Step 3.3）。
+    -- 规则与 backend/etl2/reclassify_shengyi_other_exam_type.py 的 classify()
+    -- 一致：ETL1 适配层先把 Other 子集归一化到 26 值，ETL2 引擎不再兜底 Other，
+    -- 防止重跑 staging 再次产生 5.7 万行 Other 落入 CHECK 拒绝。
     CASE
-        WHEN {c('imaging', '检查类型名称')} ILIKE '%PET%' THEN 'PETCT'
+        -- 核医学（代码/名称双空 + PET/骨显像等关键词）→ nuclear_medicine
+        WHEN ({c('imaging', '检查类型代码')} = '' OR {c('imaging', '检查类型代码')} IS NULL)
+          AND ({c('imaging', '检查类型名称')} = '' OR {c('imaging', '检查类型名称')} IS NULL)
+          AND ({c('imaging', '检查项目')} ILIKE '%PET%'
+            OR {c('imaging', '检查项目')} ILIKE '%骨显像%'
+            OR {c('imaging', '检查项目')} ILIKE '%平面采集%'
+            OR {c('imaging', '检查项目')} ILIKE '%断层采集%'
+            OR {c('imaging', '检查项目')} ILIKE '%动态采集%'
+            OR {c('imaging', '检查项目')} ILIKE '%全身平面采集%'
+            OR {c('imaging', '检查项目')} ILIKE '%心肌血流灌注%'
+            OR {c('imaging', '检查项目')} ILIKE '%心肌灌注%'
+            OR {c('imaging', '检查项目')} ILIKE '%肾动态%'
+            OR {c('imaging', '检查项目')} ILIKE '%甲状旁腺%'
+            OR {c('imaging', '检查项目')} ILIKE '%甲状腺静态%'
+            OR {c('imaging', '检查项目')} ILIKE '%唾液腺动态%'
+            OR {c('imaging', '检查项目')} ILIKE '%局部淋巴显像%'
+            OR {c('imaging', '检查项目')} ILIKE '%脏器断层%'
+            OR {c('imaging', '检查项目')} ILIKE '%下肢深静脉%'
+            OR {c('imaging', '检查项目')} ILIKE '%心肌淀粉样变%'
+            OR {c('imaging', '检查项目')} ILIKE '%骨密度%'
+            OR {c('imaging', '检查项目')} ILIKE '%双光子%'
+            OR {c('imaging', '检查项目')} ILIKE '%能量骨密度%'
+            OR {c('imaging', '检查方法')} ILIKE '%3D%'
+            OR {c('imaging', '检查方法')} ILIKE '%平面采集%'
+            OR {c('imaging', '检查方法')} ILIKE '%断层采集%'
+            OR {c('imaging', '检查方法')} ILIKE '%动态采集%'
+            OR {c('imaging', '检查方法')} ILIKE '%心肌灌注%'
+            OR {c('imaging', '检查部位')} ILIKE '%会阴－颅底%'
+            OR {c('imaging', '检查部位')} ILIKE '%全身骨%'
+          ) THEN 'nuclear_medicine'
+        -- 支气管镜 → bronchoscope
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%支气管镜%' THEN 'bronchoscope'
+        -- 消化内镜/胸腔镜/耳鼻喉（决策 1：键义扩展为「内镜」）→ bronchoscope
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%胃镜%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%肠镜%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%十二指肠镜%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%小肠镜%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%ERCP%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%治疗内镜%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%胸腔镜%' THEN 'bronchoscope'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%耳鼻喉科%' THEN 'bronchoscope'
+        -- MR 高级序列（DWI/SWI/PWI/DTI/VBM/ASL/APT）→ MRI
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%DWI%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%SWI%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%PWI%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%DTI%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%VBM%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%ASL%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%APT%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%弥散%' THEN 'MRI'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%功能成像%' THEN 'MRI'
+        -- 穿刺介入 → radiology
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%穿刺%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%活检%' THEN 'radiology'
+        -- 造影类 → radiology
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%造影%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%吞钡%' THEN 'radiology'
+        -- 普放摄影（含 动力位/开口位/蛙形位/出口位/入口位/双斜）→ radiology
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%正位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%侧位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%斜位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%动力位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%开口位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%双斜%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%平片%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%拼接%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%立位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%卧位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%蛙形位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%蛙型位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%出口位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%入口位%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%乳腺CC%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%MLO%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%LM%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%AT%' THEN 'radiology'
+        -- CT（平扫 / 增强 / 增强扫描；排除「主动脉全程平扫+增强」类）→ CT
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%平扫%' THEN 'CT'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%增强%' THEN 'CT'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%增强扫描%' THEN 'CT'
+        -- 代码 5500/6153/5499/7383/6656（名称空，body_clean 实测全为 MR）→ MRI
+        WHEN ({c('imaging', '检查类型名称')} = '' OR {c('imaging', '检查类型名称')} IS NULL)
+          AND {c('imaging', '检查类型代码')} IN ('5500', '6153', '5499', '7383', '6656') THEN 'MRI'
+        -- 会诊读片（决策 2）→ imaging_report
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%会诊%' THEN 'imaging_report'
+        -- 三维重建加收兜底 → imaging_report
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%三维重建%' THEN 'imaging_report'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%加收%' THEN 'imaging_report'
+        -- 旧 ETL1 关键词（保持兼容：未来若源数据按旧 ILIKE 命中也能正确归 26 值）
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%PET%' THEN 'nuclear_medicine'
         WHEN {c('imaging', '检查类型名称')} ILIKE '%MR%'
-          OR {c('imaging', '检查类型名称')} ILIKE '%磁共振%' THEN 'MR'
+          OR {c('imaging', '检查类型名称')} ILIKE '%磁共振%' THEN 'MRI'
         WHEN {c('imaging', '检查类型名称')} ILIKE '%CT%'
           OR {c('imaging', '检查类型名称')} ILIKE '%计算机体层%' THEN 'CT'
         WHEN {c('imaging', '检查类型名称')} ILIKE '%DR%'
           OR {c('imaging', '检查类型名称')} ILIKE '%胸片%'
           OR {c('imaging', '检查类型名称')} ILIKE '%照片%'
           OR {c('imaging', '检查类型名称')} ILIKE '%X线%'
-          OR {c('imaging', '检查类型名称')} ILIKE '%放射%' THEN 'Radiology'
-        WHEN {c('imaging', '检查类型名称')} ILIKE '%超声%' THEN 'Ultrasound'
-        ELSE 'Other'
+          OR {c('imaging', '检查类型名称')} ILIKE '%放射%' THEN 'radiology'
+        WHEN {c('imaging', '检查类型名称')} ILIKE '%超声%' THEN 'ultrasound'
+        -- ETL1 不应再产生 'Other'（决策 3 + 0025）：兜底 → imaging_report（最宽语义，
+        -- 导入时引擎会按行级 exam_type 兜底逻辑重新分类；但实际不会触发，2026-09-19
+        -- 终态后要求 ETL1 自洽覆盖）。
+        ELSE 'imaging_report'
     END AS exam_type,
     {c('imaging', '检查部位')} AS exam_body_part,
     {c('imaging', '检查项目')} AS exam_item,
@@ -225,25 +320,6 @@ SELECT
 FROM {src('imaging')}
 WHERE {c('imaging', '报告编号')} IS NOT NULL AND {c('imaging', '报告编号')} <> ''
 """
-
-SQL_ULTRASOUND = f"""
-SELECT
-    {q('患者编号')} AS patient_id,
-    {c('ultrasound', '就诊编号')} AS visit_id,
-    {c('ultrasound', '报告编号')} AS report_id,
-    ANY_VALUE({c('ultrasound', '检查名称')}) AS exam_name,
-    ANY_VALUE({c('ultrasound', '部位')}) AS body_part,
-    ANY_VALUE({c('ultrasound', '检查日期')}) AS exam_date,
-    ANY_VALUE({c('ultrasound', '超声提示')}) AS ultrasound_finding,
-    {{'findings': ANY_VALUE({c('ultrasound', '检查所见')}),
-      'sub_items': LIST(
-          {{'item_name': {cs('ultrasound', '项目名称')},
-            'item_result': {cs('ultrasound', '检查结果')},
-            'item_result_value': {cs('ultrasound', '检查结果数值')},
-            'item_unit': {cs('ultrasound', '检查项目单位')},
-            'data_source': {cs('ultrasound', '数据来源')}}}
-          ORDER BY {cs('ultrasound', '项目名称')})}} AS exam_detail
-FROM {src('ultrasound')}
 WHERE {c('ultrasound', '报告编号')} IS NOT NULL AND {c('ultrasound', '报告编号')} <> ''
 GROUP BY 1, 2, 3
 """

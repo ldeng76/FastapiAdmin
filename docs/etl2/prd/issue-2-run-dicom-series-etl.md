@@ -42,5 +42,12 @@
 - 备份建议（不强制）：`CREATE TABLE lnrs_anon_dicom_series_bak_<timestamp> AS TABLE lnrs.lnrs_anon_dicom_series;`
 - 执行中可监控进度：`SELECT count(*) FROM lnrs_anon_dicom_series WHERE created_batch_id = (SELECT batch_id FROM lnrs_anon_ingest_batch WHERE center_code='zhujiang' ORDER BY started_at DESC LIMIT 1);`
 - 失败 study 不阻断（脚本注释明示），单 study 失败容错好；查看日志末尾的 `ETL2: {center} dicom_series 完成 — scanned=... series_upserted=... skipped_no_exam=... failed_studies=...` 汇总。
-- 若要中途取消：先 `Ctrl-C` 中断脚本，再 `DELETE FROM lnrs_anon_dicom_series WHERE created_batch_id = '<batch>';` 回滚本批次（其它批次不受影响）。
 - 跑完后**不要**自行启动 Issue 3 —— 等待用户在另一会话根据 PRD 与本 Issue 验收决定 Issue 3 实施时机。
+
+## 验收补充：dicom_series.anon_exam_id 回填
+
+本 Issue 不仅是「让视图 total_bytes 非零」，还顺带完成 `lnrs_anon_dicom_series.anon_exam_id` 从 100% NULL → 全填充的回填（2026-09-19 发现 zhujiang 43,873 / shengyi 82,057 行 NULL；根因见 [Issue 1](./issue-1-backfill-imaging-study-exam-id.md) 的"同时修复 dicom_series.anon_exam_id 全 NULL"小节）。
+
+upsert 路径已就绪（`backend/app/plugin/module_medical/hospital/anon_etl_engine.py:3212-3228`）—— `anon_exam_id` 列使用 `COALESCE(excluded.anon_exam_id, 已存值)`，已为 NULL 的行会被新值覆盖；为非 NULL 的行保持不变；所以本 Issue 的 apply 重跑是**安全的幂等回填**，不需要额外脚本。
+
+shengyi 中心：coverage 0%（[Issue 4](./issue-4-investigate-shengyi-exam-gap.md) 单独调查），dicom_series.anon_exam_id 仍为 NULL 是预期，不需要在本 Issue 修复。

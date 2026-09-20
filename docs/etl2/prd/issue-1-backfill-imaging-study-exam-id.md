@@ -30,6 +30,28 @@
 - [ ] 决定 shengyi 是否在本次跑：默认 shengyi 是 noop（覆盖率 0%），不需要专门跑——但需在 commit message 写明"shengyi 跳过原因见 Issue 4"。
 - [ ] 不动 `lnrs_anon_dicom_series`、不动 `lnrs_anon_exam`、不动任何 parquet/CSV。
 
+## 同时修复 dicom_series.anon_exam_id 全 NULL
+
+2026-09-19 发现 `lnrs_anon_dicom_series` 表全部 125,930 行 `anon_exam_id` 均为 NULL（zhujiang 43,873 + shengyi 82,057）。根因不是 dicom_series 本身，而是 `lnrs_anon_imaging_study.anon_exam_id` 全 NULL —— dicom_series 是它的下游冗余 FK（`anon_exam_id_fkey ON DELETE CASCADE`）。
+
+本 Issue 完成后会**顺带修复** dicom_series 的 NULL，机制见 Issue 2：`anon_etl_engine.py:3225-3228` 的 ON CONFLICT upsert 写法对 `anon_exam_id` 列使用 `func.coalesce(stmt.excluded.anon_exam_id, 已存值)`，所以等 Issue 2 重跑 dicom_series ETL 时，之前以 NULL 写入的 zhujiang 行会自动被回填成 Issue 1 产出的 anon_exam_id（shengyi 仍为 NULL，因为 shengyi coverage 0% 是已知缺口，见 Issue 4）。
+
+回填 dicom_series 的端到端断言 SQL（Issue 2 跑完后执行）：
+
+```sql
+-- zhujiang 的 dicom_series 应全部挂上 exam
+SELECT
+  b.center_code,
+  COUNT(*) AS total_series,
+  COUNT(*) FILTER (WHERE s.anon_exam_id IS NULL) AS still_null,
+  COUNT(*) FILTER (WHERE s.anon_exam_id IS NOT NULL) AS filled
+FROM lnrs.lnrs_anon_dicom_series s
+JOIN lnrs.lnrs_anon_ingest_batch b ON s.created_batch_id = b.batch_id
+WHERE b.center_code = 'zhujiang'
+GROUP BY b.center_code;
+-- 期望：still_null = 0，filled = 43873（与 zhujiang 入库 series 行数一致）
+```
+
 ## Blocked by
 
 None — can start immediately.

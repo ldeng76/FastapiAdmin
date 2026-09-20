@@ -11,13 +11,15 @@ imaging_study 是离线灌库的（CSV → DB），未走 ETL-2 exam 写入路�
 故 anon_exam_id 一直是 NULL。本脚本用 exam 表已落库的数据反查匹配，为每条
 imaging_study 行关联一个最接近的 CT exam。
 
-关联口径
---------
 - 关联键：(imaging_study.patient_id, exam.patient_id)
 - 模态约束：仅 exam_type='CT'（h196_3 上 imaging_study.modality 100%='CT'）
-- 时间距离：|exam.exam_date - lnrs.path_study_date(image_path)| 最小
+- 时间距离：|exam.exam_date - study_date| 最小；study_date =
+  COALESCE(lnrs.path_study_date(image_path), lnrs.uid_study_date(dicom_study_uid))
+  （2026-09-20 issue-13：xinqiao 的 image_path 无日期，改由 StudyInstanceUID
+  内嵌时间戳兜底；zhujiang/shengyi 路径日期已覆盖 → 行为不变）
 - 平局：取 anon_exam_id 字典序最小（稳定；可复现）
-- 不可匹配（patient 不在 exam 表 / exam 表无 CT 行）：保持 NULL，由 dicom_series 阶段跳过
+- 不可匹配（patient 不在 exam 表 / exam 表无 CT 行 / study 无任何可解析日期）：
+  保持 NULL，由 dicom_series 阶段跳过
 
 回填覆盖率（h196_3 实测 2026-09-15）：
   study_total      119,350
@@ -74,6 +76,14 @@ from app.core.logger import log  # noqa: E402
 
 # ---------- SQL 块 ----------
 
+# study 检查日期表达式：路径日期优先（zhujiang/shengyi），UID 内嵌时间戳兜底
+# （xinqiao image_path 无日期，2026-09-20 issue-13 引入 lnrs.uid_study_date）。
+# 两个函数均 IMMUTABLE；对既有中心 COALESCE 第一支非 NULL → 行为 0 变化。
+STUDY_DATE_EXPR = (
+    "COALESCE(lnrs.path_study_date(s.image_path), "
+    "lnrs.uid_study_date(s.dicom_study_uid))"
+)
+
 # 1) 覆盖率统计（dry-run 用）：不修改任何数据
 SQL_COVERAGE_REPORT = """
 WITH m AS (
@@ -82,13 +92,13 @@ WITH m AS (
     s.center_code,
     s.dicom_study_uid,
     count(e.anon_exam_id) FILTER (WHERE e.exam_type = 'CT')   AS ct_exam_count,
-    min(abs(e.exam_date - lnrs.path_study_date(s.image_path)))
+    min(abs(e.exam_date - {study_date}))
       FILTER (WHERE e.exam_type = 'CT')                        AS min_abs_diff_days
   FROM lnrs.lnrs_anon_imaging_study s
   LEFT JOIN lnrs.lnrs_anon_exam e
     ON e.patient_id = s.patient_id
    AND e.exam_type  = 'CT'
-   AND lnrs.path_study_date(s.image_path) IS NOT NULL
+   AND {study_date} IS NOT NULL
   WHERE s.image_path IS NOT NULL
     {center_filter}
   GROUP BY s.study_key, s.center_code, s.dicom_study_uid
@@ -116,8 +126,8 @@ SELECT
     FROM lnrs.lnrs_anon_exam e
     WHERE e.patient_id = s.patient_id
       AND e.exam_type  = 'CT'
-      AND lnrs.path_study_date(s.image_path) IS NOT NULL
-    ORDER BY abs(e.exam_date - lnrs.path_study_date(s.image_path)) ASC,
+      AND {study_date} IS NOT NULL
+    ORDER BY abs(e.exam_date - {study_date}) ASC,
              e.anon_exam_id ASC
     LIMIT 1
   ) AS picked_exam_id
@@ -129,7 +139,7 @@ WHERE s.anon_exam_id IS NULL
     SELECT 1 FROM lnrs.lnrs_anon_exam e
     WHERE e.patient_id = s.patient_id
       AND e.exam_type  = 'CT'
-      AND lnrs.path_study_date(s.image_path) IS NOT NULL
+      AND {study_date} IS NOT NULL
   );
 """
 
@@ -138,15 +148,20 @@ def _center_filter_sql(center: str | None) -> str:
     return f"AND s.center_code = '{center}'" if center else ""
 
 
-async def run_dry_run(center: str | None) -> None:
-    """仅输出覆盖率报告，不修改数据。"""
-    sql = SQL_COVERAGE_REPORT.format(center_filter=_center_filter_sql(center))
+def coverage_report_sql(center: str | None) -> str:
+    """拼好占位的覆盖率报告 SQL（供调用方直接执行取 matchable 等列）。"""
+    return SQL_COVERAGE_REPORT.format(study_date=STUDY_DATE_EXPR, center_filter=_center_filter_sql(center))
+
+
+async def run_dry_run(center: str | None) -> list:
+    """仅输出覆盖率报告，不修改数据。返回报告行（供调用方取 matchable 等列）。"""
+    sql = SQL_COVERAGE_REPORT.format(study_date=STUDY_DATE_EXPR, center_filter=_center_filter_sql(center))
     print(f"\n[DRY-RUN] 覆盖统计（center={center or 'ALL'}）：\n")
     async with async_db_session() as db:
         rows = (await db.execute(text(sql))).all()
         if not rows:
             print("  （无数据）")
-            return
+            return rows
         # 表头
         print(
             f"  {'center':<12} {'total':>8} {'matchable':>10} {'<=1d':>8} "
@@ -167,11 +182,12 @@ async def run_dry_run(center: str | None) -> None:
             f"\n  合计: {total_matchable}/{total_studies} study 可回填 "
             f"({ratio*100:.1f}%)"
         )
+        return rows
 
 
 async def run_apply(center: str | None) -> None:
     """实际回填 anon_exam_id。"""
-    select_sql = SQL_PICK_CANDIDATE.format(center_filter=_center_filter_sql(center))
+    select_sql = SQL_PICK_CANDIDATE.format(study_date=STUDY_DATE_EXPR, center_filter=_center_filter_sql(center))
     print(f"\n[APPLY] 回填 imaging_study.anon_exam_id（center={center or 'ALL'}）…\n")
 
     picked = 0

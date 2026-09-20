@@ -1,5 +1,5 @@
-"""回填 lnrs_anon_dicom_series.series_count（2026-09-17 系列修正）。
-
+"""回填 dicom_series.series_count → 写入 stage 表（issue-20「先暂存再上」）。
+（issue-20：写入目标为 lnrs.lnrs_stage_dicom_series，promote 命令再幂等上生产表。）
 背景
 ----
 2026-09-15 将 lnrs_anon_dicom_series 从 series 级重构为 study 级（一行 = 一个 study）
@@ -18,7 +18,9 @@
 回填策略
 --------
 - WHERE series_count IS NULL：天然断点续扫，重复执行 noop
-- 目录在线 → register_folder + upsert（只更 series_count；不动 file_count / byte_size）
+- 目录在线 → register_folder 实测 series_count，upsert 进 **stage 表**
+  lnrs.lnrs_stage_dicom_series（issue-20：本脚本不再直写生产表；
+  生产表由 promote_stage_dicom_series.py 幂等 promote）
 - 目录缺失（移动硬盘出库） → 跳过并计数，series_count 保持 NULL
 - 每 500 study commit（沿用 ETL BATCH_COMMIT_EVERY=500 模式）
 - 参数：--dry-run / --apply / --center / --limit
@@ -32,13 +34,12 @@
 
 幂等
 ----
-- ON CONFLICT (dicom_study_uid) DO UPDATE：series_count 会被最新 run 覆盖
-- WHERE series_count IS NULL 守卫：不会复位已实测值（与增量 ETL 并发安全——R5）
 
 回退
 ----
-UPDATE lnrs.lnrs_anon_dicom_series SET series_count = NULL;
--- 或（更稳）按需筛选后 UPDATE
+本脚本只写 stage 表，生产表在 promote 前完全不变：
+- 弃数据：TRUNCATE lnrs.lnrs_stage_dicom_series;（不影响生产）
+- 已 promote 后回退：见 backend/etl2/README.md「回退」一节
 """
 
 from __future__ import annotations
@@ -59,9 +60,6 @@ from sqlalchemy import text  # noqa: E402
 from app.core.database import async_db_session  # noqa: E402
 from app.core.logger import log  # noqa: E402
 from app.plugin.module_medical.dicom.repository import indexer  # noqa: E402
-from app.plugin.module_medical.hospital.anon_etl_engine import (  # noqa: E402
-    _upsert_dicom_byte_size_for_study,
-)
 
 # ---------- SQL 块 ----------
 
@@ -100,6 +98,9 @@ SQL_DRY_RUN_REPORT = (
 # 闸 banner 用：预计影响行数（与 SQL_PENDING / --dry-run 同口径，共享谓词派生）
 SQL_ESTIMATE = "SELECT count(*) " + SQL_PENDING_BASE
 
+# stage 表（issue-20）：本脚本所有写入只进 stage，生产表由 promote 命令上
+STAGE_TABLE = "lnrs.lnrs_stage_dicom_series"
+
 # bypass 模式：anon_exam_id = NULL，created_batch_id 从 ingest_batch 取真实 UUID
 SQL_GET_BATCH_ID = (
     "SELECT batch_id FROM lnrs.lnrs_anon_ingest_batch "
@@ -112,16 +113,15 @@ SQL_GET_ANY_BATCH_ID = (
     "ORDER BY started_at DESC LIMIT 1"
 )
 
-SQL_UPSERT_BYPASS = """
-INSERT INTO lnrs.lnrs_anon_dicom_series
+SQL_UPSERT_STAGE = f"""
+INSERT INTO {STAGE_TABLE}
   (anon_exam_id, dicom_study_uid, file_count, byte_size, series_count, created_batch_id)
 VALUES
-  (NULL, :study_uid, :file_count, :byte_size, :series_count, :batch_id)
+  (:anon_exam_id, :study_uid, :file_count, :byte_size, :series_count, :batch_id)
 ON CONFLICT (dicom_study_uid) DO UPDATE SET
   series_count = EXCLUDED.series_count,
   file_count   = EXCLUDED.file_count,
   byte_size    = EXCLUDED.byte_size
-WHERE lnrs.lnrs_anon_dicom_series.series_count IS NULL
 """
 
 
@@ -181,8 +181,46 @@ async def run_dry_run(center: str | None, limit: int | None) -> None:
         )
 
 
+def _measure_folder(path: Path) -> tuple[int, int]:
+    """study 目录 → (file_count, byte_size)。与 anon_etl_engine 口径一致：iterdir+stat。"""
+    files = [p for p in path.iterdir() if p.is_file()]
+    byte_size = 0
+    for fp in files:
+        try:
+            byte_size += fp.stat().st_size
+        except OSError:
+            continue
+    return len(files), byte_size
+
+
+def _measure_series_count(path: Path, study_uid: str) -> int:
+    """register_folder 实测 series_count（与 DicomViewer 口径一致）；异常兜底 0。"""
+    try:
+        reg = indexer.register_folder(path)
+        if reg and reg.get("series_count") is not None:
+            return int(reg["series_count"])
+    except Exception as e:
+        log.warning(
+            f"[APPLY] register_folder 异常 study={study_uid}: "
+            f"{type(e).__name__}: {e!s}"
+        )
+    return 0
+
+
+async def _resolve_batch_id(db, center: str | None) -> str | None:
+    """created_batch_id：优先目标中心最近 batch，否则任意最近 batch；无则 None。"""
+    if center:
+        row = (await db.execute(
+            text(SQL_GET_BATCH_ID), {"center": center}
+        )).first()
+        if row:
+            return str(row[0])
+    row = (await db.execute(text(SQL_GET_ANY_BATCH_ID))).first()
+    return str(row[0]) if row else None
+
+
 async def run_apply(center: str | None, limit: int | None) -> None:
-    """实际回填 series_count。"""
+    """实际回填 series_count（写入 stage 表，不直写生产表）。"""
     print(
         f"\n[APPLY] 回填 dicom_series.series_count "
         f"（center={center or 'ALL'}, limit={limit or 'NONE'}）…\n"
@@ -190,6 +228,11 @@ async def run_apply(center: str | None, limit: int | None) -> None:
 
     select_sql = SQL_PENDING.format(center_filter=_center_filter_sql(center))
     async with async_db_session() as db:
+        batch_id = await _resolve_batch_id(db, center)
+        if not batch_id:
+            log.error("[APPLY] 无可用 ingest_batch 行，无法写入 stage 表")
+            return
+        log.info(f"[APPLY] 使用 batch_id={batch_id}")
         result = await db.execute(text(select_sql))
         candidates = result.all()
         log.info(f"[APPLY] 候选 study 行 {len(candidates)} 条")
@@ -218,23 +261,26 @@ async def run_apply(center: str | None, limit: int | None) -> None:
                     skipped_offline += 1
                     continue
 
-                # 目录在线 → upsert（只动 series_count；不动 file_count/byte_size）。
-                # 这里复用 _upsert_dicom_byte_size_for_study 的 register_folder 路径
-                # 会把 file_count/byte_size 也覆盖——但 ETL 主流程已经写过了，
-                # 重写等于 idempotent 同步；额外开销可控（仅 register_folder 是新增）。
+                # 目录在线 → 实测后 upsert 进 stage 表（issue-20）。
+                # series_count 走 register_folder 实测（与 DicomViewer 口径一致）；
+                # anon_exam_id 取 imaging_study 当前值，NULL 直接传 None
+                # （Issue 7 修复 Defect 3：不得传空串）。
                 try:
-                    n = await _upsert_dicom_byte_size_for_study(
-                        db,
-                        image_path=row.image_path,
-                        dicom_study_uid=row.dicom_study_uid,
-                        anon_exam_id=row.anon_exam_id,  # Issue 7 修复 Defect 3：
-                        # NULL 时直接传 None；修复前用 `row.anon_exam_id or ""` 会传空串
-                        # → exam FK NOT NULL 约束违反；0024 已允许 FK NULL，
-                        # bypass 模式（run_apply_bypass）则本就走 anon_exam_id=NULL 路径
-                        batch_id=str(row.dicom_study_uid)[:36],
-                    )
+                    file_count, byte_size = _measure_folder(path)
+                    if not file_count:
+                        # 目录在线但无文件 → 不写行（与 anon_etl_engine 口径一致）
+                        continue
+                    series_count = _measure_series_count(path, row.dicom_study_uid)
+                    result2 = await db.execute(text(SQL_UPSERT_STAGE), {
+                        "anon_exam_id": row.anon_exam_id,
+                        "study_uid": row.dicom_study_uid,
+                        "file_count": file_count,
+                        "byte_size": byte_size,
+                        "series_count": series_count,
+                        "batch_id": batch_id,
+                    })
                     scanned += 1
-                    if n >= 0:
+                    if result2.rowcount > 0:
                         updated += 1
                 except Exception as e:
                     failed += 1
@@ -272,12 +318,11 @@ async def run_apply(center: str | None, limit: int | None) -> None:
 
 
 async def run_apply_bypass(center: str | None, limit: int | None) -> None:
-    """Bypass 模式：绕开 exam FK 直接写 dicom_series.series_count。
+    """Bypass 模式：绕开 exam FK 直接写 stage 表的 series_count。
 
-    适用场景：imaging_study.anon_exam_id 100% NULL（如 h196_3 shengyi），
-    无法走 _upsert_dicom_byte_size_for_study 的 FK 路径。
-    本函数直接 SQL INSERT/UPDATE，anon_exam_id=NULL，
-    created_batch_id 从 ingest_batch 取真实 UUID。
+    适用场景：imaging_study.anon_exam_id 100% NULL（如 h196_3 shengyi）。
+    本函数直接 SQL INSERT/UPDATE 进 lnrs.lnrs_stage_dicom_series（issue-20：
+    不直写生产表），anon_exam_id=NULL，created_batch_id 取真实 batch UUID。
     """
     print(
         f"\n[APPLY-BYPASS] 回填 dicom_series.series_count（绕开 exam FK）"
@@ -287,19 +332,9 @@ async def run_apply_bypass(center: str | None, limit: int | None) -> None:
     select_sql = SQL_PENDING.format(center_filter=_center_filter_sql(center))
     async with async_db_session() as db:
         # 取有效 batch_id（优先目标中心，否则任意）
-        batch_id = None
-        if center:
-            row = (await db.execute(
-                text(SQL_GET_BATCH_ID), {"center": center}
-            )).first()
-            if row:
-                batch_id = str(row[0])
+        batch_id = await _resolve_batch_id(db, center)
         if not batch_id:
-            row = (await db.execute(text(SQL_GET_ANY_BATCH_ID))).first()
-            if row:
-                batch_id = str(row[0])
-        if not batch_id:
-            log.error("[APPLY-BYPASS] 无可用 ingest_batch 行，无法写入 dicom_series")
+            log.error("[APPLY-BYPASS] 无可用 ingest_batch 行，无法写入 stage 表")
             return
         log.info(f"[APPLY-BYPASS] 使用 batch_id={batch_id}")
 
@@ -331,23 +366,15 @@ async def run_apply_bypass(center: str | None, limit: int | None) -> None:
                     continue
 
                 try:
-                    # 1. 跳过 register_folder（DicomIndexer 每 study 解析 DICOM 元数据极慢，对 zhujiang 86k study 估时 90+ h）；
+                    # 跳过 register_folder（DicomIndexer 每 study 解析 DICOM 元数据极慢，对 zhujiang 86k study 估时 90+ h）；
                     #    series_count 留 NULL，等 DicomViewer 实时按需算（R 列定义允许 NULL）。
                     #    shengyi 已实测：byte_size + file_count 是必需列；series_count 可后补。
                     series_count = None
+                    file_count, byte_size = _measure_folder(path)
 
-                    files = [p for p in path.iterdir() if p.is_file()]
-                    file_count = len(files)
-                    byte_size = 0
-                    for fp in files:
-                        try:
-                            byte_size += fp.stat().st_size
-                        except OSError:
-                            continue
-
-                    # 3. 直接 SQL upsert（anon_exam_id=NULL，有效 batch_id）
-                    upsert_sql = text(SQL_UPSERT_BYPASS)
-                    result2 = await db.execute(upsert_sql, {
+                    # upsert 进 stage 表（anon_exam_id=NULL，有效 batch_id）
+                    result2 = await db.execute(text(SQL_UPSERT_STAGE), {
+                        "anon_exam_id": None,
                         "study_uid": row.dicom_study_uid,
                         "file_count": file_count,
                         "byte_size": byte_size,
@@ -420,10 +447,11 @@ async def main() -> int:
     args = _parse_args()
     # 安全闸（issue-21）：写生产库必须 --target 显式声明；沙箱库 lnrs_dev 免声明。
     # banner 与拒绝判断在任何 DB 连接之前完成（闸本身不依赖 DB 可达）。
+    # issue-20：写入目标只有 stage 表；生产表由 promote 命令另行上（promote 自带闸）。
     writing = not args.dry_run
     gate(
         schema="lnrs",
-        tables=["lnrs.lnrs_anon_dicom_series"],
+        tables=[STAGE_TABLE],
         declared=args.target,
         estimated_rows=None,
         action="write" if writing else "read",

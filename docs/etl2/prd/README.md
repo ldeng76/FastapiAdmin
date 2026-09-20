@@ -120,3 +120,54 @@ Issue 18  （被外部 PACS 映射阻塞；与 Issue 13 软联动）
   落地时建议合并为一次 `git filter-repo` 操作，减少 `--force-with-lease` 次数。
 - Issue 14 是 plan-xinqiao §7-6 提出的安全验证：珠江 86,927 study 当前只有 1 例实测目录名 UID == header `StudyInstanceUID`，
   本调研补足抽样证据。
+
+---
+
+## 第四组：「先暂存再上」— stage 表 + 幂等 promote（issue-19 ~ issue-23）
+
+来源：[事故复盘 §10](../findings/incident-20260920-test-cascade-delete.md)。
+
+**先说清楚这一组解决什么、不解决什么**：
+
+- 9-20 那起事故（测试的 `DELETE` 级联删掉 168,260 行）**已由测试沙箱修复**
+  （`lnrs_dev` + `tests/anon_etl/_db_guard.py`，commit `bf6564ce`）。本组**不是**它的修复。
+- 本组解决的是**另一个风险**：`backend/etl2/` 下的**执行型脚本直写生产库、没有任何闸**。
+- 主 ETL 路径**不在**本组范围：它已经是幂等 upsert + 事务内 temp table，收益小、改动大。
+
+| 文件 | 用途 | 阻塞 |
+|---|---|---|
+| `issue-19-prefactor-share-copy-then-merge.md` | Issue 19: prefactor — 把 `_copy_then_merge` 抽成 promote 可复用的共用函数 | 无 |
+| `issue-20-dicom-series-stage-and-promote.md` | Issue 20: `dicom_series` 表级 promote 链路打通（tracer bullet） | Issue 19 |
+| `issue-21-adhoc-script-write-guard.md` | Issue 21: ad-hoc 脚本安全闸 — 写生产表必须显式确认 | 无 |
+| `issue-22-promote-guardrails.md` | Issue 22: promote 护栏 — 校验闸 + 审计 + 按批次回滚 | Issue 20 |
+| `issue-23-remaining-tables-and-scripts.md` | Issue 23: 其余 3 张表接入 + 另两个 ad-hoc 脚本切换 | Issue 20, 22 |
+
+### 第四组依赖关系
+
+```
+Issue 19 ──→ Issue 20 ──→ Issue 22 ──→ Issue 23
+                 └──────────┘（23 同时依赖 20 与 22）
+
+Issue 21  （独立，与 19/20/22/23 正交）
+```
+
+### 选型决策（已决，别再重开）
+
+**同库 stage 表**（`lnrs.lnrs_stage_*`），**不是**独立 stage 数据库。三条理由：
+
+1. **B 是 A 的严格子集**：promote 的 SQL 形状完全相同，只差源引用
+   （`lnrs.lnrs_stage_X` vs `fdw.lnrs.lnrs_stage_X`）→ 先做便宜的可逆步骤，
+   将来要升 A 时 promote 契约不变。
+2. **对「闸」这个目的，B 比 A 更结构化**：B 的 stage 表名**硬编码在代码里**，
+   配错也改不了；A 的写入目标取决于连接串 —— **config 错就直写生产且静默**，
+   与复盘 §7.1 里「纪律 vs 机制」是同一个坑。
+3. **成本**：A 需要装 `postgres_fdw`（要超管，`lnrs` 角色 `rolsuper=false`）、
+   手工排 FK 顺序（PG 不支持跨库外键）、且跨库**无法单事务**。
+
+### 与前三组的关系
+
+- Issue 20/23 会改到 [Issue 7](./issue-7-fix-etl2-cli-and-backfill-series-count.md)
+  引入的 `backfill_dicom_series_count.py`（写入目标改为 stage）——
+  Issue 7 的 CLI 三处修复已完成，本组只改**写入目标**，不改其计算口径。
+- Issue 21 是 [Issue 19](./issue-19-prefactor-share-copy-then-merge.md)
+  与测试沙箱安全闸的**同思路扩展**：那个面向 pytest，这个面向脚本。

@@ -9,10 +9,6 @@ class MedicalFiles(BaseModel):
 
     id: int = Field(description="ID")
     anon_exam_id: str | None = Field(default=None, description="检查ID")
-    dicom_study_uid: str | None = Field(default=None, description="DICOM StudyInstanceUID")
-    series_anon_exam_id: str | None = Field(
-        default=None, description="检查ID（取自 dicom_series.anon_exam_id，dicom_series 未落库时为 null）"
-    )
     file_name: str | None = Field(default=None, min_length=1, max_length=255, description="文件名")
     patient_id: str | None = Field(default=None, description="患者编号")
     exam_type: str | None = Field(default=None, description="模态类型")
@@ -102,7 +98,7 @@ class MedFilesStatisticsOutSchema(BaseModel):
         description="有影像文件的患者数（lnrs_anon_imaging_study.patient_id 去重）"
     )
     total_patient_count: int = Field(
-        description="总患者数（lnrs_anon_patient 未删除行数）"
+        description="总患者数（lnrs_anon_exam.patient_id 去重计数）"
     )
     exam_count: int = Field(
         description="检查量（lnrs_anon_exam 行数；与影像文件数不同——一次临床检查可能 0/N 个影像文件）"

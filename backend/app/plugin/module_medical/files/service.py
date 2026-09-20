@@ -14,7 +14,7 @@ from app.core.logger import log
 
 from app.core.permission import Permission
 
-from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel, AnonPatientModel
+from ..hospital.anon_model import AnonDicomSeriesModel, AnonExamModel
 from .model import MedFilesModel
 from .schema import MedicalFilesOutSchema
 from .crud import MedFilesCRUD
@@ -145,12 +145,9 @@ class MedFilesService:
 
         # select 里计算出来的列，既用于返回也用于排序
         file_size_col = func.coalesce(s.byte_size, 0).label("file_size")
-        # 检查ID 以 dicom_series 侧为准（该列 NOT NULL 且外键指向 lnrs_anon_exam，
-        # 比 imaging_study.anon_exam_id 更可靠）；LEFT JOIN 未命中时为 NULL
-        series_exam_id_col = s.anon_exam_id.label("series_anon_exam_id")
 
         sql = (
-            select(m, series_exam_id_col, file_size_col)
+            select(m, file_size_col)
             .select_from(m)
             .outerjoin(s, s.dicom_study_uid == m.dicom_study_uid)
             .where(*conditions)
@@ -167,9 +164,8 @@ class MedFilesService:
         rows = (await auth.db.execute(sql)).all()
 
         items: list[dict] = []
-        for obj, series_anon_exam_id, file_size in rows:
+        for obj, file_size in rows:
             data = MedicalFilesOutSchema.model_validate(obj).model_dump()
-            data["series_anon_exam_id"] = series_anon_exam_id or None
             data["file_size"] = int(file_size or 0)
             items.append(data)
 
@@ -230,6 +226,9 @@ class MedFilesService:
           2026-09-19 全局分布常显：本分组不随 exam_type 勾选过滤（center_type 仍生效），
           作为左侧「模态类型」筛选器的 facet 计数始终展示全量分布，勾选态下
           CT 仍显示 22.88% 而非 100%。
+        - total_patient_count：lnrs_anon_exam.patient_id 去重计数（一个患者多次检查会重复，
+          必须 COUNT(DISTINCT)）；筛选条件与 exam_count 完全一致（2026-09-20 由
+          lnrs_anon_patient 切换为 exam 口径）
         - by_file_type：GROUP BY MedFilesModel.file_type（即 imaging_study.center_code），label 取 med_center 字典翻译
         - 视图 v_imaging_study_counts 不直接用于本查询（它是 study×series 1:1 视图，
           不含 patient_count/file_count 维度）；改用 imaging_study + dicom_series 双源
@@ -253,25 +252,14 @@ class MedFilesService:
 
         # 注意：file_count 在下方 size 查询之后才计算（要用到 series_count 求和）
 
-        # ---- total_patient_count：基于 AnonPatientModel（=lnrs_anon_patient 未删除行数）----
-        total_patient_sql = select(func.count(AnonPatientModel.patient_id)).where(
-            AnonPatientModel.deleted_at.is_(None)
+        # ---- total_patient_count：基于 AnonExamModel（=lnrs_anon_exam）的 patient_id 去重 ----
+        # 一个患者会有多次检查，exam 表里 patient_id 会重复，必须 COUNT(DISTINCT patient_id)。
+        # 筛选条件与 exam_count 完全一致（exam_type→exam.exam_type，center_type→exam.center_code）。
+        total_patient_sql = select(func.count(func.distinct(e.patient_id)))
+        total_patient_sql = cls._apply_exam_conditions(
+            total_patient_sql, exam_type=exam_type, center_type=center_type
         )
-        if center_type:
-            total_patient_sql = total_patient_sql.where(
-                AnonPatientModel.center_code.in_(center_type)
-            )
-        if exam_type:
-            # exam_type 是多选列表，必须用 in_（== list 会让 SQLAlchemy/asyncpg 无法编码参数）；
-            # 子查询需显式 scalar_subquery()，再交给 in_ 使用。
-            exam_patient_subq = cls._apply_exam_conditions(
-                select(e.patient_id), exam_type=exam_type, center_type=None
-            )
-            exam_patient_subq = await Permission(e, auth).filter_query(exam_patient_subq)
-            total_patient_sql = total_patient_sql.where(
-                AnonPatientModel.patient_id.in_(exam_patient_subq.distinct().scalar_subquery())
-            )
-        total_patient_sql = await Permission(AnonPatientModel, auth).filter_query(total_patient_sql)
+        total_patient_sql = await Permission(e, auth).filter_query(total_patient_sql)
         total_patient_count = int((await auth.db.execute(total_patient_sql)).scalar() or 0)
 
         # ---- exam_count：基于 AnonExamModel（=lnrs_anon_exam 行数）----

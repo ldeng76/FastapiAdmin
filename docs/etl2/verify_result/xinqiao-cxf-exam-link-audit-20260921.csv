@@ -1,0 +1,2 @@
+study_key,dicom_study_uid,source,linked_patient,linked_exam_date,anon_exam_id,map_patient,map_exam_date,map_candidates
+206548,1.2.840.113619.2.55.3.1721121893.187.1703118022.419,xinqiao_4_tjj,ANON_69c7dbe73752,2024-10-15,ANON_EXAM_51cc1bb507d9,ANON_69c7dbe73752,2024-01-02,1

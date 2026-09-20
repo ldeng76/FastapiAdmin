@@ -68,12 +68,17 @@ INCREMENTAL=0
 ALLOW_NULL_EXAM=0
 DATA_ROOT=""
 DICOM_SERIES_ONLY=0
+CENTERS_CLI=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --apply)
             APPLY=1
             shift
+            ;;
+        --centers)
+            CENTERS_CLI="$2"
+            shift 2
             ;;
         --incremental)
             INCREMENTAL=1
@@ -101,6 +106,7 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+[[ -n "$CENTERS_CLI" ]] && CENTERS="$CENTERS_CLI"
 
 # 环境检查
 if [[ -z "${ENVIRONMENT:-}" ]]; then

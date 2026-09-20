@@ -2888,7 +2888,9 @@ async def import_center(
         if not _SRC_TABLE_RE.match(src_table):
             raise ValueError(f"非法源表名: {src_table!r}")
         parquet_path = (data_dir / f"{src_table}.parquet").resolve()
-        if not parquet_path.exists():
+        # kind=='dicom_series' 是 DB-SCAN（读 lnrs_anon_imaging_study.image_path），
+        # 无 parquet 输入；提前 require parquet 会让 DB-SCAN 分支永远不可达。
+        if spec["kind"] != "dicom_series" and not parquet_path.exists():
             log.warning(f"ETL2: {center_code}/{src_table}.parquet 不存在，跳过")
             continue
 
@@ -3071,6 +3073,7 @@ async def _import_dicom_series_for_center(
         )
         .select_from(AnonImagingStudyModel)
         .outerjoin(
+            s_alias,
             s_alias.dicom_study_uid == AnonImagingStudyModel.dicom_study_uid,
         )
         .where(AnonImagingStudyModel.center_code == center_code)
@@ -3215,27 +3218,32 @@ async def _upsert_dicom_byte_size_for_study(
     # 实测 series_count：调 DicomIndexer.register_folder 走与 DICOMViewer 一致的口径
     # （按 SeriesInstanceUID 去重，跳过非图像模态与无 UID 文件）。
     # register_folder 内部按文件容错，单文件失败不抛断；返回 None = 无合法图像。
-    series_count = 0
-    try:
-        reg = indexer.register_folder(path)
-        if reg and reg.get("series_count") is not None:
-            series_count = int(reg["series_count"])
-    except Exception as e:
-        # register_folder 不抛断；这里再兜一层兜底（极端路径错误等），series_count=0
-        log.warning(
-            f"ETL2: register_folder 异常 study={dicom_study_uid}: "
-            f"{type(e).__name__}: {e!s}"
-        )
-        series_count = 0
-    finally:
-        # 释放 LRU 槽位 + 反向索引，避免单例状态被下一次 ETL 污染
+    # 轻量模式（LNRS_DICOM_SKIP_SERIES_COUNT=1）：跳过 register_folder（实测
+    # ~4s/study × 86k study ≈ 100h，无法接受），series_count 保持 NULL，
+    # upsert 时不覆盖既有值；后续可用全量重跑补齐。
+    skip_series_count = os.getenv("LNRS_DICOM_SKIP_SERIES_COUNT", "").strip().lower() in ("1", "true", "yes")
+    series_count = None
+    if not skip_series_count:
         try:
-            indexer.evict_study(dicom_study_uid)
+            reg = indexer.register_folder(path)
+            if reg and reg.get("series_count") is not None:
+                series_count = int(reg["series_count"])
         except Exception as e:
+            # register_folder 不抛断；这里再兜一层兜底（极端路径错误等），series_count=0
             log.warning(
-                f"ETL2: evict_study 异常 study={dicom_study_uid}: "
+                f"ETL2: register_folder 异常 study={dicom_study_uid}: "
                 f"{type(e).__name__}: {e!s}"
             )
+            series_count = 0
+        finally:
+            # 释放 LRU 槽位 + 反向索引，避免单例状态被下一次 ETL 污染
+            try:
+                indexer.evict_study(dicom_study_uid)
+            except Exception as e:
+                log.warning(
+                    f"ETL2: evict_study 异常 study={dicom_study_uid}: "
+                    f"{type(e).__name__}: {e!s}"
+                )
 
     # upsert: ON CONFLICT (dicom_study_uid) DO UPDATE
     # 不变列：series_id（PK）, created_batch_id（保留首次入库的批次元数据）
@@ -3264,7 +3272,11 @@ async def _upsert_dicom_byte_size_for_study(
             ),
             "file_count": stmt.excluded.file_count,
             "byte_size": stmt.excluded.byte_size,
-            "series_count": stmt.excluded.series_count,
+            # 轻量模式 excluded 为 NULL → coalesce 保留既有 series_count 不被清空
+            "series_count": func.coalesce(
+                stmt.excluded.series_count,
+                AnonDicomSeriesModel.__table__.c.series_count,
+            ),
         },
     )
     await db.execute(stmt)

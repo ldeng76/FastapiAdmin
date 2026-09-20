@@ -150,6 +150,8 @@ TCGA样例数据-临床-基因
 /data_hos301/
 /data_xq0904/
 /data_xq0913/
+# issue-25 xinqiao 报告源补全 staging（含院内 PID 的兜底失败清单），不入库
+/data_xq_issue25/
 # 珠江病案首页 staging（etl1_adapt_zhujiang0825_face.py 产物），不入库
 /data_zj_face/
 /.workbuddy/

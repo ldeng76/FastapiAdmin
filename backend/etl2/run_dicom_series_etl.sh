@@ -45,6 +45,12 @@
 #   # 5) B 方案（exam 表 0 行无法做关联，allow_null_exam=True 让 dicom_series 仍落库）
 #   ENVIRONMENT=h196_3 ./run_dicom_series_etl.sh --apply --centers zhujiang --allow-null-exam
 #
+#   # 6) Issue 7 修复：--data-root 透传（环境 LNRS_DATA_ROOT 不存在时手动指定）
+#   ENVIRONMENT=h196_3 ./run_dicom_series_etl.sh --apply --centers zhujiang --data-root /home/dzy/wk/lnrs/data
+#
+#   # 7) Issue 7 修复：--dicom-series-only（仅跑 dicom_series spec，batch 标 dicom_dir）
+#   ENVIRONMENT=h196_3 ./run_dicom_series_etl.sh --apply --centers zhujiang --dicom-series-only
+#
 # 回退：
 #   - 幂等：ON CONFLICT (dicom_study_uid) DO UPDATE，重跑不会重复落库
 #   - 数据回滚：DELETE FROM lnrs_anon_dicom_series WHERE created_batch_id = '<batch>';
@@ -60,6 +66,8 @@ APPLY=0
 CENTERS="zhujiang,shengyi,xinqiao"
 INCREMENTAL=0
 ALLOW_NULL_EXAM=0
+DATA_ROOT=""
+DICOM_SERIES_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -75,8 +83,16 @@ while [[ $# -gt 0 ]]; do
             ALLOW_NULL_EXAM=1
             shift
             ;;
+        --data-root)
+            DATA_ROOT="$2"
+            shift 2
+            ;;
+        --dicom-series-only)
+            DICOM_SERIES_ONLY=1
+            shift
+            ;;
         -h|--help)
-            sed -n '2,50p' "$0"
+            sed -n '2,60p' "$0"
             exit 0
             ;;
         *)
@@ -122,8 +138,13 @@ fi
 if [[ $APPLY -eq 0 ]]; then
     echo
     echo "[DRY-RUN] 执行 ETL-2 dicom_series dry-run…"
+    # dry-run 也透传 --data-root（避免 /home/dzy/wk/lnrs_dats 不存在时 dry-run 报 exists=False 误导）
+    DRY_EXTRA=""
+    if [[ -n "$DATA_ROOT" ]]; then
+        DRY_EXTRA="--data-root $DATA_ROOT"
+    fi
     ENVIRONMENT="$ENVIRONMENT" uv run python -m app.plugin.module_medical.hospital.anon_etl \
-        --centers "$CENTERS" --dry-run
+        --centers "$CENTERS" --dry-run $DRY_EXTRA
     echo
     echo "[DRY-RUN] 完毕。未修改任何数据。"
     exit 0
@@ -158,9 +179,17 @@ fi
 
 echo
 echo "[APPLY] 启动 ETL-2…"
+# 组装 ETL-2 CLI 参数（Issue 7 修复 Defect 1）：
+# - --data-root 把 DATA_ROOT 透传给 anon_etl/__main__.py
+#   （环境 LNRS_DATA_ROOT 不存在或临时切根时使用，例如 h196_3 默认
+#    /home/dzy/wk/lnrs_dats 缺失 → 用 --data-root /home/dzy/wk/lnrs/data 覆盖）
+# - --dicom-series-only 仅跑 dicom_series spec（batch 标 dicom_dir）
+EXTRA_ARGS=""
+if [[ -n "$DATA_ROOT" ]]; then
+    EXTRA_ARGS="$EXTRA_ARGS --data-root $DATA_ROOT"
+fi
+if [[ $DICOM_SERIES_ONLY -eq 1 ]]; then
+    EXTRA_ARGS="$EXTRA_ARGS --dicom-series-only"
+fi
 ENVIRONMENT="$ENVIRONMENT" uv run python -m app.plugin.module_medical.hospital.anon_etl \
-    --centers "$CENTERS"
-
-echo
-echo "[APPLY] 完毕。请检查日志与 lnrs_anon_dicom_series 行数："
-echo "        SELECT count(*), sum(byte_size) FROM lnrs_anon_dicom_series;"
+    --centers "$CENTERS" $EXTRA_ARGS

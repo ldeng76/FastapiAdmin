@@ -62,7 +62,6 @@ from app.plugin.module_medical.hospital.anon_etl_engine import (  # noqa: E402
     _upsert_dicom_byte_size_for_study,
 )
 
-
 # ---------- SQL 块 ----------
 
 # 仅筛选需要回填的 study：series_count IS NULL 且 image_path 非空
@@ -143,7 +142,7 @@ async def run_dry_run(center: str | None, limit: int | None) -> None:
             return
 
         print(f"  {'center':<12} {'pending':>10}")
-        print(f"  {'-'*12} {'-'*10}")
+        print(f"  {'-' * 12} {'-' * 10}")
         total_pending = 0
         for r in rows:
             print(f"  {r.center_code:<12} {r.pending_total:>10}")
@@ -160,7 +159,7 @@ async def run_dry_run(center: str | None, limit: int | None) -> None:
             f"{eta_sec / 60:.1f} 分钟"
         )
         print(
-            f"  实际耗时取决于目录在线率；--apply 阶段逐 study is_dir() 探测并跳过离线。"
+            "  实际耗时取决于目录在线率；--apply 阶段逐 study is_dir() 探测并跳过离线。"
         )
 
     if limit:
@@ -215,7 +214,10 @@ async def run_apply(center: str | None, limit: int | None) -> None:
                         db,
                         image_path=row.image_path,
                         dicom_study_uid=row.dicom_study_uid,
-                        anon_exam_id=row.anon_exam_id or "",
+                        anon_exam_id=row.anon_exam_id,  # Issue 7 修复 Defect 3：
+                        # NULL 时直接传 None；修复前用 `row.anon_exam_id or ""` 会传空串
+                        # → exam FK NOT NULL 约束违反；0024 已允许 FK NULL，
+                        # bypass 模式（run_apply_bypass）则本就走 anon_exam_id=NULL 路径
                         batch_id=str(row.dicom_study_uid)[:36],
                     )
                     scanned += 1

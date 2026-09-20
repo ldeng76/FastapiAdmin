@@ -2735,12 +2735,28 @@ _CENTER_PARQUET_SPECS: dict[str, list[dict[str, Any]]] = {
             ],
             "date_field": "exam_date",  # 0825 全量文件自带日期列（反查方案会丢弃 25 条无病理匹配行）
         },
-        # 住院记录（0825 批次）：通用 visit_detail，chief_complaint/present_illness/
-        # diagnoses[]/raw_text 原样进 visit_detail_json
+         # 住院记录（0825 批次）：通用 visit_detail，chief_complaint/present_illness/
+         # diagnoses[]/raw_text 原样进 visit_detail_json
+         {
+             "src_table": "inpatient", "kind": "visit_detail",
+             "id_field": "inpatient_id", "date_field": "inpatient_date",
+         },
+        # 2026-09-19: 病案首页（face.parquet 9567 行）
+        #  适配层 ETL1：etl1_adapt_zhujiang0825_face.py 把 face.parquet 拆成 2 张 staging
+        #    - face_sheet_visit.parquet（visit_detail 模式：每次住院一行，71 列除标量外整体进 visit_detail_json）
+        #    - face_sheet_diagnosis.parquet（diagnosis 模式：每住院展 2 行门急诊+入院，21 个上下文字段进 detail struct）
         {
-            "src_table": "inpatient", "kind": "visit_detail",
-            "id_field": "inpatient_id", "date_field": "inpatient_date",
+            "src_table": "face_sheet_visit", "kind": "visit_detail",
+            "id_field": "visit_id", "date_field": "admission_time",
         },
+        {
+            "src_table": "face_sheet_diagnosis", "kind": "diagnosis",
+            "source_label": "face_sheet",
+        },
+         {
+             "src_table": "surgery_record",
+             "kind": "surgery",
+         },
         {
             "src_table": "surgery_record",
             "kind": "surgery",
@@ -2795,12 +2811,17 @@ async def import_center(
     data_dir: Path,
     batch_id: str,
     on_progress: Callable[[str, int], Any] | None = None,
+    dicom_series_only: bool = False,
 ) -> dict[str, int]:
     """导入单中心全部 parquet → lnrs_anon_*，返回 {src_table: rows}。
 
     顺序：先 patient，再 exam_text/visit_detail（依赖 patient）。
     visit_record：若该中心配置了 kind=visit_detail 的 spec 则正常处理（省医），
     否则显式跳过（珠江，ADR-0006 visit 桥未启用）。
+
+    dicom_series_only（Issue 7 修复 Defect 2）：True 时仅执行
+    kind=='dicom_series' 的 spec；其他 spec 跳过。适用于
+    run_dicom_series_etl.sh 包装的 dicom_series 灌库场景。
     """
 
     # 大数据量 commit 加速：当前事务内关闭同步落盘。
@@ -2849,6 +2870,10 @@ async def import_center(
             )
 
     for spec in specs:
+        # dicom_series_only 过滤（Issue 7 修复 Defect 2）：
+        # 仅执行 kind=='dicom_series' 的 spec；其他 spec 跳过。
+        if dicom_series_only and spec.get("kind") != "dicom_series":
+            continue
         src_table = spec["src_table"]
         if not _SRC_TABLE_RE.match(src_table):
             raise ValueError(f"非法源表名: {src_table!r}")

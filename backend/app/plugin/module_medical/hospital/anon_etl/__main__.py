@@ -44,6 +44,16 @@ def _parse_args() -> argparse.Namespace:
         help="ETL-1 产出物根目录，默认读 settings.LNRS_DATA_ROOT",
     )
     p.add_argument(
+        "--dicom-series-only",
+        action="store_true",
+        help=(
+            "仅跑 dicom_series spec（Issue 7 修复）："
+            "把 spec 列表过滤为只含 dicom_series，"
+            "并把 batch.source_kind 标记为 'dicom_dir'。"
+            "适用于 run_dicom_series_etl.sh 包装的 dicom_series 灌库。"
+        ),
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="仅打印将要处理的中心与文件清单，不连库",
@@ -102,8 +112,15 @@ def main() -> int:
         _dry_run(centers, root)
         return 0
 
-    log.info(f"ETL-2 启动: centers={centers} data_root={data_root or '(settings)'}")
-    results = asyncio.run(run_anon_etl(centers=centers, data_root=data_root))
+    log.info(
+        f"ETL-2 启动: centers={centers} data_root={data_root or '(settings)'} "
+        f"dicom_series_only={args.dicom_series_only}"
+    )
+    results = asyncio.run(run_anon_etl(
+        centers=centers,
+        data_root=data_root,
+        dicom_series_only=args.dicom_series_only,
+    ))
 
     # 汇总打印
     print("\n" + "=" * 60)

@@ -52,15 +52,23 @@ async def _create_batch(
     *,
     center_code: str,
     data_dir: Path,
+    source_kind: str = "csv_report",
 ) -> str:
-    """创建一个 running 状态的 ingest_batch，返回 batch_id。"""
+    """创建一个 running 状态的 ingest_batch，返回 batch_id。
+
+    source_kind（Issue 7 修复）：
+    - ``"csv_report"``：ETL-1 产出 parquet（默认；与历史行为一致）
+    - ``"dicom_dir"``：磁盘 DICOM 目录（如 dicom_series spec 单独跑）
+    - ``"dicom_zip"``：DICOM zip 压缩包（预留）
+    由 ``run_center`` 根据 spec 自动决定，调用方一般无需显式传入。
+    """
     batch_id = str(uuid.uuid4())
     source_sha256 = _read_source_sha256(data_dir)
     await db.execute(
         AnonIngestBatchModel.__table__.insert().values(
             batch_id=batch_id,
             center_code=center_code,
-            source_kind="csv_report",
+            source_kind=source_kind,
             source_locator=str(data_dir),
             source_sha256=source_sha256,
             secret_version=secret_version(),
@@ -100,12 +108,26 @@ async def _close_batch(
 async def run_center(
     center_code: str,
     data_root: Path | None = None,
+    dicom_series_only: bool = False,
 ) -> dict[str, Any]:
     """运行单中心的 ETL-2，返回汇总。
 
     data_root: ETL-1 产出物根目录，默认 settings.LNRS_DATA_ROOT
+    dicom_series_only: True 时仅跑 dicom_series spec（Issue 7 修复）；
+        同时 batch.source_kind 标记为 'dicom_dir'。适用于
+        run_dicom_series_etl.sh 包装的 dicom_series 灌库。
     返回: {"center": str, "status": "success"|"failed", "rows": {...}, "batch_id": str}
+
+    source_kind 自动推导（Issue 7 修复 Defect 2）：
+    - 仅 dicom_series spec → "dicom_dir"（磁盘 DICOM 目录扫描）
+    - 含 parquet spec → "csv_report"（ETL-1 产出 parquet）
+    与 shengyi / xinqiao / zhujiang 三中心的实际用法一致：
+    - shengyi 全量 spec 含 patient/exam_text/... → csv_report
+    - 单独跑 dicom_series spec → dicom_dir
     """
+    # 延迟导入：避免循环（anon_etl_engine 反向引用本模块的场景）
+    from .anon_etl_engine import _CENTER_PARQUET_SPECS
+
     root = Path(data_root) if data_root else Path(settings.LNRS_DATA_ROOT)
     root = root.resolve()
     data_dir = root / center_code
@@ -115,16 +137,35 @@ async def run_center(
         log.error(f"ETL2: {msg}")
         return {"center": center_code, "status": "failed", "error": msg, "rows": {}}
 
-    log.info(f"ETL2: 开始处理中心 {center_code} (data_dir={data_dir})")
+    log.info(
+        f"ETL2: 开始处理中心 {center_code} (data_dir={data_dir}) "
+        f"dicom_series_only={dicom_series_only}"
+    )
+
+    # source_kind 推导（Issue 7 修复 Defect 2）：
+    # - dicom_series_only=True → 强制 "dicom_dir"
+    # - 否则：spec 列表只含 dicom_series → "dicom_dir"；
+    #         含 parquet spec → "csv_report"
+    if dicom_series_only:
+        source_kind = "dicom_dir"
+    else:
+        specs = _CENTER_PARQUET_SPECS.get(center_code, [])
+        only_dicom = bool(specs) and all(s.get("kind") == "dicom_series" for s in specs)
+        source_kind = "dicom_dir" if only_dicom else "csv_report"
 
     # 1. 用独立事务创建 batch 行并提交——确保即使导入失败回滚，batch 记录仍保留，
     #    便于回溯"哪次尝试用了什么密钥/schema"。失败时后续 _close_batch 才能 UPDATE 到。
     async with async_db_session() as batch_session:
         batch_id = await _create_batch(
-            batch_session, center_code=center_code, data_dir=data_dir
+            batch_session,
+            center_code=center_code,
+            data_dir=data_dir,
+            source_kind=source_kind,
         )
         await batch_session.commit()
-    log.info(f"ETL2: 创建 batch {batch_id} center={center_code}")
+    log.info(
+        f"ETL2: 创建 batch {batch_id} center={center_code} source_kind={source_kind}"
+    )
 
     # 2. 导入数据（独立事务，失败不影响 batch 记录）
     try:
@@ -134,9 +175,7 @@ async def run_center(
                 center_code=center_code,
                 data_dir=data_dir,
                 batch_id=batch_id,
-            )
-            await _close_batch(
-                session, batch_id=batch_id, status="success", row_counts=result
+                dicom_series_only=dicom_series_only,
             )
             await session.commit()
         log.info(f"ETL2: 中心 {center_code} 完成: {result}")
@@ -175,10 +214,13 @@ async def run_center(
 async def run_anon_etl(
     centers: list[str] | None = None,
     data_root: Path | None = None,
+    dicom_series_only: bool = False,
 ) -> list[dict[str, Any]]:
     """运行多中心 ETL-2。一中心失败不影响其他。
 
     centers: None 则处理全部 KNOWN_CENTERS
+    dicom_series_only: True 时仅跑 dicom_series spec（Issue 7 修复）；
+        同时 batch.source_kind 标记为 'dicom_dir'。
     返回: 每中心的汇总 dict 列表
     """
     todo = centers or list(KNOWN_CENTERS)
@@ -188,6 +230,6 @@ async def run_anon_etl(
 
     results = []
     for center in todo:
-        r = await run_center(center, data_root=data_root)
+        r = await run_center(center, data_root=data_root, dicom_series_only=dicom_series_only)
         results.append(r)
     return results

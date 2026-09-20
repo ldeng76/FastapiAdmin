@@ -145,9 +145,12 @@ class MedFilesService:
 
         # select 里计算出来的列，既用于返回也用于排序
         file_size_col = func.coalesce(s.byte_size, 0).label("file_size")
+        # 检查ID 以 dicom_series 侧为准（该列 NOT NULL 且外键指向 lnrs_anon_exam，
+        # 比 imaging_study.anon_exam_id 更可靠）；LEFT JOIN 未命中时为 NULL
+        series_exam_id_col = s.anon_exam_id.label("series_anon_exam_id")
 
         sql = (
-            select(m, file_size_col)
+            select(m, series_exam_id_col, file_size_col)
             .select_from(m)
             .outerjoin(s, s.dicom_study_uid == m.dicom_study_uid)
             .where(*conditions)
@@ -164,8 +167,9 @@ class MedFilesService:
         rows = (await auth.db.execute(sql)).all()
 
         items: list[dict] = []
-        for obj, file_size in rows:
+        for obj, series_anon_exam_id, file_size in rows:
             data = MedicalFilesOutSchema.model_validate(obj).model_dump()
+            data["series_anon_exam_id"] = series_anon_exam_id or None
             data["file_size"] = int(file_size or 0)
             items.append(data)
 

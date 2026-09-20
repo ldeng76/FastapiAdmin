@@ -205,3 +205,40 @@ Issue 26 （独立；按 PID 键直填，不依赖 24/25；两个决策门需用
   sex/birth_date 列），改用 5万例 CSV 真实源；issue-15 的验收断言 1/2 原样继承。
 - 三张单完成后，[Issue 16](./issue-16-resync-xinqiao-to-h42.md)（h196_3 → 1.59
   重同步）建议重跑一次，让 h42 看到完整的新桥数据面。
+
+---
+
+## 第六组：省医口径与 placeholder 语义（issue-27 ~ issue-29）
+
+来源：[事故复盘 §11.7 更正记录](../findings/incident-20260920-test-cascade-delete.md)
+（2026-09-20 用户 5 条抽样证伪「九表无记录」后，十表全量探针暴露的三个未决问题）。
+
+| 文件 | 用途 | 阻塞 |
+|---|---|---|
+| `issue-27-unify-placeholder-semantics.md` | Issue 27: 统一 `is_placeholder` 语义（ADR 决策 + 三中心收敛 + 修订 issue-9/15/26v2 方向） | 无 |
+| `issue-28-medical-files-kpi-coherence.md` | Issue 28: medicalFiles 统计口径修复（患者数倒挂 / 筛选器字典 / 省医 sop_count 全零） | Issue 27 |
+| `issue-29-shengyi-exam-imaging-linkage.md` | Issue 29: 省医 exam×影像关联调研（219/82,988 脱节根因，只读） | 无 |
+
+### 第六组依赖关系
+
+```
+Issue 27 ──→ Issue 28   （28 的对齐目标取决于 27 的占位语义决策）
+Issue 29   （独立，只读调研；结论反馈 28 的长期形态）
+```
+
+### 关键实测基线（2026-09-20，写 verify 时直接对照）
+
+```
+省医 169,820 患者 = 影像∪临床并集（十表全空 = 0）
+├─ 临床世界 87,138（exam 66,635 ⊂ 其中；20,503 仅有临床文书）
+└─ 纯影像世界 82,682（8 类临床全空；DICOM 字节真实，抽样 5/5 各 125~251 MB）
+两世界交集 306；exam∩imaging = 219；省医 imaging_study 82,994 条 sop_count 全 0
+```
+
+### 与第五组的关系
+
+- 本组 [Issue 27](./issue-27-unify-placeholder-semantics.md) 是第五组
+  [Issue 26 v2](./issue-26-xinqiao-placeholder-realization-v2.md) 的**前置语义确认**：
+  v2 的「人口学回填 → 翻 FALSE」隐含数据型语义，27 的 ADR 定稿后其方向需复核。
+- 28 修的是 medicalFiles 页口径（省医为主场景），**不含**第五组的新桥数据面补全；
+  两中心方法论互参、范围不混。

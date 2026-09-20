@@ -1,3 +1,11 @@
+> **⚠ 总方向由 issue-27 确认（ADR 0012，2026-09-20）**：`is_placeholder` 已统一为
+> 数据型语义；xinqiao 影像 stub 已因「名下有真实影像数据」统一翻 FALSE。
+> 本 issue 的「回填 sex/birth_date」仍可执行（数据质量增强），但**不再是占位
+> 翻转步骤**——回填后无标志翻转诉求；其两个决策门（数据源 / 范围）仍按本文件
+> 流程走用户确认。见
+> [issue-27](./issue-27-unify-placeholder-semantics.md) /
+> [ADR 0012](../../adr/0012-is-placeholder-data-typed-semantics.md)。
+
 # Issue 26: 新桥占位真实化 v2 — 5万例人口学源回填 sex/birth_date + `is_placeholder=FALSE`
 
 ## Parent

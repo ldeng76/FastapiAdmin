@@ -1,3 +1,7 @@
+# ⚠ 方向作废注记（Issue 27 / ADR 0012，2026-09-20）：本脚本按 0018 身份型口径
+# 把 shengyi 无人口学患者翻 TRUE 的方向已被数据型语义取代（shengyi 影像 stub
+# 名下有真实业务数据 ⇒ 维持 FALSE）。本文件保留作轨迹，**不再执行**；
+# 存量统一由 backfill_placeholder_data_semantics.py 处理。
 """回填 lnrs_anon_patient.is_placeholder = TRUE（shengyi 漏标存量，Issue 9）。
 
 背景

@@ -27,7 +27,6 @@ import hashlib
 import json
 import os
 import re
-import uuid
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -40,8 +39,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import log
-
-from .anon_pg_copy import copy_then_merge as _copy_then_merge
 
 from .anon_model import (
     AnonClinicalDocumentModel,
@@ -59,6 +56,7 @@ from .anon_model import (
     AnonVisitModel,
     AnonVitalObservationModel,
 )
+from .anon_pg_copy import copy_then_merge as _copy_then_merge
 from .anonymize import (
     CLEAN_METHOD_REGEX_ONLY,
     birth_date_from,
@@ -444,9 +442,12 @@ async def _batch_upsert_patients(
                 "center_code": center_code,
                 "birth_date": r["birth_date"],
                 "sex": r["sex"],
-                # 占位语义随记录类型落库：占位路径 True；完整档案 False，
-                # 且冲突时翻回 False（见下方非占位 DO UPDATE 的 set_）。
-                "is_placeholder": is_placeholder,
+                # is_placeholder 采用数据型语义（ADR 0012）：自动建档的患者
+                # 名下必然有 exam/visit 等引用行（正是它们触发了建档）⇒
+                # 一律落库 FALSE；完整档案路径亦为 FALSE。
+                # is_placeholder 参数只保留一个作用：占位路径 ON CONFLICT
+                # 不覆盖已有人口学/稳定属性（见下方 DO UPDATE 分支）。
+                "is_placeholder": False,
                 "ethnicity": r.get("ethnicity"),
                 "smoking_status": r.get("smoking_status"),
                 "abo_blood_type": r.get("abo_blood_type"),

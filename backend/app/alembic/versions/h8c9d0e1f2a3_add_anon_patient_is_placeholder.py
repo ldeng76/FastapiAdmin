@@ -19,6 +19,11 @@ Create Date: 2026-09-07
 
 注意：patient_meta 存在 jsonb 字面量 'null'（0825 批次写入痕迹），
 回填条件需同时覆盖 SQL NULL / jsonb 'null' / '{}' 三种空态。
+
+⚠ 归档注记（ADR 0012，2026-09-20）：第 2 步身份型回填规则已被数据型语义
+取代（名下无业务数据才为占位）。本迁移保留（历史环境已应用），downgrade
+仅删列；存量修正见 backend/etl2/backfill_placeholder_data_semantics.py。
+禁止在任何新环境复用本迁移的回填 UPDATE 口径打标。
 """
 
 from collections.abc import Sequence

@@ -4,9 +4,10 @@
 exam/visit/surgery 表时为无档案患者自动发号的占位记录（sex 恒 '0'、无人口学）
 被患者列表原样展示（dev 实测 137,490 / 231,352 = 59.4%）。
 
-本文件锁定两条契约：
-1. upsert 语义：占位路径写 is_placeholder=TRUE；完整档案到达翻回 FALSE；
-   其后占位 upsert 不得把真实患者重新标记、不得覆盖人口学。
+本文件锁定两条契约（语义按 ADR 0012 数据型口径修订）：
+1. upsert 语义：自动发号建档（占位路径）写 is_placeholder=FALSE（名下有
+   exam/visit 引用行，非占位）；完整档案到达亦 FALSE + 人口学落库；
+   其后占位 upsert 不得覆盖人口学。
 2. 列表查询：默认（include_placeholders=False）隐藏占位患者，
    两种模式总数差 == 存活占位行数；出参含 is_placeholder 字段。
 
@@ -18,7 +19,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 
 # 库选择与安全闸统一在 tests/anon_etl/_db_guard.py（单一落点）。
 # 语义：仅 ENVIRONMENT=test（沙箱库 lnrs_dev）下运行；库名命中真库集合则 fail。
@@ -67,7 +67,10 @@ class TestUpsertPlaceholderSemantics:
                         {"b": b, "c": center, "sa": base_ts + delta},
                     )
 
-                # 1) 占位 upsert → is_placeholder=TRUE
+                # 1) 占位路径（自动发号）建档 → is_placeholder=FALSE
+                #    （数据型语义 ADR 0012：该患者名下有 exam/visit 引用行，
+                #    不是占位；is_placeholder=True 参数只控制 ON CONFLICT
+                #    不覆盖人口学的行为）
                 await anon_etl_engine._batch_upsert_patients(
                     session,
                     center_code=center,
@@ -86,8 +89,8 @@ class TestUpsertPlaceholderSemantics:
                         {"a": anon_id},
                     )
                 ).fetchone()
-                assert row is not None, "占位 upsert 应创建患者行"
-                assert row[0] is True, "占位路径必须写 is_placeholder=TRUE"
+                assert row is not None, "自动发号建档应创建患者行"
+                assert row[0] is False, "数据型语义（ADR 0012）：自动建档必须写 is_placeholder=FALSE"
                 assert row[1] == "0"
 
                 # 2) 完整档案到达 → 翻回 FALSE + 人口学落库

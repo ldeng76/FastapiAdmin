@@ -1,3 +1,12 @@
+> **⚠ 方向由 issue-27 修订（ADR 0012，2026-09-20）**：`is_placeholder` 已统一为
+> 数据型语义。xinqiao 影像 stub 名下有真实影像数据 ⇒ 已由
+> `backfill_placeholder_data_semantics.py` 统一翻 FALSE，**本 issue 的
+> 「回填人口学 + 翻 FALSE」不再是占位翻转的必要步骤**；exam 表亦无人口学列
+> （issue-26 已证作废）。人口学回填若做，属数据质量增强，与占位标志解耦。
+> 本文件保留作轨迹。见
+> [issue-27](./issue-27-unify-placeholder-semantics.md) /
+> [ADR 0012](../../adr/0012-is-placeholder-data-typed-semantics.md)。
+
 # Issue 15: 新桥占位真实化 — 关联 exam 后回填人口学 + `is_placeholder=FALSE`
 
 ## Parent

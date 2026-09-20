@@ -1,3 +1,11 @@
+> **⚠ 方向由 issue-27 修订（ADR 0012，2026-09-20）**：`is_placeholder` 已统一为
+> 数据型语义（名下无业务数据才为占位）。shengyi 的 82,682（现 169,820）影像
+> stub 名下有真实 DICOM 数据 ⇒ **维持 FALSE，本 issue 的「翻 TRUE」不再执行**。
+> `build_shengyi_imaging_study_index.py` 的补丁要求同步作废（该脚本不再需要
+> 显式写 TRUE）。本文件保留作轨迹。见
+> [issue-27](./issue-27-unify-placeholder-semantics.md) /
+> [ADR 0012](../../adr/0012-is-placeholder-data-typed-semantics.md)。
+
 # Issue 9: 修复 shengyi 占位漏标（82,682 个患者 `is_placeholder` 应为 TRUE）
 
 ## Parent

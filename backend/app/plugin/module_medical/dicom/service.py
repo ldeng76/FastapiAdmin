@@ -8,12 +8,12 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from fastapi import status
-from pydicom.pixel_data_handlers.util import convert_color_space
 
 from app.config.setting import settings
 from app.core.exceptions import CustomException
@@ -36,7 +36,6 @@ class DicomService:
         注册后即可通过 StudyInstanceUID 走 DICOMweb 接口预览。
         返回 {"study_uid", "series_uid", "sop_uid"}；失败返回 None。
         """
-        return indexer.register_file(file_path)
 
     @classmethod
     def register_folder(cls, folder_path: Path) -> dict[str, Any] | None:
@@ -47,6 +46,150 @@ class DicomService:
         返回 {"study_uid", "series_count", "instance_count"}；目录里没图像返回 None。
         """
         return indexer.register_folder(folder_path)
+
+    # ------------------------------------------------------------------ #
+    # PID 部分允许字母数字点（plan-xinqiao §0.5 实测 8 个字母前缀 PID）。
+    # 这里从 image_path 的**目录名**直接解析真实院内 PID（不是 PG 里的匿名
+    # PT_xxx）；匿名化的 patient_id 与磁盘目录 PID 单向不可逆，必须走目录名。
+    _IMG_DIR_RE = re.compile(r"^img_(?P<pid>[A-Za-z0-9.]{1,16})_(?P<rest>.+)$")
+
+    @classmethod
+    def _parse_real_pid_from_image_path(cls, image_path: Path) -> str | None:
+        """从 image_path 的最后一段目录名解析真实院内 PID（仅布局 A/B/D）。
+
+        返回 None 时表示目录名不形如 `img_<PID>_...`（layout C / zhujiang /
+        shengyi / 异常路径），函数应回退到仅注册 image_path 本身。
+        """
+        m = cls._IMG_DIR_RE.match(image_path.name)
+        return m.group("pid") if m else None
+
+    @classmethod
+    def discover_sibling_series_dirs(
+        cls,
+        *,
+        center_code: str,  # noqa: ARG003 — 保留参数位（API 兼容）；当前实现未用
+        patient_id: str,   # noqa: ARG003 — 同上
+        image_path: Path,
+    ) -> list[Path]:
+        """从 image_path 推断同 study 的全部 series 目录（仅布局 A/B/D 有兄弟）。
+
+        启发式：
+        - 解析 image_path 目录名拿到真实 PID（layout A/B/D）；若父目录下有
+          `img_<PID>_*` 形式的兄弟目录 → 这些目录都是同 study 的 series，
+          全部返回（按字典序排序，便于稳定 register）。
+        - 否则（layout C / zhujiang / shengyi / 异常路径）→ 返回 [image_path]。
+
+        容错：父目录不存在 / image_path 不存在 → 返回 [image_path]，不抛。
+
+        参数 center_code / patient_id 保留只为 API 兼容；当前实现从 image_path
+        目录名直接解析真实 PID（PG 里的 patient_id 是 HMAC 匿名值，不可逆）。
+        """
+        image_path = Path(image_path)
+        parent = image_path.parent
+        if not parent.is_dir():
+            return [image_path]
+        real_pid = cls._parse_real_pid_from_image_path(image_path)
+        if real_pid is None:
+            return [image_path]
+        prefix = f"img_{real_pid}_"
+        siblings = [
+            p for p in parent.iterdir()
+            if p.is_dir() and p.name.startswith(prefix)
+        ]
+        if not siblings:
+            return [image_path]
+        return sorted(siblings)
+
+    @classmethod
+    def ensure_study_indexed(
+        cls,
+        *,
+        study_uid: str,
+        conn: Any = None,
+    ) -> dict[str, Any] | None:
+        """按 study_uid 确保 indexer 已索引该 study 的全部 series（issue-12）。
+
+        流程：
+        1. 从 PG lnrs_anon_imaging_study 反查 (center_code, patient_id, image_path)
+        2. 调 discover_sibling_series_dirs 找同 study 的所有 series 目录
+        3. 对每个目录调 register_folder（indexer 自动按 study_uid 聚合同 study）
+
+        返回 PG 行的字段字典（含 study_uid / center_code / patient_id /
+        image_path / registered_dirs），找不到 study_uid 或反查失败时返回 None。
+
+        conn：传入的 PG 连接对象（psycopg 风格），execute(sql, params) 返回
+        cursor，cursor.fetchone() 返回行；为 None 时函数内部按 settings 建短连接。
+        """
+        row = cls._lookup_study_in_pg(study_uid, conn=conn)
+        if row is None:
+            return None
+        center_code, patient_id, image_path = row
+        image_path = Path(image_path)
+        siblings = cls.discover_sibling_series_dirs(
+            center_code=center_code,
+            patient_id=patient_id,
+            image_path=image_path,
+        )
+        for sib in siblings:
+            cls.register_folder(sib)
+        return {
+            "study_uid": study_uid,
+            "center_code": center_code,
+            "patient_id": patient_id,
+            "image_path": str(image_path),
+            "registered_dirs": [str(s) for s in siblings],
+        }
+
+    @classmethod
+    def _lookup_study_in_pg(
+        cls,
+        study_uid: str,
+        *,
+        conn: Any,
+    ) -> tuple[str, str, str] | None:
+        """从 PG lnrs_anon_imaging_study 反查 (center_code, patient_id, image_path)。
+
+        conn 为 None 时按 .env.h196_3 / env var 建短连接（psycopg3 同步）。
+        不依赖项目的 SQLAlchemy ORM（DATABASE_TYPE=mysql 的 settings 与实际
+        h196_3 PG 不一致；直连更稳）。
+        """
+        sql = (
+            "SELECT center_code, patient_id, image_path "
+            "FROM lnrs.lnrs_anon_imaging_study "
+            "WHERE dicom_study_uid = %s "
+            "LIMIT 1"
+        )
+        params = (study_uid,)
+
+        if conn is not None:
+            cur = conn.execute(sql, params)
+            row = cur.fetchone()
+            return (row[0], row[1], row[2]) if row else None
+
+        import os
+
+        import psycopg
+
+        env_path = Path(__file__).resolve().parents[4] / "env" / ".env.h196_3"
+        env: dict[str, str] = {}
+        if env_path.exists():
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                env[k.strip()] = v.strip().strip('"').strip("'")
+        host = env.get("PG_HOST") or os.environ.get("PG_HOST") or "127.0.0.1"
+        port = int(env.get("PG_PORT") or os.environ.get("PG_PORT") or "5432")
+        user = env.get("PG_USER") or os.environ.get("PG_USER") or "lnrs"
+        password = env.get("PG_PASSWORD") or os.environ.get("PG_PASSWORD") or "lnrs_pwd"
+        database = env.get("PG_DATABASE") or os.environ.get("PG_DATABASE") or "postgres"
+        with psycopg.connect(
+            host=host, port=port, user=user, password=password, dbname=database,
+        ) as pg_conn:
+            cur = pg_conn.execute(sql, params)
+            row = cur.fetchone()
+            return (row[0], row[1], row[2]) if row else None
 
     # ------------------------------------------------------------------ #
     # QIDO-RS：查询接口（扁平字段 + DICOM JSON tag 双写）
@@ -125,7 +268,13 @@ class DicomService:
 
     @classmethod
     def query_study(cls, study_uid: str) -> dict[str, Any] | None:
-        """查询单个 Study（扁平 + DICOM JSON tag 双写）。"""
+        """查询单个 Study（扁平 + DICOM JSON tag 双写）。
+
+        issue-12 hook：先 ensure_study_indexed 让 indexer 把同 study 的全部
+        series 目录扫进内存（应对新桥布局 A/B/D 无 study 根的情况）。
+        对 zhujiang/shengyi/layout-C 是 noop（discover 返回 [image_path]）。
+        """
+        cls.ensure_study_indexed(study_uid=study_uid)
         study = indexer.get_study_by_uid(study_uid)
         if study is None:
             return None
@@ -141,8 +290,13 @@ class DicomService:
 
     @classmethod
     def query_series(cls, study_uid: str) -> list[dict[str, Any]]:
-        """查询 Study 下所有 Series（扁平 + DICOM JSON tag 双写）。"""
+        """查询 Study 下所有 Series（扁平 + DICOM JSON tag 双写）。
+
+        issue-12 hook：同 query_study，先 ensure_study_indexed。
+        """
+        cls.ensure_study_indexed(study_uid=study_uid)
         series_list = indexer.list_series_by_study_uid(study_uid)
+
         results: list[dict[str, Any]] = []
         for s in series_list:
             merged: dict[str, Any] = {}
@@ -266,7 +420,7 @@ class DicomService:
     }
 
     @classmethod
-    def _frame_content_type_for(cls, ds: "pydicom.Dataset") -> tuple[str, str]:
+    def _frame_content_type_for(cls, ds: pydicom.Dataset) -> tuple[str, str]:
         """返回 (transfer_syntax_uid, frame_part_content_type)。
 
         压缩封装用对应 MIME 触发客户端解码；未压缩 / 未知 → application/octet-stream。
@@ -408,10 +562,10 @@ class DicomService:
             if "00080060" in result and isinstance(result["00080060"].get("Value"), list) and result["00080060"]["Value"]:
                 modality = str(result["00080060"]["Value"][0] or "").upper()
             fallback = {
-                "CT":   {"wc": [40.0, 300.0, 1500.0],   "ww": [400.0, 1500.0, 2500.0]},  # brain / soft-tissue / bone
-                "MR":   {"wc": [500.0],  "ww": [2000.0]},
-                "PT":   {"wc": [2.0],    "ww": [4.0]},
-                "US":   {"wc": [128.0],  "ww": [256.0]},
+                "CT":   {"wc": [40.0, 300.0, 1500.0], "ww": [400.0, 1500.0, 2500.0]},  # brain / soft-tissue / bone
+                "MR":   {"wc": [500.0], "ww": [2000.0]},
+                "PT":   {"wc": [2.0], "ww": [4.0]},
+                "US":   {"wc": [128.0], "ww": [256.0]},
                 "CR":   {"wc": [2048.0], "ww": [4095.0]},
                 "DX":   {"wc": [2048.0], "ww": [4095.0]},
                 "XA":   {"wc": [2048.0], "ww": [4095.0]},
@@ -541,7 +695,7 @@ class DicomService:
         return []
 
     @classmethod
-    def _default_windows_by_modality(cls, ds: "pydicom.Dataset") -> list[tuple[float, float]]:
+    def _default_windows_by_modality(cls, ds: pydicom.Dataset) -> list[tuple[float, float]]:
         """当 DICOM 文件自身完全没写 WC/WW 时，才给一个"不挑"的显示窗口。
 
         规则：按 stored 值的 1%~99% 分位数做窗口，**不做按 Modality 的"特定窗位"强行注入**。
@@ -554,9 +708,9 @@ class DicomService:
     @classmethod
     def _render_gray_8bit(
         cls,
-        ds: "pydicom.Dataset",
-        pixel_array: "np.ndarray",
-    ) -> tuple["np.ndarray", str]:
+        ds: pydicom.Dataset,
+        pixel_array: np.ndarray,
+    ) -> tuple[np.ndarray, str]:
         """DICOM 标准灰度渲染（缩略图 /rendered 共用同一条路，绝不做"缩略图特调"）。
 
         仅两步：
@@ -617,7 +771,7 @@ class DicomService:
         return out_u8, photometric
 
     @classmethod
-    def _decode_pixel_array(cls, ds: "pydicom.Dataset", frame_number: int | None = None):
+    def _decode_pixel_array(cls, ds: pydicom.Dataset, frame_number: int | None = None):
         """取 ds 的像素 numpy 数组（多帧时可指定帧号）。
 
         SV1 (JPEG Lossless Process 14 Selection Value 1) 等压缩封装像素解码在 Pillow
@@ -1012,7 +1166,7 @@ class DicomService:
 
     @classmethod
     def _extract_frame_bytes_from_pixel_data(
-        cls, ds: "pydicom.Dataset", frame_number: int
+        cls, ds: pydicom.Dataset, frame_number: int
     ) -> bytes:
         """从 PixelData 按字节切分指定帧，不触发像素解码。
 
@@ -1216,6 +1370,7 @@ class DicomService:
         mid_idx = len(instances) // 2
         sop_uid = instances[mid_idx]["sop_uid"]
         return cls.get_thumbnail(sop_uid=sop_uid, viewport=viewport)
+
 
 def _study_meta_to_dicom_json(meta: dict[str, Any]) -> dict[str, Any]:
     """将 Study 元数据转为 DICOM JSON 对象。"""

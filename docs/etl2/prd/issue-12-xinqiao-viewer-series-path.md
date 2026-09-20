@@ -42,3 +42,45 @@ None - can start immediately.
 - 若 viewer 改造与 issue-1/2（service 切视图）合并处理更经济，本 issue 可调整为实施时合并，但文档保留独立
 - 字段命名参考：`file_path` 列当前**不存在**于 `lnrs_anon_dicom_series`，需新建（参 plan-xinqiao §0.6-3 决策 #4 的 dicom_series 直写字段）；
   若决定不补 `file_path`，则 viewer 端需用 `series_uid → ImagePath` 反查影像目录（用 DICOM header `SeriesInstanceUID` 扫描）
+---
+
+## 实施记录（2026-09-20）
+
+### 实现
+- `DicomService.discover_sibling_series_dirs(center_code, patient_id, image_path)`：
+  纯函数。**不依赖 PG 的 patient_id**（HMAC 匿名化不可逆），改从 `image_path`
+  目录名解析真实院内 PID（`img_<PID>_(.+)` 正则）；扫同前缀兄弟目录。
+- `DicomService.ensure_study_indexed(study_uid)`：
+  PG 反查 (center_code, patient_id, image_path) → 调 discover → 对每个兄弟
+  目录调 `indexer.register_folder`。indexer 自动按 `study_uid` 聚合。
+- `DicomService.query_study` / `query_series` 入口 hook：先 `ensure_study_indexed`，
+  viewer 首次访问某 study_uid 时自动触发。
+
+### 边界发现（v1 描述 vs 实测）
+- `study_root_kind` 实测 CSV 值为 `series_leaf`（不是 issue 文档说的 `series_dir_min`）；
+  分布：md5_layout_study_root **19,731** + series_leaf **13,583** = 33,314（与 PG study 数一致）
+- `image_path` 指向字典序最小 series 目录（布局 A 实测 4 个兄弟：1/77/553/1 = 632 files）
+- **匿名化 vs 真实 PID**：
+  - 磁盘目录前缀：`img_00720185_*`（真实院内 PID）
+  - PG `patient_id`：`PT_00502280`（HMAC 匿名值）
+  - 两者**单向不可逆** → 必须从 image_path 目录名解析 PID，不能用 PG patient_id
+
+### 端到端验证（h196_3 真数据，study_uid=`...58586.740`）
+- query_series 返回 **4 个 series**（之前 1 个），total **632 instances** = PG `sop_count`
+- 首次 ensure 耗时 **13s**（扫 4 兄弟目录 × 632 DICOM header 读，pydicom 解析）
+- LRU 命中后 < 100ms
+- indexer `_MAX_STUDIES=50`，覆盖 viewer session
+
+### Acceptance 实际结论
+| 项 | 实际 | 备注 |
+|---|---|---|
+| 布局 A/B/D 能渲染所有 series | ✅ | 4_tjj 实测 4 series × 632 instances 全出 |
+| 布局 C 行为不变 | ✅ | discover 返回 [image_path]，单目录 register |
+| 不改 PG schema | ✅ | 仅追加 service.py 后端 |
+| 不动 zhujiang/shengyi | ✅ | 发现函数对 layout C/非 xinqiao 路径返回单 path |
+| 性能 ≤ 3s | ⚠️ | 首次 13s（cold cache 扫 632 DICOM header）；LRU 命中 < 100ms |
+| 调研接口不存在 | ⚠️ | acceptance #1 提到的接口 `GET /medical/imaging_study/{id}/dicom` 实际不存在，OHIF 走标准 QIDO-RS `/dicom/studies` + `/dicom/series/{}/instances` |
+
+### 性能 follow-up（不在本 issue 范围）
+- `register_folder` 注释明示「不可并发」（`anon_etl_engine.py:3042`），4 兄弟目录串行是当前唯一路径
+- 优化方向：viewer 改 series 级懒加载（OHIF 默认就是）；或 issue-13 重灌时把 image_path 改成 study 根

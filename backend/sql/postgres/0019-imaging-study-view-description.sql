@@ -67,26 +67,29 @@ COMMENT ON FUNCTION lnrs.safe_to_date(text, text) IS
 -- ---------- 2. 辅助函数：path_study_date ----------
 -- 把 image_path → DATE 的两步（正则守卫 + substring + safe_to_date）合并
 -- 成单参 helper，视图内只用一处表达式，减少 9 份正则字面量漂移。
--- 返回 NULL 当 image_path 不符合 /YYYYMMDD/ 形态或日期非法。
-
-CREATE OR REPLACE FUNCTION lnrs.path_study_date(text)
-RETURNS date
-LANGUAGE sql
-IMMUTABLE
-AS $$
-    SELECT CASE
-        WHEN $1 ~ '/[0-9]{4}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])/[^/]+$'
-        THEN lnrs.safe_to_date(
-                 (regexp_match($1, '/([0-9]{4}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))/[^/]+$'))[1],
-                 'YYYYMMDD'
-             )
-        ELSE NULL
-    END;
-$$;
-
-COMMENT ON FUNCTION lnrs.path_study_date(text) IS
+-- 2026-09-20 (issue-5): 扩展前缀 (?:yd|new_|new-yd)? 与后缀 (_\d+)? 兼容
+-- zhujiang disk1 的 yd<YYYYMMDD> / new_<YYYYMMDD> / new-yd<YYYYMMDD>(_<n>)? /
+-- YYYYMMDD_<n> 形态；既有 /YYYYMMDD/<name>$ 行为不变。
+ CREATE OR REPLACE FUNCTION lnrs.path_study_date(text)
+ RETURNS date
+ LANGUAGE sql
+ IMMUTABLE
+ AS $$
+     SELECT CASE
+        WHEN $1 ~ '/(?:yd|new_|new-yd)?([0-9]{4}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))(_\d+)?/[^/]+$'
+         THEN lnrs.safe_to_date(
+                 (regexp_match($1, '/(?:yd|new_|new-yd)?([0-9]{4}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))(_\d+)?/[^/]+$'))[1],
+                  'YYYYMMDD'
+              )
+         ELSE NULL
+     END;
+ $$;
+ 
+ COMMENT ON FUNCTION lnrs.path_study_date(text) IS
     '从 image_path 提取检查日期（DATE）；正则收紧到月日数值范围，2-29 等
-     真实日历异常由 safe_to_date 兜底 → NULL。2026-09-10 视图派生引入';
+     真实日历异常由 safe_to_date 兜底 → NULL。2026-09-20 (issue-5) 扩展前缀
+     `(?:yd|new_|new-yd)?` 与后缀 `(_\d+)?`, 兼容 zhujiang disk1 的多种日期
+    形态; 2026-09-10 视图派生引入';
 
 -- ---------- 3. 视图：增补 study_date / study_description ----------
 

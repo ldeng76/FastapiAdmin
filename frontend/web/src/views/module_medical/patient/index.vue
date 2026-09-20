@@ -262,8 +262,10 @@ onBeforeMount(async ()=>{
 })
 onActivated(function (){
   let newQuery = getNewQuery(route.query)
-  if(JSON.stringify(searchForm.value) !== JSON.stringify(newQuery)){
-    searchForm.value = newQuery
+  if(newQuery.isNewSearch === 'true' && JSON.stringify(searchForm.value) !== JSON.stringify(newQuery)){
+    let params = Object.assign({},newQuery)
+    delete params.isNewSearch
+    searchForm.value = params
     handleSearchBarSearch()
   }
 })

@@ -116,7 +116,7 @@ const kpisIcon = {
 }
 
 async function searchCall(isRedirectPatient = false,query = {}){
-  const params = Object.assign({is_placeholders:true},searchForm.value,query);
+  const params = Object.assign({is_placeholders:true,isNewSearch:true},searchForm.value,query);
   if(isRedirectPatient){
     await router.push({path: '/medicalPatient', query: params});
     return;

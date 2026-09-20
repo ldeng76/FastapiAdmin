@@ -153,7 +153,7 @@ class TestRunCenterSourceKindAuto:
     ):
         import uuid
 
-        from app.core.database import async_db_session
+        from app.core.database import async_db_session, async_engine
         from app.plugin.module_medical.hospital import anon_etl_engine, anon_etl_service
 
         center_dir = tmp_path / center
@@ -177,28 +177,67 @@ class TestRunCenterSourceKindAuto:
         anon_etl_service._create_batch = fake_create_batch
         anon_etl_engine.import_center = fake_import_center
 
+        # 回归守卫基线：本测试**不得**改变该中心真实 batch 的行数。
+        # 2026-09-20 事故：清理写成 `DELETE ... WHERE center_code = :c`，而本测试
+        # 用的是真实中心名（run_center 的 _CENTER_PARQUET_SPECS 查找需要），
+        # 且 fake_create_batch 从不写库 → 该 DELETE 删掉的全是真实 batch，
+        # 经 dicom_series.created_batch_id 的 ON DELETE CASCADE 连带删掉
+        # zhujiang 86,203 + shengyi 82,057 行 dicom_series。
+        async with async_db_session() as session:
+            baseline_batches = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM lnrs.lnrs_anon_ingest_batch "
+                        "WHERE center_code = :c"
+                    ),
+                    {"c": center},
+                )
+            ).scalar_one()
+
         try:
             result = await anon_etl_service.run_center(
                 center, data_root=tmp_path, dicom_series_only=dicom_series_only,
             )
             assert result["status"] == "success", f"run_center 应成功: {result}"
-            async with async_db_session() as session:
+        finally:
+            anon_etl_service._create_batch = original_create_batch
+            anon_etl_engine.import_center = original_import_center
+
+        # 清理**只按本测试拿到的 batch_id**，绝不按 center_code：
+        # fake_create_batch 未写库时该 batch_id 不存在 → 删除是 no-op；
+        # 若将来 _create_batch 不再被 fake，也只会删掉本测试自己创建的那一行。
+        async with async_db_session() as session:
+            await session.execute(
+                text("DELETE FROM lnrs.lnrs_anon_ingest_batch WHERE batch_id = :b"),
+                {"b": result["batch_id"]},
+            )
+            await session.commit()
+
+        async with async_db_session() as session:
+            remaining_batches = (
                 await session.execute(
                     text(
-                        "DELETE FROM lnrs.lnrs_anon_ingest_batch "
+                        "SELECT COUNT(*) FROM lnrs.lnrs_anon_ingest_batch "
                         "WHERE center_code = :c"
                     ),
                     {"c": center},
                 )
-                await session.commit()
-        finally:
-            anon_etl_service._create_batch = original_create_batch
-            anon_etl_engine.import_center = original_import_center
+            ).scalar_one()
+        assert remaining_batches == baseline_batches, (
+            f"测试改变了 {center} 的真实 batch 行数"
+            f"（{baseline_batches} → {remaining_batches}）——"
+            "清理必须按 batch_id，不能按 center_code"
+        )
 
         assert captured.get("source_kind") == expected_source_kind, (
             f"{center} 应 source_kind={expected_source_kind!r}，"
             f"实际 {captured.get('source_kind')!r}"
         )
+
+        # 释放引擎连接池：本测试用 asyncio.run() 每次新建事件循环，
+        # 池中残留上一循环的连接会让下一个测试报
+        # "attached to a different loop"（同文件 TestSourceKindParam 同款收尾）。
+        await async_engine.dispose()
 
 
 @pytest.mark.skipif(not PG_READY, reason=SKIP_REASON)

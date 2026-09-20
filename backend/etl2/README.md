@@ -85,13 +85,26 @@ lnrs_anon_v_imaging_study_counts   视图（SUM byte_size → total_bytes）
 | 步骤 1 回填 | `UPDATE lnrs.lnrs_anon_imaging_study SET anon_exam_id = NULL;`（仅步骤 1 内生效；若步骤 2 已跑 dicom_series，需先回滚步骤 2） |
 | 步骤 2 落库 | `DELETE FROM lnrs.lnrs_anon_dicom_series WHERE created_batch_id = '<batch>';` |
 | 完整回退 | `DROP TABLE lnrs.lnrs_anon_dicom_series;` + 重跑 `0006-anonymized-schema-lnrs.sql §7` |
-| promote 按批次回滚 | `python etl2/promote_stage_dicom_series.py --rollback <batch_id>`（issue-22：删 insert 行 + 按 preimage 还原 update 行，只撤销该批次） |
+| promote 按批次回滚 | `python etl2/promote_stage_all.py --rollback <batch_id> --table <patient\|exam\|imaging_study\|dicom_series>`（issue-22/23：删 insert 行 + 按 preimage 还原 update 行，只撤销该批次） |
 
-promote 命令（issue-22 起）自带三道护栏：前置校验闸（非空 / 行数 /
+promote 命令自带三道护栏（issue-22/23）：前置校验闸（非空 / 行数 /
 NOT NULL+CHECK / 外键完整性，不过则拒绝、生产零变化、退出码 3）、
 审计（每次 promote/dry-run 写 `lnrs.lnrs_promote_audit` + 行级明细
 `lnrs_promote_audit_row`）、按批次回滚（见上表）。apply 成功的输出
 会直接给出对应 batch_id 的回滚命令。
+
+issue-23 起 4 张表（patient / exam / imaging_study / dicom_series）统一
+走 stage→promote：
+
+- stage 表：`lnrs_stage_patient` / `lnrs_stage_exam` /
+  `lnrs_stage_imaging_study` / `lnrs_stage_dicom_series`（迁移
+  n4o5p6q7r8s9 + p6q7r8s9t0u1）。
+- promote 入口：`promote_stage_all.py`（按 FK 序 patient → exam →
+  imaging_study → dicom_series，顺序闸拒绝乱序；`--table` 可单表）。
+  dicom_series 单表命令 `promote_stage_dicom_series.py` 保留。
+- ad-hoc 脚本（issue-6 / issue-13 / backfill_dicom_series_count）只写
+  stage；引擎灌库 `stage_mode=True` 时 exam/patient 写 stage，
+  report_text / exam_detail 不在 4 表 promote 链路内、仍直写（已知边界）。
 
 > ⚠ **回退前必读**：`lnrs_anon_dicom_series` 是 `ingest_batch` 的 CASCADE 子表 ——
 > `DELETE FROM lnrs_anon_ingest_batch WHERE ...` 会连带删除对应 `dicom_series` 行

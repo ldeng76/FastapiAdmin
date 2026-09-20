@@ -51,6 +51,7 @@ from sqlalchemy import text  # noqa: E402
 from app.core.database import async_db_session  # noqa: E402
 from app.core.logger import log  # noqa: E402
 from app.plugin.module_medical.hospital.anon_pg_copy import copy_then_merge  # noqa: E402
+from stage_promote import StageTableSpec, promote_stage_table  # noqa: E402
 from etl2.promote_guardrails import (  # noqa: E402
     AUDIT_TABLE,
     PromoteRefused,
@@ -104,7 +105,6 @@ async def _stage_rows(db, stage_table: str) -> tuple[int, list[dict]]:
     )).scalar() or 0)
     return n, [dict(r) for r in rows]
 
-
 async def promote(
     db,
     *,
@@ -114,52 +114,19 @@ async def promote(
     key_column: str = "dicom_study_uid",
     mode: str = "apply",
 ) -> tuple[int, str]:
-    """带护栏的 promote：校验闸 → (dry-run 出口) → 审计 → 明细 → upsert。
+    """带护栏的 promote（issue-22），委托 stage_promote.promote_stage_table。
 
     返回 (upsert 行数, batch_id)。校验不过抛 PromoteRefused，生产零变化。
     stage_table/prod_table/constraint 可注入 —— 供沙箱测试在 scratch 表上
-    验证语义，不触碰生产表。
+    验证语义，不触碰生产表。issue-23 起本体在 stage_promote.promote_stage_table，
+    此处只做 dicom_series 的参数绑定（不检查其它表顺序，保持单表语义）。
     """
-    batch_id = uuid.uuid4()
-    n_stage, rows = await _stage_rows(db, stage_table)
-    violations = await validate_stage(
-        db, stage_table=stage_table, prod_table=prod_table,
-        promote_columns=PROMOTE_COLUMNS)
-    if violations:
-        # 校验闸拒绝：生产库零变化，只留一条 rejected 审计
-        audit_id = await record_audit(
-            db, batch_id=batch_id, target_table=prod_table, mode=mode,
-            stage_rows=n_stage, validation="rejected", violations=violations)
-        await db.commit()
-        log.warning(f"[PROMOTE] 校验闸拒绝 batch={batch_id} audit={audit_id}: {violations}")
-        raise PromoteRefused(violations)
-
-    audit_id = await record_audit(
-        db, batch_id=batch_id, target_table=prod_table, mode=mode,
-        stage_rows=n_stage, validation="passed",
-        upsert_rows=len(rows) if mode == "apply" else 0)
-    if mode == "dry_run":
-        await db.commit()
-        log.info(f"[PROMOTE] dry-run 通过 batch={batch_id} audit={audit_id}，未写生产")
-        return 0, str(batch_id)
-
-    # 明细必须在合并前抓（preimage = promote 前的值）
-    await record_batch_detail(
-        db, audit_id=audit_id, stage_table=stage_table,
-        prod_table=prod_table, key_column=key_column)
-    n = await copy_then_merge(
-        db,
-        target_table_name=prod_table,
-        rows=rows,
-        constraint=constraint,
-        update_set=dict.fromkeys(UPDATE_COLUMNS, 1),
-        column_order=PROMOTE_COLUMNS,
+    spec = StageTableSpec(
+        name="dicom_series", stage_table=stage_table, prod_table=prod_table,
+        constraint=constraint, key_column=key_column,
+        promote_columns=PROMOTE_COLUMNS, update_columns=UPDATE_COLUMNS,
     )
-    await finalize_audit(db, audit_id=audit_id, upsert_rows=n)
-    await db.commit()
-    log.info(f"[PROMOTE] {stage_table} → {prod_table} upsert {n} 行 batch={batch_id}")
-    return n, str(batch_id)
-
+    return await promote_stage_table(db, spec, mode=mode, check_order=False)
 
 async def run_dry_run() -> int:
     """校验 + 审计（mode=dry_run），不写生产。"""

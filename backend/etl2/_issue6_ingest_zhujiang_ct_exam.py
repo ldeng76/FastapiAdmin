@@ -117,6 +117,9 @@ async def ingest_nodule_only(data_root: str) -> dict:
             ],
             ordinal_field="nodule_no",
             batch_id=batch_id,
+            # issue-23：exam/patient 写 stage 表，promote 命令统一上生产；
+            # report_text / exam_detail 不在 4 表 promote 链路内，仍直写
+            stage_mode=True,
         )
         await sess.commit()
     log.info(f"[ETL-2] nodule_imaging 导入 {n} 行 exam+report")
@@ -128,7 +131,7 @@ async def post_ingest_distribution() -> None:
     async with async_db_session() as s:
         r = await s.execute(text("""
             SELECT exam_type, COUNT(*) AS n
-            FROM lnrs.lnrs_anon_exam
+            FROM lnrs.lnrs_stage_exam
             WHERE center_code = 'zhujiang'
             GROUP BY 1 ORDER BY 1
         """))
@@ -153,32 +156,34 @@ async def run_backfill_dry_run(center: str) -> dict | None:
 
 
 async def run_backfill_apply(center: str) -> int:
-    """跑 backfill apply。"""
+    """跑 backfill apply（issue-23：结果写 stage_imaging_study，不直写生产）。"""
     sys.path.insert(0, str(_BACKEND_ROOT / "etl2"))
     from backfill_imaging_study_exam_id import run_apply
-    log.info(f"[backfill] --apply --center {center}")
-    await run_apply(center=center)
+    log.info(f"[backfill] --apply --center {center}（写 stage）")
+    await run_apply(center=center, write_target="stage")
     return 0
 
 
 async def verify_after_apply(center: str, expected_matchable: int) -> None:
-    """验收断言: 非 NULL 计数 == matchable, 外键完整, 抽样一致。"""
+    """验收断言（issue-23 stage 口径）: stage 非 NULL 计数 == matchable,
+    外键完整（stage.anon_exam_id ↔ 生产 exam）, 抽样一致。
+    生产 imaging_study 在 promote 前不变，故验收对象是 stage 表。"""
     async with async_db_session() as s:
         # 1) 非 NULL 计数
         r = await s.execute(text("""
             SELECT COUNT(*) FILTER (WHERE anon_exam_id IS NOT NULL) AS with_exam,
                    COUNT(*) AS total
-            FROM lnrs.lnrs_anon_imaging_study
+            FROM lnrs.lnrs_stage_imaging_study
             WHERE center_code = :c
         """), {"c": center})
         row = dict(r.mappings().first())
-        log.info(f"[VERIFY] {center} imaging_study: {row}")
+        log.info(f"[VERIFY] {center} stage_imaging_study: {row}")
         assert row["with_exam"] == expected_matchable, \
             f"期望非 NULL 计数 {expected_matchable}, 实际 {row['with_exam']}"
 
         # 2) 外键完整性
         r = await s.execute(text("""
-            SELECT COUNT(*) FROM lnrs.lnrs_anon_imaging_study s
+            SELECT COUNT(*) FROM lnrs.lnrs_stage_imaging_study s
             WHERE s.center_code = :c
               AND s.anon_exam_id IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM lnrs.lnrs_anon_exam e
@@ -192,7 +197,7 @@ async def verify_after_apply(center: str, expected_matchable: int) -> None:
         r = await s.execute(text("""
             WITH samples AS (
                 SELECT study_key
-                FROM lnrs.lnrs_anon_imaging_study
+                FROM lnrs.lnrs_stage_imaging_study
                 WHERE center_code = :c AND anon_exam_id IS NOT NULL
                 ORDER BY random() LIMIT 3
             )
@@ -200,7 +205,7 @@ async def verify_after_apply(center: str, expected_matchable: int) -> None:
                    e.patient_id, e.exam_type, e.exam_date,
                    lnrs.path_study_date(s.image_path) AS study_date,
                    abs(e.exam_date - lnrs.path_study_date(s.image_path)) AS diff_days
-            FROM lnrs.lnrs_anon_imaging_study s
+            FROM lnrs.lnrs_stage_imaging_study s
             JOIN samples USING (study_key)
             JOIN lnrs.lnrs_anon_exam e ON e.anon_exam_id = s.anon_exam_id
             ORDER BY s.study_key
@@ -244,8 +249,10 @@ async def main() -> int:
     gate(
         schema="lnrs",
         tables=[
-            *EXAM_TEXT_INGEST_TABLES,
-            "lnrs.lnrs_anon_imaging_study (backfill)",
+            # issue-23：写入目标只有 stage 表与备份 tmp 表；生产 4 表只读
+            "lnrs.lnrs_stage_patient",
+            "lnrs.lnrs_stage_exam",
+            "lnrs.lnrs_stage_imaging_study",
             "lnrs_tmp_issue6_study_before (backup)",
         ],
         declared=args.target,
@@ -269,8 +276,7 @@ async def main() -> int:
         # 第二次确认（issue-21）：backfill apply 的预计行数取自 dry-run 口径
         # （SQL_COVERAGE_REPORT.matchable，上方 run_backfill_dry_run 已算出）
         gate(
-            schema="lnrs",
-            tables=["lnrs.lnrs_anon_imaging_study"],
+            tables=["lnrs.lnrs_stage_imaging_study"],
             declared=args.target,
             estimated_rows=expected_matchable,
             action="write",

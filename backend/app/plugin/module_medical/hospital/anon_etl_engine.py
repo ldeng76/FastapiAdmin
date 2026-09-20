@@ -342,6 +342,7 @@ async def _batch_upsert_patients(
     patient_records: list[dict[str, Any]],
     batch_id: str,
     is_placeholder: bool = False,
+    target_table: str | None = None,
 ) -> dict[str, str]:
     """批量处理病人，返回 {anon_id: patient_id} 映射。
 
@@ -411,7 +412,30 @@ async def _batch_upsert_patients(
     #    - 活行：UPDATE last_seen + 人口学
     #    - 软删行：UPDATE 清空 deleted_* + last_seen + 人口学（复活）
     #    created_batch_id 不在 SET 里，活行/软删行保留原值。
-    upsert_rows = []
+    #    target_table（issue-23）：非 None 时改写该表（ad-hoc 脚本的 stage 表），
+    #    走 copy_then_merge，冲突/SET 语义与下方 prod 分支完全一致；默认 None
+    #    = ORM prod 路径，线上主路径行为不变。
+    placeholder_set = {
+        "last_seen_batch_id",
+        "deleted_at",
+        "deleted_reason",
+        "deleted_batch_id",
+    }
+    full_set = placeholder_set | {
+        "sex",
+        "is_placeholder",
+        "birth_date",
+        "ethnicity",
+        "smoking_status",
+        "abo_blood_type",
+        "rh_blood_type",
+        "native_place",
+        "first_nodule_date",
+        "bmi",
+        "patient_meta",
+    }
+    stage_update_set = placeholder_set if is_placeholder else full_set
+    upsert_rows: list[dict[str, Any]] = []
     for r in unique:
         upsert_rows.append(
             {
@@ -441,45 +465,61 @@ async def _batch_upsert_patients(
         )
 
     # 批量 ON CONFLICT upsert（每批 BATCH_SIZE 行）
-    for i in range(0, len(upsert_rows), BATCH_SIZE):
-        batch = upsert_rows[i : i + BATCH_SIZE]
-        stmt = pg_insert(AnonPatientModel.__table__).values(batch)
-        if is_placeholder:
-            # 占位记录：只刷新 last_seen + 复活软删行，不覆盖人口学/稳定属性
-            stmt = stmt.on_conflict_do_update(
-                constraint="lnrs_anon_uq_patient_center",
-                set_={
-                    "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
-                    "deleted_at": None,
-                    "deleted_reason": None,
-                    "deleted_batch_id": None,
-                },
+    if target_table:
+        from .anon_pg_copy import copy_then_merge
+
+        col_order = list(upsert_rows[0].keys())
+        for i in range(0, len(upsert_rows), BATCH_SIZE):
+            batch = upsert_rows[i : i + BATCH_SIZE]
+            await copy_then_merge(
+                db,
+                target_table_name=target_table,
+                rows=batch,
+                constraint="lnrs_stage_patient_uq_center",
+                update_set=dict.fromkeys(stage_update_set, 1),
+                column_order=col_order,
             )
-        else:
-            # 完整记录（patient.parquet）：刷新 last_seen + 全部人口学/稳定属性；复活软删
-            stmt = stmt.on_conflict_do_update(
-                constraint="lnrs_anon_uq_patient_center",
-                set_={
-                    "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
-                    "sex": stmt.excluded.sex,
-                    # 档案到达：占位翻转为真实（已为 False 时无副作用）
-                    "is_placeholder": False,
-                    "birth_date": stmt.excluded.birth_date,
-                    "ethnicity": stmt.excluded.ethnicity,
-                    "smoking_status": stmt.excluded.smoking_status,
-                    "abo_blood_type": stmt.excluded.abo_blood_type,
-                    "rh_blood_type": stmt.excluded.rh_blood_type,
-                    "native_place": stmt.excluded.native_place,
-                    "first_nodule_date": stmt.excluded.first_nodule_date,
-                    "bmi": stmt.excluded.bmi,
-                    "patient_meta": stmt.excluded.patient_meta,
-                    "deleted_at": None,
-                    "deleted_reason": None,
-                    "deleted_batch_id": None,
-                },
-            )
-        await db.execute(stmt)
-        await _maybe_commit(db, rows_done=i + len(batch), label=f"patient:{center_code}")
+            await _maybe_commit(db, rows_done=i + len(batch), label=f"patient:{center_code}")
+    else:
+        for i in range(0, len(upsert_rows), BATCH_SIZE):
+            batch = upsert_rows[i : i + BATCH_SIZE]
+            stmt = pg_insert(AnonPatientModel.__table__).values(batch)
+            if is_placeholder:
+                # 占位记录：只刷新 last_seen + 复活软删行，不覆盖人口学/稳定属性
+                stmt = stmt.on_conflict_do_update(
+                    constraint="lnrs_anon_uq_patient_center",
+                    set_={
+                        "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
+                        "deleted_at": None,
+                        "deleted_reason": None,
+                        "deleted_batch_id": None,
+                    },
+                )
+            else:
+                # 完整记录（patient.parquet）：刷新 last_seen + 全部人口学/稳定属性；复活软删
+                stmt = stmt.on_conflict_do_update(
+                    constraint="lnrs_anon_uq_patient_center",
+                    set_={
+                        "last_seen_batch_id": stmt.excluded.last_seen_batch_id,
+                        "sex": stmt.excluded.sex,
+                        # 档案到达：占位翻转为真实（已为 False 时无副作用）
+                        "is_placeholder": False,
+                        "birth_date": stmt.excluded.birth_date,
+                        "ethnicity": stmt.excluded.ethnicity,
+                        "smoking_status": stmt.excluded.smoking_status,
+                        "abo_blood_type": stmt.excluded.abo_blood_type,
+                        "rh_blood_type": stmt.excluded.rh_blood_type,
+                        "native_place": stmt.excluded.native_place,
+                        "first_nodule_date": stmt.excluded.first_nodule_date,
+                        "bmi": stmt.excluded.bmi,
+                        "patient_meta": stmt.excluded.patient_meta,
+                        "deleted_at": None,
+                        "deleted_reason": None,
+                        "deleted_batch_id": None,
+                    },
+                )
+            await db.execute(stmt)
+            await _maybe_commit(db, rows_done=i + len(batch), label=f"patient:{center_code}")
 
     if n_new:
         log.info(
@@ -503,6 +543,7 @@ async def _batch_upsert_exams(
     db: AsyncSession,
     *,
     exam_rows: list[dict[str, Any]],
+    target_table: str | None = None,
 ) -> None:
     """批量 upsert exam 行（每行含所有 anon_exam 列）。
 
@@ -513,6 +554,23 @@ async def _batch_upsert_exams(
     覆盖类型。patient_id 同理保留首值（占位与真实行一致）。
     """
     if not exam_rows:
+        return
+    if target_table:
+        # issue-23：ad-hoc 脚本 stage 模式 —— 冲突/SET 语义与 prod 完全一致
+        from .anon_pg_copy import copy_then_merge
+
+        col_order = list(exam_rows[0].keys())
+        for i in range(0, len(exam_rows), BATCH_SIZE):
+            batch = exam_rows[i : i + BATCH_SIZE]
+            await copy_then_merge(
+                db,
+                target_table_name=target_table,
+                rows=batch,
+                constraint="lnrs_stage_exam_uq_source",
+                update_set=dict.fromkeys(["last_seen_batch_id", "exam_date"], 1),
+                column_order=col_order,
+            )
+            await _maybe_commit(db, rows_done=i + len(batch), label="exam")
         return
     for i in range(0, len(exam_rows), BATCH_SIZE):
         batch = exam_rows[i : i + BATCH_SIZE]
@@ -1134,6 +1192,7 @@ async def _import_exam_text_table(
     date_field: str = "exam_date",
     ordinal_field: str | None = None,
     date_lookup_field: str | None = None,
+    stage_mode: bool = False,
 ) -> int:
     """通用：把 nodule_imaging / pathology_specimen 批量落 exam + report_text。
 
@@ -1150,6 +1209,10 @@ async def _import_exam_text_table(
     （如 examType / exam_type）。设置后优先取该列值，经 _normalize_exam_type
     归一化（全角→半角 / 字典值精确匹配 / 字典映射）；空值或未识别时兜底 Other。
     hospital_id：exam_type_field 生效时限定预加载 med_dict_mapping 的医院范围。
+    stage_mode（issue-23）：True 时 exam/patient 写各自 stage 表
+    （lnrs_stage_exam / lnrs_stage_patient，冲突与 SET 语义同 prod），
+    供 ad-hoc 脚本「先暂存再上」；report_text / exam_detail / phi_audit
+    不在 4 表 promote 链路内，保持直写。默认 False = 线上主路径不变。
     """
     cols, rows = await _read_parquet_async(parquet_path)
     if not rows:
@@ -1347,9 +1410,12 @@ async def _import_exam_text_table(
         imported += 1
 
     # 1. 先 upsert 所有 exam 涉及的病人（确保 FK 存在）
+    #    stage_mode：patient/exam 改写各自 stage 表（issue-23）
+    patient_target = "lnrs.lnrs_stage_patient" if stage_mode else None
+    exam_target = "lnrs.lnrs_stage_exam" if stage_mode else None
     pid_map = await _batch_upsert_patients(
         db, center_code=center_code, patient_records=exam_patient_records,
-        batch_id=batch_id, is_placeholder=True,
+        batch_id=batch_id, is_placeholder=True, target_table=patient_target,
     )
 
     # 2. 回填 exam_rows 的 patient_id（去掉临时键）
@@ -1358,7 +1424,7 @@ async def _import_exam_text_table(
         del er["_anon_id"]
 
     # 3. 批量 upsert exam + report_text + phi_audit
-    await _batch_upsert_exams(db, exam_rows=exam_rows)
+    await _batch_upsert_exams(db, exam_rows=exam_rows, target_table=exam_target)
     await _batch_upsert_report_text(db, report_rows=report_rows)
     if detail_rows:
         await _batch_upsert_exam_detail(db, detail_rows=detail_rows)

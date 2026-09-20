@@ -185,10 +185,22 @@ async def run_dry_run(center: str | None) -> list:
         return rows
 
 
-async def run_apply(center: str | None) -> None:
-    """实际回填 anon_exam_id。"""
+async def run_apply(center: str | None, write_target: str = "prod") -> None:
+    """实际回填 anon_exam_id。
+
+    write_target（issue-23）：
+    - "prod"（默认，旧行为）：直接 UPDATE 生产表——仅限已经全面走
+      stage 机制前的旧调用方；
+    - "stage"：不改生产，把 prod 现行行拷贝进 lnrs_stage_imaging_study
+      并带上新 anon_exam_id（ON CONFLICT (study_key) DO UPDATE），生产表
+      由 promote_stage_all.py 统一上。
+    """
+    assert write_target in ("prod", "stage"), write_target
+    tgt = "lnrs.lnrs_stage_imaging_study" if write_target == "stage" \
+        else "lnrs.lnrs_anon_imaging_study"
     select_sql = SQL_PICK_CANDIDATE.format(study_date=STUDY_DATE_EXPR, center_filter=_center_filter_sql(center))
-    print(f"\n[APPLY] 回填 imaging_study.anon_exam_id（center={center or 'ALL'}）…\n")
+    print(f"\n[APPLY] 回填 imaging_study.anon_exam_id → {tgt}"
+          f"（center={center or 'ALL'}）…\n")
 
     picked = 0
     skipped = 0
@@ -198,7 +210,7 @@ async def run_apply(center: str | None) -> None:
         candidates = result.all()
         log.info(f"[APPLY] 候选 study 行 {len(candidates)} 条")
 
-        # 批量 UPDATE：每条 study 一行 SQL，保持事务小颗粒
+        # 批量处理：每条 study 一行 SQL，保持事务小颗粒
         BATCH = 500
         for i in range(0, len(candidates), BATCH):
             chunk = candidates[i : i + BATCH]
@@ -206,15 +218,36 @@ async def run_apply(center: str | None) -> None:
                 if not row.picked_exam_id:
                     skipped += 1
                     continue
-                await db.execute(
-                    text(
-                        "UPDATE lnrs.lnrs_anon_imaging_study "
-                        "SET anon_exam_id = :exam_id "
-                        "WHERE study_key = :study_key "
-                        "  AND anon_exam_id IS NULL"
-                    ),
-                    {"exam_id": row.picked_exam_id, "study_key": row.study_key},
-                )
+                if write_target == "stage":
+                    # 拷贝 prod 现行行进 stage 并带上新 anon_exam_id
+                    # （冲突键用 stage 的 (patient_id, dicom_study_uid, source)，
+                    #   study_key 随行拷贝保持与 prod 一致）
+                    await db.execute(text(f"""
+                        INSERT INTO {tgt}
+                          (study_key, patient_id, center_code, dicom_study_uid,
+                           modality, image_path, sop_count, source,
+                           created_batch_id, created_at, updated_at, anon_exam_id)
+                        SELECT p.study_key, p.patient_id, p.center_code,
+                               p.dicom_study_uid, p.modality, p.image_path,
+                               p.sop_count, p.source,
+                               p.created_batch_id, p.created_at, p.updated_at,
+                               :exam_id
+                        FROM lnrs.lnrs_anon_imaging_study p
+                        WHERE p.study_key = :study_key
+                        ON CONFLICT ON CONSTRAINT lnrs_stage_imaging_study_uq
+                          DO UPDATE SET anon_exam_id = EXCLUDED.anon_exam_id,
+                                        updated_at = now()
+                    """), {"exam_id": row.picked_exam_id, "study_key": row.study_key})
+                else:
+                    await db.execute(
+                        text(
+                            "UPDATE lnrs.lnrs_anon_imaging_study "
+                            "SET anon_exam_id = :exam_id "
+                            "WHERE study_key = :study_key "
+                            "  AND anon_exam_id IS NULL"
+                        ),
+                        {"exam_id": row.picked_exam_id, "study_key": row.study_key},
+                    )
                 picked += 1
             await db.commit()
             log.info(
@@ -224,7 +257,7 @@ async def run_apply(center: str | None) -> None:
 
     print(
         f"\n[APPLY] 完成：updated={picked} skipped_no_candidate={skipped} "
-        f"center={center or 'ALL'}"
+        f"center={center or 'ALL'} target={write_target}"
     )
 
 

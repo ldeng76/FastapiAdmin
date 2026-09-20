@@ -284,7 +284,7 @@ async def rollback_batch(
         DELETE FROM {prod_table} p
         USING {AUDIT_ROW_TABLE} r
         WHERE r.audit_id IN :aids AND r.action = 'insert'
-          AND p.{key_column} = r.business_key
+          AND p.{key_column}::text = r.business_key
     """).bindparams(bindparam("aids", expanding=True)), {"aids": aids})
     n_deleted = del_res.rowcount or 0
 
@@ -298,7 +298,7 @@ async def rollback_batch(
           FROM {AUDIT_ROW_TABLE} r
           WHERE r.audit_id IN :aids AND r.action = 'update'
         ) s
-        WHERE p.{key_column} = s.business_key
+        WHERE p.{key_column}::text = s.business_key
     """).bindparams(bindparam("aids", expanding=True)), {"aids": aids})
     n_restored = res.rowcount or 0
 

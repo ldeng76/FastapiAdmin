@@ -140,38 +140,12 @@ async def backup_imaging_study(center: str) -> str:
     return tbl
 
 
-async def backup_series_exam_state(center: str) -> None:
-    """dicom_series.anon_exam_id 现值 → lnrs_tmp_issue13_series_before（回退用）。"""
-    async with async_db_session() as s:
-        await s.execute(text("""
-            CREATE TABLE IF NOT EXISTS lnrs.lnrs_tmp_issue13_series_before (
-                dicom_study_uid text PRIMARY KEY,
-                anon_exam_id    text
-            )
-        """))
-        await s.execute(text("""
-            DELETE FROM lnrs.lnrs_tmp_issue13_series_before
-            USING lnrs.lnrs_anon_dicom_series ds
-            JOIN lnrs.lnrs_anon_imaging_study s USING (dicom_study_uid)
-            WHERE lnrs.lnrs_tmp_issue13_series_before.dicom_study_uid = ds.dicom_study_uid
-              AND s.center_code = :c
-        """), {"c": center})
-        n = (await s.execute(text("""
-            INSERT INTO lnrs.lnrs_tmp_issue13_series_before (dicom_study_uid, anon_exam_id)
-            SELECT ds.dicom_study_uid, ds.anon_exam_id
-            FROM lnrs.lnrs_anon_dicom_series ds
-            JOIN lnrs.lnrs_anon_imaging_study s USING (dicom_study_uid)
-            WHERE s.center_code = :c
-        """), {"c": center})).rowcount
-        await s.commit()
-    log.info(f"[BACKUP] lnrs_tmp_issue13_series_before +{n} 行")
-
-
 async def log_exam_distribution(center: str, stage: str) -> None:
+    """stage exam 分布（issue-23：exam 写 stage）。"""
     async with async_db_session() as s:
         r = await s.execute(text("""
             SELECT exam_type, COUNT(*) AS n
-            FROM lnrs.lnrs_anon_exam WHERE center_code = :c
+            FROM lnrs.lnrs_stage_exam WHERE center_code = :c
             GROUP BY 1 ORDER BY 1
         """), {"c": center})
         log.info(f"[EXAM-DIST {stage}] {center}: {[dict(x._mapping) for x in r]}")
@@ -322,7 +296,10 @@ async def ingest_ct_exam(center: str, parquet_path: Path, data_dir: Path) -> dic
             await _resolve_hospital_id(sess, center)
             n = await _import_exam_text_table(
                 sess, center_code=center, parquet_path=parquet_path,
-                batch_id=batch_id, **XQ_NODULE_SPEC,
+                batch_id=batch_id,
+                # issue-23：exam/patient 写 stage 表，promote 统一上生产；
+                # report_text / exam_detail 不在 4 表 promote 链路内，仍直写
+                stage_mode=True, **XQ_NODULE_SPEC,
             )
             await sess.commit()
     except Exception:
@@ -354,12 +331,12 @@ async def run_tier1(center: str, declared: str | None = None) -> int:
     # 安全闸（issue-21）：backfill apply 前再确认一次；预计行数取自 dry-run
     gate(
         schema="lnrs",
-        tables=["lnrs.lnrs_anon_imaging_study"],
+        tables=["lnrs.lnrs_stage_imaging_study"],
         declared=declared,
         estimated_rows=matchable,
         action="write",
     )
-    await run_apply(center)
+    await run_apply(center, write_target="stage")
     return matchable
 
 
@@ -464,13 +441,24 @@ async def run_residual(center: str, src_ct: Path, map_path: Path) -> dict:
         for i in range(0, len(updates), BATCH):
             n = 0
             for study_key, eid, _rule in updates[i : i + BATCH]:
-                r = await s.execute(
-                    text(
-                        "UPDATE lnrs.lnrs_anon_imaging_study SET anon_exam_id = :e "
-                        "WHERE study_key = :k AND anon_exam_id IS NULL"
-                    ),
-                    {"e": eid, "k": study_key},
-                )
+                # issue-23：拷贝 prod 现行行进 stage 并带上新 anon_exam_id
+                # （保留旧 UPDATE 的「不覆盖已有 anon_exam_id」语义）
+                r = await s.execute(text("""
+                    INSERT INTO lnrs.lnrs_stage_imaging_study
+                      (study_key, patient_id, center_code, dicom_study_uid,
+                       modality, image_path, sop_count, source,
+                       created_batch_id, created_at, updated_at, anon_exam_id)
+                    SELECT p.study_key, p.patient_id, p.center_code,
+                           p.dicom_study_uid, p.modality, p.image_path,
+                           p.sop_count, p.source,
+                           p.created_batch_id, p.created_at, p.updated_at,
+                           :e
+                    FROM lnrs.lnrs_anon_imaging_study p
+                    WHERE p.study_key = :k AND p.anon_exam_id IS NULL
+                    ON CONFLICT ON CONSTRAINT lnrs_stage_imaging_study_uq
+                      DO UPDATE SET anon_exam_id = EXCLUDED.anon_exam_id,
+                                    updated_at = now()
+                """), {"e": eid, "k": study_key})
                 n += r.rowcount
             await s.commit()
             log.info(f"[RESIDUAL] 进度 {min(i + BATCH, len(updates))}/{len(updates)} updated={n}")
@@ -481,18 +469,33 @@ async def run_residual(center: str, src_ct: Path, map_path: Path) -> dict:
 
 
 async def backfill_dicom_series(center: str) -> int:
+    """issue-23：回填结果写 stage_dicom_series（生产由 promote 统一上）。
+
+    数据源是生产 dicom_series 现行行（关联算法需要读生产），新 anon_exam_id
+    取自生产 imaging_study 的回填值（该值在 stage 中，promote 前生产不变，
+    故此处以 stage_imaging_study 为准）。
+    """
     async with async_db_session() as s:
         n = (await s.execute(text("""
-            UPDATE lnrs.lnrs_anon_dicom_series ds
-            SET anon_exam_id = s.anon_exam_id
-            FROM lnrs.lnrs_anon_imaging_study s
-            WHERE ds.dicom_study_uid = s.dicom_study_uid
-              AND s.center_code = :c
-              AND s.anon_exam_id IS NOT NULL
+            INSERT INTO lnrs.lnrs_stage_dicom_series
+              (series_id, anon_exam_id, dicom_study_uid, file_count, byte_size,
+               series_count, created_batch_id, created_at, updated_at)
+            SELECT ds.series_id, st.anon_exam_id, ds.dicom_study_uid,
+                   ds.file_count, ds.byte_size, ds.series_count,
+                   ds.created_batch_id, ds.created_at, ds.updated_at
+            FROM lnrs.lnrs_anon_dicom_series ds
+            JOIN lnrs.lnrs_anon_imaging_study p USING (dicom_study_uid)
+            JOIN lnrs.lnrs_stage_imaging_study st
+              ON st.study_key = p.study_key
+            WHERE p.center_code = :c
+              AND p.anon_exam_id IS NULL
+              AND st.anon_exam_id IS NOT NULL
               AND ds.anon_exam_id IS NULL
+            ON CONFLICT (dicom_study_uid) DO UPDATE
+              SET anon_exam_id = EXCLUDED.anon_exam_id
         """), {"c": center})).rowcount
         await s.commit()
-    log.info(f"[SERIES] dicom_series.anon_exam_id 回填 {n} 行")
+    log.info(f"[SERIES] stage_dicom_series.anon_exam_id 回填 {n} 行")
     return int(n or 0)
 
 
@@ -500,14 +503,18 @@ async def backfill_dicom_series(center: str) -> int:
 
 
 async def verify(center: str) -> dict:
-    """PRD 断言 1-3 + 外键完整 + 抽样。"""
+    """PRD 断言 1-3 + 外键完整 + 抽样（issue-23 stage 口径）。
+
+    promote 前生产 4 表不变，故验收对象是 stage 表；exam FK 对照用
+    stage_exam（promote 后 prod_exam 同样成立，promote 命令的校验闸再验一次）。
+    """
     out: dict = {}
     async with async_db_session() as s:
         # 断言 1：dicom_series 非 NULL > 0
         a1 = (await s.execute(text("""
             SELECT COUNT(*)
-            FROM lnrs.lnrs_anon_dicom_series ds
-            JOIN lnrs.lnrs_anon_imaging_study s USING (dicom_study_uid)
+            FROM lnrs.lnrs_stage_dicom_series ds
+            JOIN lnrs.lnrs_stage_imaging_study s USING (dicom_study_uid)
             WHERE s.center_code = :c AND ds.anon_exam_id IS NOT NULL
         """), {"c": center})).scalar()
         out["series_with_exam"] = a1
@@ -515,10 +522,10 @@ async def verify(center: str) -> dict:
 
         # 断言 2：dicom_series 外键完整 = 0
         a2 = (await s.execute(text("""
-            SELECT COUNT(*) FROM lnrs.lnrs_anon_dicom_series ds
+            SELECT COUNT(*) FROM lnrs.lnrs_stage_dicom_series ds
             WHERE ds.anon_exam_id IS NOT NULL
               AND NOT EXISTS (
-                SELECT 1 FROM lnrs.lnrs_anon_exam e
+                SELECT 1 FROM lnrs.lnrs_stage_exam e
                 WHERE e.anon_exam_id = ds.anon_exam_id
               )
         """))).scalar()
@@ -527,10 +534,10 @@ async def verify(center: str) -> dict:
 
         # 断言 3（调研文档 §5 可执行口径）：无漏匹配 = 0
         a3 = (await s.execute(text("""
-            SELECT COUNT(*) FROM lnrs.lnrs_anon_imaging_study s
+            SELECT COUNT(*) FROM lnrs.lnrs_stage_imaging_study s
             WHERE s.center_code = :c AND s.anon_exam_id IS NULL
               AND EXISTS (
-                SELECT 1 FROM lnrs.lnrs_anon_exam e
+                SELECT 1 FROM lnrs.lnrs_stage_exam e
                 WHERE e.patient_id = s.patient_id AND e.exam_type = 'CT'
               )
         """), {"c": center})).scalar()
@@ -540,14 +547,14 @@ async def verify(center: str) -> dict:
         # study 覆盖率
         cov = (await s.execute(text("""
             SELECT COUNT(*), COUNT(*) FILTER (WHERE anon_exam_id IS NOT NULL)
-            FROM lnrs.lnrs_anon_imaging_study WHERE center_code = :c
+            FROM lnrs.lnrs_stage_imaging_study WHERE center_code = :c
         """), {"c": center})).one()
         out["study_total"], out["study_with_exam"] = cov[0], cov[1]
 
         # 抽样 3 条：patient 一致 + 距离
         r = await s.execute(text("""
             WITH samples AS (
-                SELECT study_key FROM lnrs.lnrs_anon_imaging_study
+                SELECT study_key FROM lnrs.lnrs_stage_imaging_study
                 WHERE center_code = :c AND anon_exam_id IS NOT NULL
                 ORDER BY random() LIMIT 3
             )
@@ -555,9 +562,9 @@ async def verify(center: str) -> dict:
                    e.exam_date,
                    COALESCE(lnrs.path_study_date(s.image_path),
                             lnrs.uid_study_date(s.dicom_study_uid)) AS study_date
-            FROM lnrs.lnrs_anon_imaging_study s
+            FROM lnrs.lnrs_stage_imaging_study s
             JOIN samples USING (study_key)
-            JOIN lnrs.lnrs_anon_exam e ON e.anon_exam_id = s.anon_exam_id
+            JOIN lnrs.lnrs_stage_exam e ON e.anon_exam_id = s.anon_exam_id
             ORDER BY s.study_key
         """), {"c": center})
         for row in r:
@@ -620,10 +627,12 @@ async def main() -> int:
     gate(
         schema="lnrs",
         tables=[
-            *EXAM_TEXT_INGEST_TABLES,
-            "lnrs.lnrs_anon_imaging_study (backfill)",
-            "lnrs.lnrs_anon_dicom_series (backfill)",
-            "lnrs_tmp_issue13_series_before (backup)",
+            # issue-23：写入目标只有 stage 表；生产 4 表只读
+            "lnrs.lnrs_stage_patient",
+            "lnrs.lnrs_stage_exam",
+            "lnrs.lnrs_stage_imaging_study",
+            "lnrs.lnrs_stage_dicom_series",
+            "lnrs.lnrs_anon_imaging_study_bak_* (backup)",
         ],
         declared=args.target,
         estimated_rows=est,
@@ -657,7 +666,6 @@ async def main() -> int:
     pre = await snapshot_other_centers()
     if not args.skip_backup:
         tbl = await backup_imaging_study(center)
-        await backup_series_exam_state(center)
         log.info(f"[BACKUP] imaging_study 备份表: {tbl}")
 
     if not args.skip_ingest:
@@ -668,13 +676,16 @@ async def main() -> int:
         await ingest_ct_exam(center, pq, staging)
         await log_exam_distribution(center, "AFTER")
 
-    # 本次 exam 净增（首跑 = 124,045；重跑 upsert 不增行 = 0）
+    # issue-23：exam 写 stage，生产 exam 计数不变 → 零漂移期望增量 0；
+    # stage 侧净增仅作日志
     async with async_db_session() as s:
         post_exam = (await s.execute(text("""
-            SELECT COUNT(*) FROM lnrs.lnrs_anon_exam
+            SELECT COUNT(*) FROM lnrs.lnrs_stage_exam
             WHERE center_code = :c AND exam_type = 'CT'
         """), {"c": center})).scalar()
-    expected_new_exams = int(post_exam) - int(pre["exam:all"].get(center, 0))
+    expected_new_exams = 0
+    log.info(f"[STAGE] stage_exam(CT)={post_exam}"
+             f"（生产 {pre['exam:all'].get(center, 0)}，promote 前不变）")
 
     matchable = await run_tier1(center, declared=args.target)
     rules = await run_residual(center, src_ct, src_map)
